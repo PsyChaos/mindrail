@@ -1,0 +1,359 @@
+package status
+
+import (
+	"context"
+	"time"
+
+	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/doctor"
+)
+
+// RepositoryInfo is the Git layout status reports. CommonDir and WorktreeRoot
+// are separate fields because they are separate answers: every linked worktree
+// of a repository shares the first and owns the second, and acceptance
+// criterion 3 is about reporting both correctly.
+type RepositoryInfo struct {
+	CommonDir        string `json:"common_dir"`
+	WorktreeRoot     string `json:"worktree_root"`
+	GitDir           string `json:"git_dir"`
+	IsLinkedWorktree bool   `json:"is_linked_worktree"`
+	GitVersion       string `json:"git_version,omitempty"`
+}
+
+// Observation says how much a block of the report is worth.
+//
+// Three values, because two were not enough. A check that never ran and a check
+// that ran and could not tell both leave their fields zero, and both used to be
+// separated from a real reading by one boolean derived from
+// `Code != STARTUP_INCOMPLETE` — so a repository that *has* been initialised but
+// whose database will not open published `initialized: false` and
+// `schema_version: 0` as inspected facts (finding F15). "Looked and could not
+// tell" is its own answer and the report now has a word for it.
+//
+// It qualifies only the fields that describe the repository. Anything that
+// describes this binary — the knowledge schema window — is always known.
+type Observation string
+
+const (
+	// Observed means the check ran and the values below it are findings.
+	Observed Observation = "observed"
+
+	// NotObserved means the tech-stack §87 sequence stopped before the check's
+	// inputs were populated. Nobody looked.
+	NotObserved Observation = "not_observed"
+
+	// Indeterminate means the check ran, failed, and cannot vouch for the
+	// values below it either way.
+	Indeterminate Observation = "indeterminate"
+)
+
+// Known reports whether the values this observation qualifies are facts.
+func (o Observation) Known() bool { return o == Observed }
+
+// RuntimeInfo describes the machine-local state store. Initialized is the
+// answer to "has mindrail init run here?", and it is reported rather than acted
+// on (decision D-01).
+//
+// Observation qualifies every other field. Startup is a sequence, and when it
+// aborts before the runtime store is opened — or reaches it and cannot open the
+// database — these fields are still zero; a report that omitted the distinction
+// published `initialized: false` as a fact about a repository it could not read.
+type RuntimeInfo struct {
+	Observation   Observation `json:"observation"`
+	DBPath        string      `json:"db_path"`
+	CacheDir      string      `json:"cache_dir"`
+	SchemaVersion int64       `json:"schema_version"`
+	JournalMode   string      `json:"journal_mode,omitempty"`
+	Initialized   bool        `json:"initialized"`
+}
+
+// KnowledgeInfo summarises the repository-owned knowledge store, including the
+// schema window this binary enforced, so a reader can tell "no records" from
+// "records this binary refused to read".
+//
+// Observation qualifies Present, Decisions, Invariants and Problems, which
+// describe the repository. WriteSchemaVersion and ReadableSchemaVersions do
+// not: they describe this binary and are always populated, however far startup
+// got (kernel-scope §3).
+type KnowledgeInfo struct {
+	Observation            Observation `json:"observation"`
+	Present                bool        `json:"present"`
+	Decisions              int         `json:"decisions"`
+	Invariants             int         `json:"invariants"`
+	Problems               int         `json:"problems"`
+	WriteSchemaVersion     int         `json:"write_schema_version"`
+	ReadableSchemaVersions []int       `json:"readable_schema_versions"`
+}
+
+// WorkspaceInfo reports the opaque identity of this worktree. The ids are the
+// identity; the paths in RepositoryInfo are only where it happens to live
+// (decision D-26). Observation qualifies Registered for the same reason it does
+// in RuntimeInfo.
+type WorkspaceInfo struct {
+	Observation Observation `json:"observation"`
+	Registered  bool        `json:"registered"`
+	ID          string      `json:"workspace_id,omitempty"`
+	ProjectID   string      `json:"project_id,omitempty"`
+}
+
+// Report is one `mindrail status` answer.
+//
+// StoppedAtStep is the one field that says the rest of the report is partial:
+// when the tech-stack §87 sequence aborts, the subsystems after that step were
+// never inspected, and a consumer has to be able to tell a report of findings
+// from a report of missing observations without parsing prose.
+type Report struct {
+	Command           string                      `json:"command"`
+	Readiness         Readiness                   `json:"readiness"`
+	StoppedAtStep     string                      `json:"stopped_at_step,omitempty"`
+	BlockingComponent ComponentName               `json:"blocking_component,omitempty"`
+	NextAction        []string                    `json:"next_action,omitempty"`
+	Components        map[ComponentName]Component `json:"components"`
+	Repository        RepositoryInfo              `json:"repository"`
+	Runtime           RuntimeInfo                 `json:"runtime"`
+	Knowledge         KnowledgeInfo               `json:"knowledge"`
+	Workspace         WorkspaceInfo               `json:"workspace"`
+	DurationMS        int64                       `json:"duration_ms"`
+}
+
+// Build derives the readiness report from an already-resolved subject.
+//
+// The two components MR-001 can actually judge are read through the doctor
+// checks rather than re-derived here, so `status` and `doctor` can never
+// disagree about whether the runtime store is healthy — the failure mode where
+// one command says READY and the other prints an error.
+//
+// elapsed is passed in rather than measured because the meaningful duration is
+// the whole startup sequence, which finished before this function was called
+// (decision D-20).
+func Build(s doctor.Subject, elapsed time.Duration) Report {
+	// The MR-001 checks are pure functions of the subject and never block, so
+	// there is nothing for a caller to cancel and Build takes no context.
+	ctx := context.Background()
+
+	// The read-only probes doctor is allowed to make, taken once so that status
+	// and doctor describe the same disk (decision D-01: probe, never create).
+	s = doctor.Probe(s)
+
+	knowledge := doctor.KnowledgeCheck(s).Run(ctx)
+	runtimePaths := doctor.RuntimePathCheck(s).Run(ctx)
+	sqlite := doctor.SQLiteCheck(s).Run(ctx)
+	migrations := doctor.MigrationCheck(s).Run(ctx)
+	workspace := doctor.WorkspaceCheck(s).Run(ctx)
+
+	components := map[ComponentName]Component{
+		ComponentKnowledge: componentFrom(knowledge),
+		// The runtime paths reading belongs here: a runtime directory nothing
+		// can write stops exactly the same work as a database that will not
+		// open, and leaving it out of every component made `status` exit 0 with
+		// ok:true on a repository where `mindrail init` cannot succeed.
+		//
+		// It is listed last so that on a healthy install — where every reading
+		// is OK and worst() keeps the first — the component still describes the
+		// database it is named after.
+		ComponentRuntimeDB: componentFrom(worst(sqlite, migrations, workspace, runtimePaths)),
+	}
+	for name, summary := range notApplicableComponents {
+		// Decision D-02: these four are NOT_APPLICABLE, not degraded. This
+		// binary builds no index, so there is no partial progress to report and
+		// a healthy install must not sit at PARTIAL_READY forever.
+		components[name] = Component{State: doctor.StateNotApplicable, Summary: summary}
+	}
+
+	readiness, blocking, next := classify(components)
+
+	return Report{
+		Command:           "status",
+		Readiness:         readiness,
+		StoppedAtStep:     stoppedAtStep(knowledge, runtimePaths, sqlite, migrations, workspace),
+		BlockingComponent: blocking,
+		NextAction:        next,
+		Components:        components,
+		Repository: RepositoryInfo{
+			CommonDir:        s.Repo.CommonDir,
+			WorktreeRoot:     s.Repo.WorktreeRoot,
+			GitDir:           s.Repo.GitDir,
+			IsLinkedWorktree: s.Repo.IsLinkedWorktree,
+			GitVersion:       s.GitVersion,
+		},
+		Runtime: RuntimeInfo{
+			// The sqlite reading and the migration reading together decide this:
+			// a database that opened cleanly but whose ledger could not be read
+			// knows `initialized` and not `schema_version`, and the weaker of the
+			// two answers is the honest one for the block.
+			Observation:   observationOf(sqlite, migrations),
+			DBPath:        s.Paths.DBPath,
+			CacheDir:      s.Paths.CacheDir,
+			SchemaVersion: currentSchemaVersion(s),
+			JournalMode:   s.Pragmas.JournalMode,
+			Initialized:   s.DBPresent,
+		},
+		Knowledge: KnowledgeInfo{
+			Observation: observationOf(knowledge),
+			Present:     s.Knowledge.Present,
+			Decisions:   len(s.Knowledge.Decisions),
+			Invariants:  len(s.Knowledge.Invariants),
+			Problems:    len(s.Knowledge.Problems),
+			// From the binary, never from the subject: these two are what this
+			// binary can do, and a startup that stopped early does not change it.
+			WriteSchemaVersion:     doctor.KnowledgeWriteSchemaVersion(s.Knowledge),
+			ReadableSchemaVersions: doctor.KnowledgeReadableSchemaVersions(s.Knowledge),
+		},
+		Workspace: WorkspaceInfo{
+			Observation: observationOf(workspace),
+			Registered:  s.Workspace.ID != "",
+			ID:          s.Workspace.ID,
+			ProjectID:   s.Workspace.ProjectID,
+		},
+		DurationMS: elapsed.Milliseconds(),
+	}
+}
+
+// observationOf grades the readings behind one block of the report, worst
+// answer wins.
+//
+// STARTUP_INCOMPLETE is doctor's code for a reading whose inputs the sequence
+// never populated: nobody looked. An ERROR reading is the third case — the
+// check ran, the subsystem refused it, and the zero values left behind are not
+// findings. Publishing them as findings is how `status` came to report
+// `initialized: false` about a repository that had been initialised and whose
+// database merely could not be opened (finding F15).
+//
+// Everything else is a real reading, including UNAVAILABLE: "the database path
+// was inspected and is empty" is an observation, and `initialized: false` is
+// exactly what it observed.
+//
+// NOT_OBSERVED is reserved for a block where nothing was read at all. A block
+// backed by several readings — the runtime store is described by both the
+// database and the ledger — is INDETERMINATE as soon as one of them ran, even
+// if the other never did: "nobody looked" would be false, and it is the
+// stronger of the two claims.
+func observationOf(results ...doctor.Result) Observation {
+	looked, known := false, true
+	for _, result := range results {
+		if result.Code == app.CodeStartupIncomplete {
+			known = false
+			continue
+		}
+		looked = true
+		if result.State == doctor.StateError {
+			known = false
+		}
+	}
+
+	switch {
+	case !looked:
+		return NotObserved
+	case !known:
+		return Indeterminate
+	default:
+		return Observed
+	}
+}
+
+// stoppedAtStep recovers the §87 step that aborted the run from whichever
+// reading was blocked by it. It is read back out of the check metadata rather
+// than re-derived so that status can never name a different step from doctor.
+func stoppedAtStep(results ...doctor.Result) string {
+	for _, result := range results {
+		if step := result.Metadata["stopped_at_step"]; step != "" {
+			return step
+		}
+	}
+	return ""
+}
+
+// notApplicableComponents are the four slots whose subsystems MR-005 owns. The
+// summary names the milestone so a reader is told "not built yet", not left to
+// guess whether their project simply does not use the capability.
+var notApplicableComponents = map[ComponentName]string{
+	ComponentInventory:   "File inventory is not built by this version.",
+	ComponentSyntax:      "Syntax index is not built by this version.",
+	ComponentSemantic:    "Semantic index is not built by this version.",
+	ComponentCoverageMap: "Coverage map is not built by this version.",
+}
+
+// componentFrom projects a doctor reading onto a component slot. Diagnostic and
+// impact stay in the doctor report: status answers "can I work here and what do
+// I do about it", and the full explanation is one `mindrail doctor` away.
+func componentFrom(result doctor.Result) Component {
+	return Component{
+		State:      result.State,
+		Summary:    result.Summary,
+		Code:       result.Code,
+		NextAction: result.NextAction,
+	}
+}
+
+// worst returns the most severe of several readings. One component slot can be
+// backed by several checks, and the reader has to be told about the worst of
+// them rather than the first.
+func worst(results ...doctor.Result) doctor.Result {
+	selected := results[0]
+	for _, result := range results[1:] {
+		if stateRank(result.State) > stateRank(selected.State) {
+			selected = result
+		}
+	}
+	return selected
+}
+
+// stateRank mirrors doctor's own severity order. It is duplicated rather than
+// exported from doctor because it ranks components here, not checks, and a
+// shared knob would tie two independent orderings together.
+func stateRank(s doctor.State) int {
+	switch s {
+	case doctor.StateError:
+		return 4
+	case doctor.StateUnavailable:
+		return 3
+	case doctor.StateDegraded:
+		return 2
+	case doctor.StateOK:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// classify derives the overall verdict.
+//
+// Blocking is decided before degradation so the report names the thing that
+// stops work rather than the first thing that is merely imperfect, and the
+// remedy is copied from that same component so the top-level next_action can
+// never contradict the component the report is pointing at.
+//
+// A component that was inspected wins over one that was not, whatever the
+// reporting order says. Otherwise a run that stopped at the runtime store would
+// name `knowledge` — the first slot in §107's list, and the one subsystem
+// nobody looked at — as the reason work cannot start.
+func classify(components map[ComponentName]Component) (Readiness, ComponentName, []string) {
+	for _, name := range componentOrder {
+		if component := components[name]; component.blocks() && component.inspected() {
+			return ReadinessBlocked, name, component.NextAction
+		}
+	}
+	for _, name := range componentOrder {
+		if component := components[name]; component.blocks() {
+			return ReadinessBlocked, name, component.NextAction
+		}
+	}
+	for _, name := range componentOrder {
+		if component := components[name]; component.State == doctor.StateDegraded {
+			return ReadinessDegraded, "", component.NextAction
+		}
+	}
+	return ReadinessReady, "", nil
+}
+
+// currentSchemaVersion reports the highest applied migration, or zero for a
+// database no migration has ever run against.
+func currentSchemaVersion(s doctor.Subject) int64 {
+	current := int64(0)
+	for _, applied := range s.Migrations {
+		if applied.Version > current {
+			current = applied.Version
+		}
+	}
+	return current
+}

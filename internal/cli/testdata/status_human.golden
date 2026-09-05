@@ -1,0 +1,40 @@
+Mindrail Status
+
+Readiness: READY
+
+Repository
+  Common dir:      <REPO>/.git
+  Worktree root:   <REPO>
+  Git dir:         <REPO>/.git
+  Linked worktree: false
+  Git version: <REDACTED>
+
+Runtime
+  DB path:        <REPO>/.git/mindrail/mindrail.db
+  Cache dir:      <REPO>/.git/mindrail/cache
+  Schema version: 1
+  Journal mode:   wal
+  Initialized:    true
+
+Knowledge
+  Present:                  true
+  Decisions:                0
+  Invariants:               0
+  Problems:                 0
+  Write schema version:     1
+  Readable schema versions: 1
+
+Workspace
+  Registered:   true
+  Workspace id: <REDACTED>
+  Project id: <REDACTED>
+
+Components
+  ✓ knowledge                     Knowledge store readable (0 decisions, 0 invariants)
+  · inventory     NOT_APPLICABLE  File inventory is not built by this version.
+  · syntax        NOT_APPLICABLE  Syntax index is not built by this version.
+  · semantic      NOT_APPLICABLE  Semantic index is not built by this version.
+  · coverage_map  NOT_APPLICABLE  Coverage map is not built by this version.
+  ✓ runtime_db                    Runtime database healthy
+
+Duration: <REDACTED>

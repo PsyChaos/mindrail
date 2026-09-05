@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindrail.dev/schemas/knowledge/decision.v1.schema.json",
+  "title": "Mindrail Decision record, schema version 1",
+  "description": "A Decision answers \"why did we choose this path?\" (spec §53). Records are immutable: a newer Decision supersedes an older one instead of overwriting it.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "id",
+    "status",
+    "created_at",
+    "title",
+    "decision"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Reader compatibility window key (spec §95). 0.1 writes 1 and reads [1].",
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "decision"
+    },
+    "id": {
+      "description": "Stable repository-unique identity; the file name must agree with it.",
+      "type": "string",
+      "pattern": "^DEC-[0-9]{4,}$"
+    },
+    "status": {
+      "description": "A superseded Decision stays in the repository so lineage survives (spec §93).",
+      "type": "string",
+      "enum": ["active", "superseded"]
+    },
+    "created_at": {
+      "description": "UTC RFC 3339 timestamp (tech-stack §42).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context": {
+      "description": "The situation that forced a choice.",
+      "type": "string"
+    },
+    "decision": {
+      "description": "The choice itself, stated in one or more sentences.",
+      "type": "string",
+      "minLength": 1
+    },
+    "consequences": {
+      "description": "What the choice costs or forecloses.",
+      "type": "string"
+    },
+    "supersedes": {
+      "description": "Identities of the Decisions this record replaces (spec §93).",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^DEC-[0-9]{4,}$"
+      },
+      "uniqueItems": true
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "scope": {
+      "description": "Where the record applies (spec §54 scope levels).",
+      "type": "object",
+      "required": ["level"],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["PROJECT", "PACKAGE", "MODULE", "FILE", "SYMBOL"]
+        },
+        "target": {
+          "description": "Repository-relative, forward-slash path or symbol reference (tech-stack §74). Absent for PROJECT scope.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

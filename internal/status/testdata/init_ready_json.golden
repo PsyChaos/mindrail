@@ -1,0 +1,83 @@
+{
+  "command": "init",
+  "terminal_state": "READY FOR TARGETED WORK",
+  "config_path": "/repo/.mindrail/config.toml",
+  "config_created": true,
+  "knowledge_dirs_created": [
+    ".mindrail/knowledge/decisions",
+    ".mindrail/knowledge/invariants"
+  ],
+  "migrations_applied": [
+    {
+      "version": 1,
+      "name": "initial",
+      "checksum": "3c0d6b1f",
+      "applied_at": "2026-03-14T09:26:53Z"
+    }
+  ],
+  "schema_current": true,
+  "status": {
+    "command": "status",
+    "readiness": "READY",
+    "components": {
+      "coverage_map": {
+        "state": "NOT_APPLICABLE",
+        "summary": "Coverage map is not built by this version."
+      },
+      "inventory": {
+        "state": "NOT_APPLICABLE",
+        "summary": "File inventory is not built by this version."
+      },
+      "knowledge": {
+        "state": "OK",
+        "summary": "Knowledge store readable (2 decisions, 1 invariant)"
+      },
+      "runtime_db": {
+        "state": "OK",
+        "summary": "Runtime database healthy"
+      },
+      "semantic": {
+        "state": "NOT_APPLICABLE",
+        "summary": "Semantic index is not built by this version."
+      },
+      "syntax": {
+        "state": "NOT_APPLICABLE",
+        "summary": "Syntax index is not built by this version."
+      }
+    },
+    "repository": {
+      "common_dir": "/repo/.git",
+      "worktree_root": "/repo",
+      "git_dir": "/repo/.git",
+      "is_linked_worktree": false,
+      "git_version": "git version 2.55.0"
+    },
+    "runtime": {
+      "observation": "observed",
+      "db_path": "/repo/.git/mindrail/mindrail.db",
+      "cache_dir": "/repo/.git/mindrail/cache",
+      "schema_version": 1,
+      "journal_mode": "wal",
+      "initialized": true
+    },
+    "knowledge": {
+      "observation": "observed",
+      "present": true,
+      "decisions": 2,
+      "invariants": 1,
+      "problems": 0,
+      "write_schema_version": 1,
+      "readable_schema_versions": [
+        1
+      ]
+    },
+    "workspace": {
+      "observation": "observed",
+      "registered": true,
+      "workspace_id": "WS-01JQ8N6X5T0000000000000000",
+      "project_id": "PRJ-01JQ8N6X5T0000000000000000"
+    },
+    "duration_ms": 3
+  },
+  "duration_ms": 12
+}

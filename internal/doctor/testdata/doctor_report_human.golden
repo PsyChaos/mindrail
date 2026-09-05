@@ -1,0 +1,75 @@
+Mindrail Doctor
+
+Repository
+✓ Git common-dir detected
+  common_dir: /repo/.git
+  git_dir: /repo/.git
+  git_version: git version 2.55.0
+  is_linked_worktree: false
+  worktree_root: /repo
+
+Runtime paths
+✓ Runtime paths resolved under the Git common-dir
+  cache_dir: /repo/.git/mindrail/cache
+  cache_dir_exists: true
+  cache_dir_usable: true
+  db_path: /repo/.git/mindrail/mindrail.db
+  repo_config_dir: /repo/.mindrail
+  runtime_root: /repo/.git/mindrail
+  runtime_root_exists: true
+  runtime_root_usable: true
+
+Configuration
+△ DEGRADED Configuration loaded with warnings
+  code: CONFIG_UNKNOWN_ENV_VAR
+  output.color: auto
+  output.color.source: default
+  repo_file: /repo/.mindrail/config.toml
+
+  Diagnostic:
+  unknown environment variable "MINDRAIL_NOT_A_KEY"
+
+  Impact:
+  The reported settings are ignored, so the effective configuration is not the one the environment asks for.
+
+  Next:
+  Remove or correct the reported settings.
+
+Runtime store
+✓ Runtime database healthy
+  busy_timeout: 5000
+  db_path: /repo/.git/mindrail/mindrail.db
+  foreign_keys: 1
+  journal_mode: wal
+  synchronous: 1
+✓ Schema up to date (version 1)
+  applied: 1
+  current_version: 1
+  pending: 0
+
+Knowledge
+△ DEGRADED Knowledge store has unreadable records
+  code: KNOWLEDGE_UNREADABLE
+  decisions: 2
+  invariants: 1
+  present: true
+  readable_schema_versions: 1
+  root: .mindrail/knowledge
+  write_schema_version: 1
+
+  Diagnostic:
+  .mindrail/knowledge/decisions/dec-9.json: invalid character '}' looking for beginning of object key string
+
+  Impact:
+  The reported records are invisible to every command; the rest of the store is unaffected.
+
+  Next:
+  Fix or remove .mindrail/knowledge/decisions/dec-9.json.
+
+Workspace
+✓ Workspace registered
+  is_linked_worktree: false
+  project_id: PRJ-01JQ8N6X5T0000000000000000
+  workspace_id: WS-01JQ8N6X5T0000000000000000
+
+Overall: DEGRADED

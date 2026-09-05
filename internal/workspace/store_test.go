@@ -1,0 +1,362 @@
+package workspace_test
+
+import (
+	"errors"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/migration"
+	"github.com/PsyChaos/mindrail/internal/storage"
+	"github.com/PsyChaos/mindrail/internal/workspace"
+	"github.com/PsyChaos/mindrail/migrations"
+)
+
+// baseInstant sits in a non-UTC zone on purpose: a timestamp that comes back
+// as UTC anyway proves the conversion happened rather than that the test host
+// was already on UTC.
+var baseInstant = time.Date(2026, time.September, 5, 9, 30, 15, 0, time.FixedZone("UTC+3", 3*60*60))
+
+// stepClock advances by a fixed step on every read, so a test can tell "the
+// row was rewritten" apart from "the row was left alone" without sleeping.
+type stepClock struct {
+	mu   sync.Mutex
+	next time.Time
+	step time.Duration
+}
+
+func newStepClock() *stepClock {
+	return &stepClock{next: baseInstant, step: time.Hour}
+}
+
+func (c *stepClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := c.next
+	c.next = c.next.Add(c.step)
+	return now.UTC()
+}
+
+func newStore(t *testing.T, clock app.Clock) (*workspace.Store, *storage.DB) {
+	t.Helper()
+
+	db, err := storage.Open(t.Context(), storage.Options{Path: filepath.Join(t.TempDir(), "mindrail.db")})
+	if err != nil {
+		t.Fatalf("storage.Open = %v, want no error", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatalf("migration.Load = %v, want no error", err)
+	}
+	if _, err := migration.New(db.DB, set, app.FixedClock{Instant: baseInstant}).Up(t.Context()); err != nil {
+		t.Fatalf("migration Up = %v, want no error", err)
+	}
+
+	return workspace.NewStore(db.DB, clock), db
+}
+
+func registration(commonDir, root string, linked bool) workspace.Registration {
+	gitDir := commonDir
+	if linked {
+		gitDir = filepath.Join(commonDir, "worktrees", filepath.Base(root))
+	}
+	return workspace.Registration{
+		CommonDir:        commonDir,
+		WorktreeRoot:     root,
+		GitDir:           gitDir,
+		IsLinkedWorktree: linked,
+	}
+}
+
+// TestRegisterIsIdempotent is the acceptance criterion behind running
+// `mindrail init` twice: the second run must find the same workspace, not mint
+// a second identity for the same directory.
+func TestRegisterIsIdempotent(t *testing.T) {
+	store, _ := newStore(t, newStepClock())
+	reg := registration("/repo/.git", "/repo", false)
+
+	firstProject, firstWorkspace, err := store.Register(t.Context(), reg)
+	if err != nil {
+		t.Fatalf("first Register = %v, want no error", err)
+	}
+
+	secondProject, secondWorkspace, err := store.Register(t.Context(), reg)
+	if err != nil {
+		t.Fatalf("second Register = %v, want no error", err)
+	}
+
+	if firstWorkspace.ID != secondWorkspace.ID {
+		t.Errorf("workspace id changed: %q -> %q", firstWorkspace.ID, secondWorkspace.ID)
+	}
+	if firstProject.ID != secondProject.ID {
+		t.Errorf("project id changed: %q -> %q", firstProject.ID, secondProject.ID)
+	}
+	if !firstWorkspace.RegisteredAt.Equal(secondWorkspace.RegisteredAt) {
+		t.Errorf("RegisteredAt was rewritten: %v -> %v", firstWorkspace.RegisteredAt, secondWorkspace.RegisteredAt)
+	}
+	if !secondWorkspace.LastSeenAt.After(firstWorkspace.LastSeenAt) {
+		t.Errorf("LastSeenAt = %v, want later than %v", secondWorkspace.LastSeenAt, firstWorkspace.LastSeenAt)
+	}
+	if !firstProject.RegisteredAt.Equal(secondProject.RegisteredAt) {
+		t.Errorf("project RegisteredAt was rewritten: %v -> %v",
+			firstProject.RegisteredAt, secondProject.RegisteredAt)
+	}
+
+	count, err := store.Count(t.Context())
+	if err != nil {
+		t.Fatalf("Count = %v, want no error", err)
+	}
+	if count != 1 {
+		t.Errorf("Count = %d, want 1", count)
+	}
+
+	found, err := store.FindByRoot(t.Context(), reg.WorktreeRoot)
+	if err != nil {
+		t.Fatalf("FindByRoot = %v, want no error", err)
+	}
+	if found.ID != firstWorkspace.ID {
+		t.Errorf("FindByRoot id = %q, want %q", found.ID, firstWorkspace.ID)
+	}
+	if !found.LastSeenAt.Equal(secondWorkspace.LastSeenAt) {
+		t.Errorf("FindByRoot LastSeenAt = %v, want the persisted %v", found.LastSeenAt, secondWorkspace.LastSeenAt)
+	}
+}
+
+// TestTwoWorktreesRegisterTwoWorkspacesOneProject is the linked-worktree case
+// of tech-stack §35: both directories share a Git common dir, so they are one
+// project with two working locations, not two unrelated repositories.
+func TestTwoWorktreesRegisterTwoWorkspacesOneProject(t *testing.T) {
+	store, db := newStore(t, newStepClock())
+	const commonDir = "/repo/.git"
+
+	main := registration(commonDir, "/repo", false)
+	linked := registration(commonDir, "/worktrees/feature", true)
+
+	mainProject, mainWorkspace, err := store.Register(t.Context(), main)
+	if err != nil {
+		t.Fatalf("Register(main) = %v, want no error", err)
+	}
+	linkedProject, linkedWorkspace, err := store.Register(t.Context(), linked)
+	if err != nil {
+		t.Fatalf("Register(linked) = %v, want no error", err)
+	}
+
+	if mainProject.ID != linkedProject.ID {
+		t.Errorf("project ids differ: %q vs %q; one common dir is one project", mainProject.ID, linkedProject.ID)
+	}
+	if mainWorkspace.ID == linkedWorkspace.ID {
+		t.Errorf("both worktrees got workspace id %q, want distinct ids", mainWorkspace.ID)
+	}
+	if mainWorkspace.IsLinkedWorktree {
+		t.Error("main worktree reported IsLinkedWorktree = true, want false")
+	}
+	if !linkedWorkspace.IsLinkedWorktree {
+		t.Error("linked worktree reported IsLinkedWorktree = false, want true")
+	}
+	if linkedWorkspace.GitDir != linked.GitDir {
+		t.Errorf("linked GitDir = %q, want %q", linkedWorkspace.GitDir, linked.GitDir)
+	}
+
+	count, err := store.Count(t.Context())
+	if err != nil {
+		t.Fatalf("Count = %v, want no error", err)
+	}
+	if count != 2 {
+		t.Errorf("Count = %d, want 2", count)
+	}
+
+	listed, err := store.List(t.Context())
+	if err != nil {
+		t.Fatalf("List = %v, want no error", err)
+	}
+	roots := make([]string, 0, len(listed))
+	for _, ws := range listed {
+		roots = append(roots, ws.RootPath)
+		if ws.ProjectID != mainProject.ID {
+			t.Errorf("workspace %q project = %q, want %q", ws.ID, ws.ProjectID, mainProject.ID)
+		}
+	}
+	want := []string{main.WorktreeRoot, linked.WorktreeRoot}
+	slices.Sort(want)
+	got := slices.Clone(roots)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("List roots = %v, want %v", got, want)
+	}
+
+	var projects int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM projects`).Scan(&projects); err != nil {
+		t.Fatalf("count projects = %v, want no error", err)
+	}
+	if projects != 1 {
+		t.Errorf("projects rows = %d, want 1", projects)
+	}
+}
+
+func TestRegisterStoresUTCTimestamps(t *testing.T) {
+	store, db := newStore(t, app.FixedClock{Instant: baseInstant})
+	reg := registration("/repo/.git", "/repo", false)
+
+	project, ws, err := store.Register(t.Context(), reg)
+	if err != nil {
+		t.Fatalf("Register = %v, want no error", err)
+	}
+
+	want := app.FormatTime(baseInstant)
+	columns := map[string]string{
+		`SELECT registered_at FROM projects WHERE project_id = ?`:     project.ID,
+		`SELECT registered_at FROM workspaces WHERE workspace_id = ?`: ws.ID,
+		`SELECT last_seen_at FROM workspaces WHERE workspace_id = ?`:  ws.ID,
+	}
+	for query, id := range columns {
+		var stored string
+		if err := db.QueryRowContext(t.Context(), query, id).Scan(&stored); err != nil {
+			t.Fatalf("%s = %v, want no error", query, err)
+		}
+		if stored != want {
+			t.Errorf("%s stored %q, want %q", query, stored, want)
+		}
+		if !strings.HasSuffix(stored, "Z") {
+			t.Errorf("%s stored %q, want a UTC (Z) offset", query, stored)
+		}
+	}
+
+	times := map[string]time.Time{
+		"project.RegisteredAt":   project.RegisteredAt,
+		"workspace.RegisteredAt": ws.RegisteredAt,
+		"workspace.LastSeenAt":   ws.LastSeenAt,
+	}
+	for name, value := range times {
+		if value.Location() != time.UTC {
+			t.Errorf("%s location = %v, want UTC", name, value.Location())
+		}
+		if !value.Equal(baseInstant) {
+			t.Errorf("%s = %v, want %v", name, value, baseInstant.UTC())
+		}
+	}
+}
+
+// TestIDsAreOpaquePrefixedAndSortable covers decision D-26: identity is the
+// opaque id, never the path. An id that leaked the root path would make every
+// downstream reference machine-specific.
+func TestIDsAreOpaquePrefixedAndSortable(t *testing.T) {
+	const total = 500
+
+	shape := regexp.MustCompile(`^(PRJ|WS)-[0-9A-HJKMNP-TV-Z]{26}$`)
+
+	ids := make([]string, 0, total)
+	seen := make(map[string]struct{}, total)
+	for range total {
+		id := workspace.NewID("WS")
+		if !shape.MatchString(id) {
+			t.Fatalf("NewID(%q) = %q, want prefix + '-' + 26 Crockford base32 characters", "WS", id)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			t.Fatalf("NewID produced %q twice", id)
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+
+	// Creation order must equal lexicographic order: the ids are used as tie
+	// breakers when a fixed clock gives several rows the same timestamp.
+	if !slices.IsSorted(ids) {
+		for i := 1; i < len(ids); i++ {
+			if ids[i] <= ids[i-1] {
+				t.Fatalf("id %d (%q) does not sort after id %d (%q)", i, ids[i], i-1, ids[i-1])
+			}
+		}
+	}
+
+	if got := workspace.NewID("PRJ"); !strings.HasPrefix(got, "PRJ-") {
+		t.Errorf("NewID(\"PRJ\") = %q, want the PRJ- prefix", got)
+	}
+
+	// Opacity: no path, no readable clock value.
+	store, _ := newStore(t, app.FixedClock{Instant: baseInstant})
+	project, ws, err := store.Register(t.Context(), registration("/very/unusual/repo/.git", "/very/unusual/repo", false))
+	if err != nil {
+		t.Fatalf("Register = %v, want no error", err)
+	}
+	for _, id := range []string{project.ID, ws.ID} {
+		for _, leak := range []string{
+			"repo", "unusual",
+			strconv.FormatInt(baseInstant.Unix(), 10),
+			strconv.FormatInt(baseInstant.UnixMilli(), 10),
+		} {
+			if strings.Contains(strings.ToLower(id), strings.ToLower(leak)) {
+				t.Errorf("id %q leaks %q", id, leak)
+			}
+		}
+	}
+	if !strings.HasPrefix(project.ID, "PRJ-") {
+		t.Errorf("project id = %q, want the PRJ- prefix", project.ID)
+	}
+	if !strings.HasPrefix(ws.ID, "WS-") {
+		t.Errorf("workspace id = %q, want the WS- prefix", ws.ID)
+	}
+}
+
+func TestFindByRootReportsUnregisteredWorkspace(t *testing.T) {
+	store, _ := newStore(t, newStepClock())
+
+	_, err := store.FindByRoot(t.Context(), "/never/registered")
+	if err == nil {
+		t.Fatal("FindByRoot(unknown) = nil error, want ErrNotRegistered")
+	}
+	if !errors.Is(err, workspace.ErrNotRegistered) {
+		t.Errorf("FindByRoot(unknown) = %v, want errors.Is(err, ErrNotRegistered)", err)
+	}
+}
+
+func TestEmptyStoreListsNothing(t *testing.T) {
+	store, _ := newStore(t, newStepClock())
+
+	listed, err := store.List(t.Context())
+	if err != nil {
+		t.Fatalf("List = %v, want no error", err)
+	}
+	if len(listed) != 0 {
+		t.Errorf("List = %d workspaces, want 0", len(listed))
+	}
+
+	count, err := store.Count(t.Context())
+	if err != nil {
+		t.Fatalf("Count = %v, want no error", err)
+	}
+	if count != 0 {
+		t.Errorf("Count = %d, want 0", count)
+	}
+}
+
+func TestRegisterRejectsIncompleteRegistration(t *testing.T) {
+	store, _ := newStore(t, newStepClock())
+
+	tests := []struct {
+		name string
+		reg  workspace.Registration
+	}{
+		{name: "no common dir", reg: workspace.Registration{WorktreeRoot: "/repo", GitDir: "/repo/.git"}},
+		{name: "no worktree root", reg: workspace.Registration{CommonDir: "/repo/.git", GitDir: "/repo/.git"}},
+		{name: "no git dir", reg: workspace.Registration{CommonDir: "/repo/.git", WorktreeRoot: "/repo"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, err := store.Register(t.Context(), tt.reg); err == nil {
+				t.Fatalf("Register(%s) = nil error, want a rejection", tt.name)
+			} else if payload, ok := app.PayloadOf(err); !ok || payload.Code != app.CodeWorkspaceRegistrationFailed {
+				t.Errorf("payload = %+v (ok=%v), want %q", payload, ok, app.CodeWorkspaceRegistrationFailed)
+			}
+		})
+	}
+}

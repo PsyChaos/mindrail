@@ -186,6 +186,10 @@ graphify-out/.graphify_cached.json
 graphify-out/.graphify_uncached.txt
 graphify-out/cache/
 
+# Dated graph snapshots: a full 2.4 MB copy of the graph per refresh. The
+# current graph at graphify-out/ is the one that is versioned.
+graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+
 # ─────────────────────────────────────────────────────────────
 # Genel geçici dosyalar
 # ─────────────────────────────────────────────────────────────

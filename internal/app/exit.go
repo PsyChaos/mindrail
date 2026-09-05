@@ -57,17 +57,30 @@ func Unavailable(err error) error { return &Error{Kind: KindUnavailable, Err: er
 
 // ExitCode maps an error to a process exit code. A nil error is success; an
 // error carrying no explicit kind is a generic operation failure.
+//
+// A *DomainError is consulted before the *Error carrier: the layer that
+// detected the failure knows its class, while a caller that merely wrapped it
+// in Failed() was guessing (decision D-03).
 func ExitCode(err error) int {
 	if err == nil {
 		return ExitSuccess
 	}
 
-	var appErr *Error
-	if !errors.As(err, &appErr) {
-		return ExitFailed
+	var domainErr *DomainError
+	if errors.As(err, &domainErr) {
+		return exitCodeForKind(domainErr.Kind)
 	}
 
-	switch appErr.Kind {
+	var appErr *Error
+	if errors.As(err, &appErr) {
+		return exitCodeForKind(appErr.Kind)
+	}
+
+	return ExitFailed
+}
+
+func exitCodeForKind(kind Kind) int {
+	switch kind {
 	case KindUsage:
 		return ExitUsage
 	case KindDenied:

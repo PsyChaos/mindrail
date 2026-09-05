@@ -1,0 +1,115 @@
+{
+  "command": "doctor",
+  "checks": [
+    {
+      "name": "git",
+      "section": "Repository",
+      "state": "OK",
+      "summary": "Git common-dir detected",
+      "details": {
+        "common_dir": "/repo/.git",
+        "git_dir": "/repo/.git",
+        "git_version": "git version 2.55.0",
+        "is_linked_worktree": "false",
+        "worktree_root": "/repo"
+      },
+      "duration_ms": 0
+    },
+    {
+      "name": "runtime_paths",
+      "section": "Runtime paths",
+      "state": "OK",
+      "summary": "Runtime paths resolved under the Git common-dir",
+      "details": {
+        "cache_dir": "/repo/.git/mindrail/cache",
+        "cache_dir_exists": "true",
+        "cache_dir_usable": "true",
+        "db_path": "/repo/.git/mindrail/mindrail.db",
+        "repo_config_dir": "/repo/.mindrail",
+        "runtime_root": "/repo/.git/mindrail",
+        "runtime_root_exists": "true",
+        "runtime_root_usable": "true"
+      },
+      "duration_ms": 0
+    },
+    {
+      "name": "config",
+      "section": "Configuration",
+      "state": "DEGRADED",
+      "summary": "Configuration loaded with warnings",
+      "diagnostic": "unknown environment variable \"MINDRAIL_NOT_A_KEY\"",
+      "impact": "The reported settings are ignored, so the effective configuration is not the one the environment asks for.",
+      "next_action": [
+        "Remove or correct the reported settings."
+      ],
+      "code": "CONFIG_UNKNOWN_ENV_VAR",
+      "details": {
+        "output.color": "auto",
+        "output.color.source": "default",
+        "repo_file": "/repo/.mindrail/config.toml"
+      },
+      "duration_ms": 0
+    },
+    {
+      "name": "sqlite",
+      "section": "Runtime store",
+      "state": "OK",
+      "summary": "Runtime database healthy",
+      "details": {
+        "busy_timeout": "5000",
+        "db_path": "/repo/.git/mindrail/mindrail.db",
+        "foreign_keys": "1",
+        "journal_mode": "wal",
+        "synchronous": "1"
+      },
+      "duration_ms": 0
+    },
+    {
+      "name": "migrations",
+      "section": "Runtime store",
+      "state": "OK",
+      "summary": "Schema up to date (version 1)",
+      "details": {
+        "applied": "1",
+        "current_version": "1",
+        "pending": "0"
+      },
+      "duration_ms": 0
+    },
+    {
+      "name": "knowledge",
+      "section": "Knowledge",
+      "state": "DEGRADED",
+      "summary": "Knowledge store has unreadable records",
+      "diagnostic": ".mindrail/knowledge/decisions/dec-9.json: invalid character '}' looking for beginning of object key string",
+      "impact": "The reported records are invisible to every command; the rest of the store is unaffected.",
+      "next_action": [
+        "Fix or remove .mindrail/knowledge/decisions/dec-9.json."
+      ],
+      "code": "KNOWLEDGE_UNREADABLE",
+      "details": {
+        "decisions": "2",
+        "invariants": "1",
+        "present": "true",
+        "readable_schema_versions": "1",
+        "root": ".mindrail/knowledge",
+        "write_schema_version": "1"
+      },
+      "duration_ms": 0
+    },
+    {
+      "name": "workspace",
+      "section": "Workspace",
+      "state": "OK",
+      "summary": "Workspace registered",
+      "details": {
+        "is_linked_worktree": "false",
+        "project_id": "PRJ-01JQ8N6X5T0000000000000000",
+        "workspace_id": "WS-01JQ8N6X5T0000000000000000"
+      },
+      "duration_ms": 0
+    }
+  ],
+  "worst_state": "DEGRADED",
+  "duration_ms": 0
+}

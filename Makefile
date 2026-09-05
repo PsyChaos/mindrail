@@ -12,6 +12,12 @@ CMD      := ./cmd/mindrail
 TAGS ?=
 GOFLAGS_TAGS := $(if $(TAGS),-tags $(TAGS),)
 
+# The smoke tests carry their own build tag. It is appended to TAGS rather than
+# replacing it, because a second -tags flag would silently drop whichever tags
+# the driver needs.
+COMMA := ,
+SMOKE_TAGS := $(if $(TAGS),$(TAGS)$(COMMA)smoke,smoke)
+
 .DEFAULT_GOAL := check
 
 .PHONY: build
@@ -25,6 +31,15 @@ test: ## Run the unit and integration test suite
 .PHONY: race
 race: ## Run the suite under the race detector (tech-stack §96)
 	go test $(GOFLAGS_TAGS) -race $(PKG)
+
+# The smoke tests compile the binary and drive it as a subprocess, so they are
+# slower and need a real git. They sit behind a build tag rather than in the
+# default suite because `make test` has to stay fast enough to run on every
+# save (tech-stack §136). -count=1 keeps a cached pass from standing in for a
+# build that has since changed.
+.PHONY: smoke
+smoke: ## Run the clean-binary smoke tests (tech-stack §136)
+	go test -tags $(SMOKE_TAGS) -count=1 -timeout 300s ./cmd/...
 
 .PHONY: cover
 cover: ## Run the suite and write a coverage profile

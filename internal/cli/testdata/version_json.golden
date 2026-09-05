@@ -1,0 +1,9 @@
+command
+data.commit
+data.go
+data.mcp_compatibility
+data.platform
+data.readable_schema_versions[]
+data.version
+data.write_schema_version
+ok
