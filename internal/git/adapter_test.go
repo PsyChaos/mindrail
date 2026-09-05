@@ -3,7 +3,10 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -133,14 +136,32 @@ func TestAdapterResolveNotARepository(t *testing.T) {
 
 // TestAdapterResolveInsideGitDirectory pins the case the classifier already
 // separates in code: git found a repository, said this is not its worktree and
-// said it is not bare, which leaves only "inside .git". Collapsing it into the
-// outside-every-repository error hands the reader a remedy — `git init` — that
-// creates a nested repository when it is followed.
+// said it is not bare, which leaves "inside a Git directory". Collapsing it into
+// the outside-every-repository error hands the reader a remedy — `git init` —
+// that creates a nested repository when it is followed.
+//
+// The scripted git here is the one that cannot name a worktree from where it
+// stands, which is what an ordinary .git directory answers.
 func TestAdapterResolveInsideGitDirectory(t *testing.T) {
-	const startDir = "/srv/repo/.git/refs"
+	// The paths are on disk because the classifier confirms the worktree it is
+	// about to name rather than deriving it from spelling; a scripted answer
+	// pointing at nothing would exercise a different branch than the one this
+	// test is about.
+	worktreeRoot := t.TempDir()
+	gitDir := filepath.Join(worktreeRoot, ".git")
+	startDir := filepath.Join(gitDir, "refs")
+	if err := os.MkdirAll(startDir, 0o700); err != nil {
+		t.Fatalf("create the .git fixture: %v", err)
+	}
+
 	fake := &FakeRunner{Responses: map[string]FakeResponse{
 		"rev-parse --is-inside-work-tree": {Stdout: "false\n"},
 		"rev-parse --is-bare-repository":  {Stdout: "false\n"},
+		"rev-parse --path-format=absolute --show-toplevel": {
+			Stderr: "fatal: this operation must be run in a work tree\n",
+			Err:    errors.New("exit status 128"),
+		},
+		"rev-parse --path-format=absolute --git-common-dir": {Stdout: gitDir + "\n"},
 	}}
 
 	repo, err := NewAdapter(fake).Resolve(context.Background(), startDir)
@@ -156,8 +177,13 @@ func TestAdapterResolveInsideGitDirectory(t *testing.T) {
 	if !errors.Is(err, ErrNotARepository) {
 		t.Fatalf("Resolve error = %v, want it to still unwrap to ErrNotARepository", err)
 	}
-	if len(fake.Calls) != 2 {
-		t.Fatalf("made %d invocations, want 2: %v", len(fake.Calls), fake.Calls)
+	// Four probes: is-inside-work-tree, is-bare-repository, and then the two
+	// that replace the guess about where the worktree is (finding D6).
+	if len(fake.Calls) != 4 {
+		t.Fatalf("made %d invocations, want 4: %v", len(fake.Calls), fake.Calls)
+	}
+	if !fakeAsked(fake, "--show-toplevel") {
+		t.Errorf("the adapter decided where the worktree is without asking git: %v", fake.Calls)
 	}
 
 	payload, ok := app.PayloadOf(err)
@@ -177,6 +203,20 @@ func TestAdapterResolveInsideGitDirectory(t *testing.T) {
 		t.Errorf("start_dir metadata = %q, want %q", payload.Metadata["start_dir"], startDir)
 	}
 
+	// The remedy has to name the worktree, not describe it. "the directory that
+	// contains this .git" was the previous wording and it is what made the whole
+	// class of repositories in finding D6 loop.
+	if payload.Metadata["worktree_root"] != worktreeRoot {
+		t.Errorf("worktree_root metadata = %q, want %q", payload.Metadata["worktree_root"], worktreeRoot)
+	}
+	if payload.Metadata["git_common_dir"] != gitDir {
+		t.Errorf("git_common_dir metadata = %q, want %q", payload.Metadata["git_common_dir"], gitDir)
+	}
+	assertRemedyDestinationsAreReal(t, startDir, payload)
+	if !strings.Contains(payload.NextAction[0], worktreeRoot) {
+		t.Errorf("next_action %q does not name the worktree %q", payload.NextAction[0], worktreeRoot)
+	}
+
 	outside, _ := app.PayloadOf(notARepositoryError(startDir, "", nil))
 	if payload.Why == outside.Why {
 		t.Errorf("the .git case reuses the outside-every-repository why: %q", payload.Why)
@@ -187,6 +227,54 @@ func TestAdapterResolveInsideGitDirectory(t *testing.T) {
 	for _, action := range payload.NextAction {
 		if strings.Contains(action, "git init") {
 			t.Errorf("next_action %q would create a repository inside .git", action)
+		}
+	}
+}
+
+// fakeAsked reports whether any recorded invocation carried the given argument.
+func fakeAsked(fake *FakeRunner, arg string) bool {
+	for _, call := range fake.Calls {
+		if slices.Contains(call.Args, arg) {
+			return true
+		}
+	}
+	return false
+}
+
+// changeIntoDestinations extracts every path a remedy tells the reader to move
+// to. The remedies quote the path, which is what makes them machine-checkable —
+// and checkable is the point: the defect in finding D6 was a remedy naming a
+// directory that either was the one the reader already stood in or did not
+// exist.
+var changeIntoPattern = regexp.MustCompile(`change into "([^"]+)"`)
+
+func changeIntoDestinations(payload app.ErrorPayload) []string {
+	var dests []string
+	for _, action := range payload.NextAction {
+		for _, match := range changeIntoPattern.FindAllStringSubmatch(action, -1) {
+			dests = append(dests, match[1])
+		}
+	}
+	return dests
+}
+
+// assertRemedyDestinationsAreReal is the loop guard. Every "change into X" a
+// remedy prints must name a directory that exists and is not the directory the
+// reader is standing in, or following the remedy changes nothing.
+func assertRemedyDestinationsAreReal(t *testing.T, startDir string, payload app.ErrorPayload) {
+	t.Helper()
+
+	for _, dest := range changeIntoDestinations(payload) {
+		if dest == startDir {
+			t.Errorf("next_action tells the reader to change into %q, which is where they already are", dest)
+		}
+		info, err := os.Stat(dest)
+		if err != nil {
+			t.Errorf("next_action names %q, which cannot be reached: %v", dest, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("next_action names %q, which is not a directory", dest)
 		}
 	}
 }

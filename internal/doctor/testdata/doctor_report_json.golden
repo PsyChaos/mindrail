@@ -26,6 +26,8 @@
         "cache_dir_usable": "true",
         "db_path": "/repo/.git/mindrail/mindrail.db",
         "repo_config_dir": "/repo/.mindrail",
+        "repo_config_dir_exists": "true",
+        "repo_config_dir_usable": "true",
         "runtime_root": "/repo/.git/mindrail",
         "runtime_root_exists": "true",
         "runtime_root_usable": "true"
@@ -58,6 +60,7 @@
       "details": {
         "busy_timeout": "5000",
         "db_path": "/repo/.git/mindrail/mindrail.db",
+        "db_writable": "true",
         "foreign_keys": "1",
         "journal_mode": "wal",
         "synchronous": "1"

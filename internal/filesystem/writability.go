@@ -203,8 +203,32 @@ func (p RuntimePaths) ProbeWritable() (Writability, bool) {
 	return probeDir(RootRuntime, p.RuntimeRoot), true
 }
 
+// ProbeRepoConfig reports whether <worktree>/.mindrail is usable, creating
+// nothing.
+//
+// It is a separate method rather than a third entry in ProbeRoots because
+// ProbeRoots is the probe half of EnsureDirs, and EnsureDirs deliberately does
+// not create this directory: it is repository content that only `init` may
+// write. Leaving it unprobed for that reason is what produced finding D4 —
+// nothing ever asked whether the scaffold could be laid down, so a checkout
+// whose worktree refuses new entries was reported as merely uninitialised, at
+// exit 0, with `mindrail init` as the whole remedy, and that init failed with
+// exit 4 every time it was run. The answer carries RootRepository, so a caller
+// grading by root kind never files it under one of the machine-local roots.
+//
+// The second result is false when there was nothing to probe, with the same
+// meaning it has on ProbeWritable: a zero Writability is an unasked question,
+// never an unwritable directory.
+func (p RuntimePaths) ProbeRepoConfig() (Writability, bool) {
+	if p.RepoConfigDir == "" {
+		return Writability{}, false
+	}
+	return probeDir(RootRepository, p.RepoConfigDir), true
+}
+
 // ProbeRoots answers for every runtime directory, in the order EnsureDirs would
-// create them, creating nothing.
+// create them, creating nothing. The repository config directory is not among
+// them and is asked for separately with ProbeRepoConfig.
 //
 // Grading the answers is the caller's job. MR-001 stores nothing in the cache
 // directory, so an unusable one does not stop the same commands an unusable
@@ -267,11 +291,19 @@ func dangling(dir string) bool {
 	return err != nil
 }
 
-// nearestExisting returns the longest prefix of dir that is on disk, with its
-// stat. When the directory itself is absent that prefix is the one a create
+// nearestExisting returns the longest prefix of dir that can be inspected, with
+// its stat. When the directory itself is absent that prefix is the one a create
 // would have to happen in, which is where the permission has to be and so what
 // a remedy has to name: telling a user to fix the mode of a directory that is
 // not there is not a remedy.
+//
+// Every stat failure walks up, not only ErrNotExist. A component that cannot be
+// stat'ed at all cannot be chmod'ed either — the mode refusing the lookup
+// belongs to something above it — so stopping at it named a path the printed
+// remedy could not be carried out on: with .mindrail at mode 0000, `init`
+// advised checking the permissions on .mindrail/config.toml, a path no chmod can
+// reach. The walk ends at the first component the kernel will answer for, which
+// is the one holding the mode.
 func nearestExisting(dir string) (string, os.FileInfo, error) {
 	current := filepath.Clean(dir)
 	for {
@@ -279,15 +311,65 @@ func nearestExisting(dir string) (string, os.FileInfo, error) {
 		if err == nil {
 			return current, info, nil
 		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return current, nil, err
-		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			return current, nil, err
 		}
 		current = parent
 	}
+}
+
+// ObstructedDir reports the entry standing where one of Mindrail's directories
+// has to be, and nil when the path is free to be one.
+//
+// It is the read side of the question probeDir answers for writes, and the two
+// are deliberately not the same question. A regular file at <worktree>/.mindrail
+// makes every path below it unreachable with ENOTDIR, so no configuration file
+// can be read and none can be written; that is one condition, and it used to be
+// diagnosed as two. The config loader rendered it CONFIG_INVALID at exit 2 with
+// "fix or remove the offending entry in .mindrail/config.toml" — a file that
+// cannot be opened, let alone edited — while `init` called the same disk
+// RUNTIME_PATH_UNWRITABLE at exit 4 and sent the reader to check permissions on
+// a file that was mode 0644 and owned by them (finding D5). Both now ask this,
+// so both say the one true thing: something else is there, move it.
+//
+// Absence and an unwritable directory are deliberately not obstructions. A
+// checkout on read-only media can still be read, and refusing to load its
+// configuration would stop commands that work today to report a condition that
+// only stops writes — which is ProbeRepoConfig's answer, graded by whoever needs
+// to write.
+func ObstructedDir(kind RootKind, dir string) error {
+	clean := filepath.Clean(dir)
+
+	if dangling(clean) {
+		return unwritablePathError(kind, dir, clean, ErrDanglingSymlink)
+	}
+	// os.Stat, not Lstat: decision D-32 allows an inside-root symlink, so a link
+	// to a real directory is a directory here and not an obstruction.
+	info, err := os.Stat(clean)
+	if err != nil || info.IsDir() {
+		return nil
+	}
+	return unwritablePathError(kind, dir, clean, ErrNotDirectory)
+}
+
+// UnwritablePath reports a path beneath one of Mindrail's roots that could not
+// be created or written, classified and remedied exactly as the roots
+// themselves are.
+//
+// It exists so that a package which writes into a root — the repository
+// scaffolding under .mindrail/, in particular — describes a failure in the same
+// sentence, with the same remedy, as the probe that predicted it. Hand-rolling
+// the sentence is how `init` came to advise "check the permissions and free
+// space on <repo>/.mindrail" for a directory that does not exist and never
+// could: the mode that refused the create belongs to the worktree above it, and
+// a remedy naming a path that is not there cannot be carried out (finding D4).
+//
+// subject is the noun phrase naming what is at path, for paths that are not the
+// root itself; empty means the root's own name.
+func UnwritablePath(kind RootKind, subject, path string, cause error) error {
+	probed, _, _ := nearestExisting(path)
+	return unwritableSubjectError(kind, subject, path, probed, cause)
 }
 
 // unwritablePathError reports a runtime location Mindrail cannot use.
@@ -303,7 +385,19 @@ func nearestExisting(dir string) (string, os.FileInfo, error) {
 // The same function serves the probe and the create, so `doctor` and `init`
 // cannot describe one condition two ways.
 func unwritablePathError(kind RootKind, dir, probed string, cause error) error {
-	label := string(kind)
+	return unwritableSubjectError(kind, "", dir, probed, cause)
+}
+
+// unwritableSubjectError is unwritablePathError with the noun phrase separated
+// from the root kind, so that a path *inside* a root is named as what it is
+// rather than as the root. The kind still decides the impact, the metadata and
+// the relocation escape hatch, because those are properties of the root and not
+// of the individual entry that failed.
+func unwritableSubjectError(kind RootKind, subject, dir, probed string, cause error) error {
+	label := subject
+	if label == "" {
+		label = string(kind)
+	}
 	why := fmt.Sprintf("the %s %q could not be created", label, dir)
 	next := []string{fmt.Sprintf("check the permissions on %q", probed)}
 
@@ -332,7 +426,7 @@ func unwritablePathError(kind RootKind, dir, probed string, cause error) error {
 		next...,
 	).WithMetadata("path", dir).
 		WithMetadata("probed_path", probed).
-		WithMetadata("root_kind", label).
+		WithMetadata("root_kind", string(kind)).
 		WithMetadata("detail", cause.Error()).
 		WithCause(cause)
 }

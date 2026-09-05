@@ -54,6 +54,11 @@ const (
 	// the WAL sidecars SQLite has to create there.
 	BlockerDirectory WriteBlocker = "runtime_directory"
 
+	// BlockerNoSpace means the filesystem under the database has no space left.
+	// Every mode bit in the footprint is correct and every write fails anyway,
+	// which is the one blocker here that no chmod can clear.
+	BlockerNoSpace WriteBlocker = "no_space"
+
 	// BlockerObstruction means the path is occupied by something that is not a
 	// database file, which Probe describes in full.
 	BlockerObstruction WriteBlocker = "obstruction"
@@ -101,10 +106,20 @@ type WriteAccess struct {
 // diagnosing. The question is therefore asked of the filesystem, which can answer
 // it with no side effect at all.
 //
-// Three things have to be true, and only three. The main file, when it exists,
+// Four things have to be true, and only four. The main file, when it exists,
 // has to accept writes. The `-shm` index, when it exists, has to accept them
-// too. And SQLite has to be able to make whichever sidecars are missing, which
-// means either the directory accepts new entries or nothing is missing.
+// too. SQLite has to be able to make whichever sidecars are missing, which
+// means either the directory accepts new entries or nothing is missing. And the
+// filesystem underneath has to have somewhere to put the bytes.
+//
+// The fourth was the gap this probe was still carrying after it closed the
+// third. access(2) answers from mode bits, and mode bits cannot see a full
+// filesystem: after a full disk aborted the first migration, `doctor` printed
+// `db_writable: true` and `✓ Runtime database healthy` over a repository where
+// `mindrail init` failed with exit 4 every single time, and prescribed that same
+// init. Permission and space are separate facts about one write, and answering
+// only the first is a confident wrong answer rather than an incomplete one. See
+// statFreeSpace for what that reading can and cannot see.
 //
 // The `-wal`'s own mode is deliberately not part of the answer; see the suffix
 // constants for the measurement behind that. Getting it wrong in either
@@ -141,13 +156,26 @@ func ProbeWriteAccess(path string) WriteAccess {
 	}
 
 	dir := filepath.Dir(path)
-	dirErr := accessWritableDir(dir)
-	if dirErr == nil {
-		result.Writable = true
-		return result
+	if dirErr := accessWritableDir(dir); dirErr != nil {
+		if refused := result.withoutADirectoryToWriteIn(dir, dirErr); !refused.Writable {
+			return refused
+		}
 	}
 
-	return result.withoutADirectoryToWriteIn(dir, dirErr)
+	// Space is asked last, and it is asked of every path that got this far --
+	// including one whose database does not exist yet, because "could `mindrail
+	// init` write here?" is the question and init has to write.
+	//
+	// It is last because permission is the more specific answer. A read-only
+	// database file on a full disk has two things wrong with it, and the chmod is
+	// the one the user can act on first; reporting the disk instead would leave
+	// them to discover the mode bits after they had freed the space.
+	if spaceErr := noSpaceRefusal(dir); spaceErr != nil {
+		return result.blockedBy(BlockerNoSpace, dir, spaceErr)
+	}
+
+	result.Writable = true
+	return result
 }
 
 // withoutADirectoryToWriteIn decides the case where the directory holding the
@@ -176,8 +204,24 @@ func (a WriteAccess) blockedBy(blocker WriteBlocker, blocked string, cause error
 	a.Writable = false
 	a.Blocker = blocker
 	a.Blocked = blocked
-	a.Err = unwritableDatabaseError(a.Path, blocker, blocked, cause)
+	a.Err = writeRefusalError(a.Path, blocker, blocked, cause)
 	return a
+}
+
+// writeRefusalError picks the diagnosis for a refusal, and exists because there
+// are two of them rather than one with a variable noun.
+//
+// Three of the four refusals that reach here are permission -- the database
+// file, its `-shm`, the directory -- and their remedy is a chmod on a path this
+// package can name. The fourth is space, and its remedy has nothing to do with
+// permission at all. Routing both through one constructor is how a
+// report ends up telling someone whose filesystem is full to restore write
+// permission on a file whose mode was already correct.
+func writeRefusalError(path string, blocker WriteBlocker, blocked string, cause error) error {
+	if blocker == BlockerNoSpace {
+		return noSpaceDatabaseError(path, blocked, cause)
+	}
+	return unwritableDatabaseError(path, blocker, blocked, cause)
 }
 
 // unwritableDatabaseError reports a runtime database that can be read and not

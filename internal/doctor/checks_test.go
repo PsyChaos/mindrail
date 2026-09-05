@@ -932,6 +932,28 @@ func healthySubject() Subject {
 				Exists:  true,
 				Usable:  true,
 			},
+			// The third root, for the same reason again. A fixture that leaves the
+			// repository config directory unprobed cannot fail a check that grades
+			// it wrongly, and for five audits nothing in this package asked about
+			// it at all (finding D4).
+			RepoConfigDirKnown: true,
+			RepoConfigDir: filesystem.Writability{
+				Dir:     "/repo/.mindrail",
+				Kind:    filesystem.RootRepository,
+				Purpose: filesystem.RootRepository.Purpose(),
+				Probed:  "/repo/.mindrail",
+				Exists:  true,
+				Usable:  true,
+			},
+			// And the write probe, because "the database opened" and "a write
+			// would land" are the two facts finding W5 and finding D1 are about,
+			// and a healthy fixture that answers only the first cannot fail a
+			// check that reports OK without consulting the second.
+			DBWriteKnown: true,
+			DBWrite: storage.WriteAccess{
+				Path:     "/repo/.git/mindrail/mindrail.db",
+				Writable: true,
+			},
 		},
 	}
 }

@@ -162,9 +162,17 @@ func TestOrphanedLinkedWorktreeIsNotDiagnosedAsAnAbsentRepository(t *testing.T) 
 }
 
 // TestOrphanedLinkedWorktreeWithASurvivingRepository is the neighbouring shape:
-// the administrative directory is gone but the repository is still there, so
-// the remedy is `git worktree prune` rather than restoring a repository that
-// has not moved. It is here to prove the two are told apart, not merged.
+// the administrative directory is gone but the repository is still there, so the
+// remedy is taken in that repository rather than by restoring one that has not
+// moved. It is here to prove the two are told apart, not merged.
+//
+// It used to assert that the remedy said `git worktree prune`, and that
+// assertion was wrong: prune only removes administrative records for worktrees
+// that have gone missing, so against a record that is already gone it prints
+// nothing and changes nothing, and the `git worktree add` that followed it
+// failed with "fatal: '<path>' already exists". A test that pins a remedy nobody
+// can carry out is worse than no test, so it now pins the one that was measured
+// to work — and pins the absence of the one that does not.
 func TestOrphanedLinkedWorktreeWithASurvivingRepository(t *testing.T) {
 	repo := newRepoFixture(t)
 	linked := filepath.Join(filepath.Dir(repo), "linked")
@@ -181,8 +189,20 @@ func TestOrphanedLinkedWorktreeWithASurvivingRepository(t *testing.T) {
 
 	payload, _ := app.PayloadOf(err)
 	remedy := strings.Join(payload.NextAction, " ")
-	if !strings.Contains(remedy, "git worktree prune") {
-		t.Errorf("next_action = %q, want the prune remedy: the repository is still there", payload.NextAction)
+	if !strings.Contains(remedy, "git worktree add "+linked) {
+		t.Errorf("next_action = %q, want the worktree re-created in the repository that is still there",
+			payload.NextAction)
+	}
+	// `git worktree add` refuses a path that exists, and this one does: the
+	// reader is standing in it. A remedy that does not say to empty it first is
+	// one that fails on its own first line.
+	if !strings.Contains(remedy, "move "+linked+" aside") {
+		t.Errorf("next_action = %q does not say to move %s aside; `git worktree add` refuses an existing directory",
+			payload.NextAction, linked)
+	}
+	if strings.Contains(remedy, "run `git worktree prune`") {
+		t.Errorf("next_action = %q prescribes a prune that cannot restore a record that is already gone",
+			payload.NextAction)
 	}
 	if strings.Contains(remedy, "restore the repository") {
 		t.Errorf("next_action = %q tells the reader to restore a repository that has not moved", payload.NextAction)

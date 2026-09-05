@@ -281,14 +281,34 @@ func observationNote(o Observation) string {
 	}
 }
 
-// observed hides a value the report cannot vouch for. Printing the zero of a
-// field nobody filled in is how a report ends up asserting "initialized: false"
-// about a repository whose database it merely failed to open.
+// observed qualifies a value the report cannot vouch for. Printing the zero of a
+// field nobody filled in as a bare fact is how a report ends up asserting
+// "initialized: false" about a repository whose database it merely failed to
+// open (finding F15).
+//
+// It used to replace the value with the word "unknown", and that produced a
+// second defect one layer over: `mindrail status` printed `Initialized: unknown`
+// while `mindrail status --json`, on the same repository at the same instant,
+// published `"initialized": false`. Two renderings of one report stated
+// different things, and a reader who compared them had to work out from the
+// source which of the two the tool actually believed.
+//
+// So the value is printed, and the observation is printed beside it, in the
+// exact spelling the JSON member carries. Both views now say the same value and
+// the same qualifier, and a reader can diff one against the other.
+//
+// Emitting JSON null for these members was the other way to make them agree, and
+// it is the better answer in the abstract: null is what "unknown" is in JSON.
+// It was not taken here because it turns six report members into pointers on a
+// wire contract that consumers already read correctly through `observation` —
+// which the type documentation has said qualifies every field beside it since
+// the field existed — and this pass was not the one to spend a contract change
+// on. The disagreement is what was reported, and the disagreement is gone.
 func observed(o Observation, value string) string {
-	if !o.Known() {
-		return "unknown"
+	if o.Known() {
+		return value
 	}
-	return value
+	return value + " (" + string(o) + ")"
 }
 
 func pad(s string, width int) string {

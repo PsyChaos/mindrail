@@ -337,20 +337,32 @@ func (a *App) Diagnose(verdict error) error {
 // chains intact, most authoritative first.
 //
 // The start error is one of them, but not the only one: a runtime directory
-// nothing can write and a database path occupied by a directory are both
-// invisible to startup — a read-only start treats an unopenable database as a
-// repository that was never initialised — and are established instead by
-// doctor's read-only probe.
+// nothing can write, a database path occupied by a directory and a worktree that
+// will not accept the repository scaffolding are all invisible to startup — a
+// read-only start treats an unopenable database as a repository that was never
+// initialised — and are established instead by doctor's read-only probe.
+//
+// Order is authority, and the list holds only probes whose failure the report
+// actually claims. The write-access probe is deliberately absent: it reports a
+// runtime directory that does not exist yet as "not writable", which is true of
+// every uninitialised repository and is not a condition any check publishes, so
+// listing it handed an unrelated RUNTIME_PATH_UNWRITABLE verdict a cause about a
+// database path that was perfectly fine. Where that probe's answer *is* claimed,
+// the check carries its payload directly.
 func (a *App) diagnosedFailures() []error {
-	failures := make([]error, 0, 3)
+	probes := a.doctorSubject.Probes
+
+	failures := make([]error, 0, 4)
 	if a.startErr != nil {
 		failures = append(failures, a.startErr)
 	}
-	if a.doctorSubject.Probes.DBPathErr != nil {
-		failures = append(failures, a.doctorSubject.Probes.DBPathErr)
+	if probes.DBPathErr != nil {
+		failures = append(failures, probes.DBPathErr)
 	}
-	if err := a.doctorSubject.Probes.RuntimeDir.Err; err != nil {
-		failures = append(failures, err)
+	for _, err := range []error{probes.RuntimeDir.Err, probes.RepoConfigDir.Err} {
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
 	return failures
 }
@@ -423,6 +435,27 @@ func (a *App) loadConfig(context.Context) error {
 	worktreeRoot := a.subject.Repo.WorktreeRoot
 
 	if a.opts.Mode == ModeInit {
+		// Asked before anything is written, and asked with the same function the
+		// loader asks below, because the two used to answer differently about one
+		// disk. A dangling `.mindrail` symlink pointing inside the worktree is
+		// refused by the read path — `status` and `doctor` exit 4 with "remove or
+		// repoint the link" — while the write path resolved through it and
+		// silently created the link's target, laid the whole scaffold down there
+		// and reported success at exit 0. One condition, two opposite verdicts,
+		// decided by which command the reader happened to run.
+		//
+		// Refusing before acting rather than after is the half that matters:
+		// materialising a broken link is not something a later error message can
+		// take back.
+		if worktreeRoot != "" {
+			repoDir := filepath.Join(worktreeRoot, config.RepoDir)
+			if obstruction := filesystem.ObstructedDir(filesystem.RootRepository, repoDir); obstruction != nil {
+				a.initResult.ConfigPath = filepath.Join(repoDir, config.ConfigFileName)
+				a.subject.ConfigErr = obstruction
+				return obstruction
+			}
+		}
+
 		path, created, err := config.WriteIfAbsent(worktreeRoot)
 		a.initResult.ConfigPath = path
 		a.initResult.ConfigCreated = created

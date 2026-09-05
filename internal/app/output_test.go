@@ -138,6 +138,12 @@ func TestColorEnabledRespectsNoColor(t *testing.T) {
 		{"never disables color", terminal, nil, "never", false, false},
 		{"unrelated env var is ignored", terminal, []string{"NO_COLORS=1", "COLORTERM=truecolor"}, "auto", false, true},
 		{"non terminal writer disables color", func() *os.File { return regularFile(t) }, nil, "auto", false, false},
+		// The row that gives "always" a meaning. Overriding terminal detection is
+		// the whole difference between it and "auto"; without it the scaffolded
+		// config.toml documents three settings of which two are one, and a user
+		// who set it got a value that reported itself as accepted and did nothing.
+		{"always colours a redirected stream", func() *os.File { return regularFile(t) }, nil, "always", false, true},
+		{"always still yields to never elsewhere in the stack", terminal, nil, "never", false, false},
 	}
 
 	for _, tt := range tests {
@@ -153,8 +159,17 @@ func TestColorEnabledRespectsNoColor(t *testing.T) {
 	}
 
 	t.Run("a non-file writer is never a terminal", func(t *testing.T) {
-		if ColorEnabled(&bytes.Buffer{}, nil, "always", false) {
+		if ColorEnabled(&bytes.Buffer{}, nil, "auto", false) {
 			t.Errorf("ColorEnabled(buffer) = true, want false")
+		}
+	})
+
+	// The same buffer with "always" is the point of the setting, and it is
+	// asserted beside its opposite so the two cannot be confused for each other
+	// by a later edit.
+	t.Run("a non-file writer still takes colour when it was asked for", func(t *testing.T) {
+		if !ColorEnabled(&bytes.Buffer{}, nil, "always", false) {
+			t.Errorf(`ColorEnabled(buffer, "always") = false; the setting has no other meaning`)
 		}
 	})
 }

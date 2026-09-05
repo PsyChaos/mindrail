@@ -29,8 +29,28 @@ const (
 )
 
 // sqlitePrimaryCodeMask strips the extended result code, whose high bits carry
-// a sub-reason we do not classify on.
+// a sub-reason most of the classifiers here do not need.
 const sqlitePrimaryCodeMask = 0xff
+
+// Extended SQLite result codes, for the one question the primary code cannot
+// answer.
+//
+// SQLITE_IOERR on its own is "some I/O call failed", which is not a condition
+// anybody can act on; the sub-reason in the high bits is the whole diagnosis.
+// SQLITE_IOERR_SHMSIZE is returned when the `-shm` file beside a WAL database
+// cannot be grown to the size SQLite needs, and on a Unix VFS the way that
+// happens is that the filesystem will not give it the bytes. It is what a full
+// disk looks like at *open* time rather than at write time: the database is
+// opened, its `-wal` and `-shm` are created costing no data blocks, and the
+// first attempt to size the shared-memory index fails.
+//
+// It was measured, not guessed. `mindrail status` against a cleanly closed,
+// fully migrated database on a tmpfs with zero bytes available comes back with
+// `disk I/O error (4874)` -- 4874 is SQLITE_IOERR | (19<<8) -- which classified
+// as "everything else" and produced the fallback remedy "check that the Git
+// common directory exists and is writable", over a directory that existed and
+// was writable.
+const sqliteIOErrShmSize = 4874 // SQLITE_IOERR_SHMSIZE
 
 // dsn renders the connection string. The four pragmas of spec §10 travel as
 // DSN parameters so the driver applies them to every connection it opens,
@@ -82,12 +102,46 @@ func isReadOnlyError(err error) bool {
 	return hasPrimaryCode(err, sqliteReadOnly)
 }
 
-// isDiskFullError reports a write that failed for want of space rather than for
+// isDiskFullError reports a failure that came from want of space rather than
 // want of permission. It is the one condition in this file that no change to the
 // database or its path can clear, so collapsing it into "unwritable" would hand
 // the user a chmod for a full disk.
 func isDiskFullError(err error) bool {
-	return hasPrimaryCode(err, sqliteFull)
+	code, ok := driverResultCode(err)
+	return ok && diskFullCode(code)
+}
+
+// diskFullCode is the policy half of isDiskFullError, kept apart from the
+// error-unwrapping half so it can be exercised over the result codes SQLite can
+// actually return rather than only over the one a test managed to provoke.
+//
+// Two codes mean "there was no room", and the audit behind that short list is
+// worth writing down, because the surrounding SQLITE_IOERR_* family looks like
+// it belongs and does not:
+//
+//   - SQLITE_FULL (13, in any extended form) is the write-time answer. The Unix
+//     VFS converts an ENOSPC out of write(2) into SQLITE_FULL itself, which is
+//     precisely why SQLITE_IOERR_WRITE (778) is *not* here: by the time it is
+//     returned, ENOSPC has already been ruled out and what is left is a real
+//     I/O error, whose remedy is not "free space".
+//   - SQLITE_IOERR_SHMSIZE (4874) is the open-time answer, measured above.
+//
+// Deliberately excluded, each for its own reason: SQLITE_IOERR_FSYNC (1034) and
+// SQLITE_IOERR_DIR_FSYNC (1290) are a failed flush, which on a delayed-allocation
+// filesystem can be caused by a full disk but is far more often hardware, and
+// claiming the disk is full when a drive is failing sends the user to the wrong
+// place entirely; SQLITE_IOERR_TRUNCATE (1546) shrinks a file, which does not
+// need space; SQLITE_IOERR_SHMOPEN (4618) and SQLITE_IOERR_SHMMAP (5386) are a
+// failed open and a failed mmap of the shared-memory index, which are a
+// permission problem and a memory problem respectively; SQLITE_IOERR_NOMEM
+// (3082) is memory, not disk. SQLITE_CANTOPEN (14) is excluded too: creating the
+// empty `-wal` and `-shm` costs no data blocks and normally succeeds even at zero
+// bytes free, so on a full disk it is rarely the code -- while a missing path or
+// a refused permission produces it constantly, and a remedy telling those users
+// to free space would be a dead end of exactly the kind this classification
+// exists to remove.
+func diskFullCode(code int) bool {
+	return code&sqlitePrimaryCodeMask == sqliteFull || code == sqliteIOErrShmSize
 }
 
 // isCorruptError distinguishes "this file is not a usable database" from every
@@ -104,16 +158,28 @@ func isCorruptError(err error) bool {
 // classifier that forgot the mask would silently stop matching the moment SQLite
 // returned the extended form of the code it was looking for.
 func hasPrimaryCode(err error, want ...int) bool {
-	var sqliteErr *sqlitedriver.Error
-	if !errors.As(err, &sqliteErr) {
+	raw, ok := driverResultCode(err)
+	if !ok {
 		return false
 	}
 
-	code := sqliteErr.Code() & sqlitePrimaryCodeMask
+	code := raw & sqlitePrimaryCodeMask
 	for _, candidate := range want {
 		if code == candidate {
 			return true
 		}
 	}
 	return false
+}
+
+// driverResultCode extracts SQLite's result code from a failure, extended bits
+// and all. It is the only place in the repository that knows what a driver error
+// looks like, so a classifier that needs the sub-reason does not have to reach
+// for the driver type to get it.
+func driverResultCode(err error) (int, bool) {
+	var sqliteErr *sqlitedriver.Error
+	if !errors.As(err, &sqliteErr) {
+		return 0, false
+	}
+	return sqliteErr.Code(), true
 }

@@ -29,9 +29,19 @@ const (
 	contenderFailed = 21 // Open gave up
 )
 
+// TestMain dispatches the re-execs before it runs anything.
+//
+// Two of the conditions this package classifies exist only between processes or
+// only inside a namespace this one cannot enter: contention for a write lock,
+// and a filesystem with nothing left on it. Both are reproduced by starting this
+// same binary in the state that has them, so both have to be recognised here
+// before the suite starts.
 func TestMain(m *testing.M) {
 	if path := os.Getenv(contenderEnv); path != "" {
 		os.Exit(runContender(path))
+	}
+	if code, isChild := fullDiskChild(); isChild {
+		os.Exit(code)
 	}
 	os.Exit(m.Run())
 }

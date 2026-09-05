@@ -319,14 +319,52 @@ func notWALFailure(path, observed string) error {
 		WithCause(fmt.Errorf("%w: journal_mode is %q, want %q", ErrNotWAL, observed, expectedJournalMode))
 }
 
-// classifyOpenError splits a driver failure into the two conditions with
-// different remedies: a corrupt file must be removed and rebuilt, everything
-// else is an environment problem that may clear on its own.
+// classifyOpenError splits a driver failure into the conditions with different
+// remedies: a corrupt file must be removed and rebuilt, a full filesystem needs
+// space and nothing else, and everything left is an environment problem that may
+// clear on its own.
+//
+// The disk-full branch is not a refinement of the fallback, it is a repair of
+// it. On a genuinely full filesystem holding an already-initialised database,
+// every command failed here with the generic diagnosis below, whose first line
+// ("check that the Git common directory exists and is writable") is a dead end
+// -- the directory existed and was writable -- and whose second sends the user
+// to `mindrail init`, which fails identically. The user loops.
 func classifyOpenError(path string, cause error) error {
-	if isCorruptError(cause) {
+	switch {
+	case isCorruptError(cause):
 		return corruptFailure(path, cause)
+	case isDiskFullError(cause):
+		return diskFullOpenFailure(path, cause)
+	default:
+		return openFailure(path, cause)
 	}
-	return openFailure(path, cause)
+}
+
+// diskFullOpenFailure reports a database that could not be opened because the
+// filesystem under it has no space left.
+//
+// It is CodeRuntimePathUnwritable rather than CodeRuntimeDBUnavailable for the
+// same reason the probe in writable.go is: nothing is wrong with the database.
+// It is intact, it is readable the moment there is room for its shared-memory
+// index, and describing it as unavailable is what produced a remedy about the
+// Git common directory. Decision D-03 puts both codes at exit 4, so the exit
+// status a caller sees does not move.
+//
+// The remedy is word for word the one `mindrail init` prints when a migration
+// runs out of space, because it is the same condition seen a few milliseconds
+// earlier and a reader who meets it twice should not have to work out that it is.
+func diskFullOpenFailure(path string, cause error) error {
+	return app.NewError(
+		app.CodeRuntimePathUnwritable,
+		app.KindUnavailable,
+		"the filesystem holding the runtime database at "+path+" is full, so the database could not be opened",
+		"SQLite cannot size the shared-memory index a WAL database needs, so no command can read or write runtime state until there is space for it.",
+		"free space on the filesystem holding "+path,
+	).
+		WithMetadata("path", path).
+		WithMetadata("condition", "disk_full").
+		WithCause(fmt.Errorf("%w: %w", ErrDiskFull, cause))
 }
 
 func openFailure(path string, cause error) error {

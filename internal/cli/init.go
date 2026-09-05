@@ -8,7 +8,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
+	"github.com/PsyChaos/mindrail/internal/config"
 	"github.com/PsyChaos/mindrail/internal/doctor"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
+	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/status"
 )
 
@@ -36,6 +39,12 @@ func runInit(cmd *cobra.Command, o Options) error {
 		return inv.emit(nil, nil, nil, "", err)
 	}
 
+	// Asked before anything is written; see the function for why the alternative
+	// is not an alternative.
+	if refusal := inv.refuseUnrepresentableRepository(cmd.Context()); refusal != nil {
+		return inv.emit(nil, nil, nil, "", refusal)
+	}
+
 	started := time.Now()
 	application := bootstrap.New(bootstrap.Options{
 		StartDir: inv.startDir,
@@ -61,6 +70,68 @@ func runInit(cmd *cobra.Command, o Options) error {
 		return inv.emit(report, report.RenderHuman, a.Warnings(),
 			a.Config().Config.Output.Color, verdict)
 	})
+}
+
+// refuseUnrepresentableRepository stops `mindrail init --json` before it writes
+// anything, in a repository whose own paths JSON cannot carry unchanged.
+//
+// The refusal itself is not new: a repository path holding bytes that are not
+// valid UTF-8 has been refused since finding W9, because JSON encoding replaces
+// them with U+FFFD and would publish a location that does not exist on disk.
+// What was new was where it happened. `init` ran the whole §87 sequence first —
+// creating .mindrail/config.toml, both knowledge directories, the runtime
+// database, the schema and the workspace row — and only then, at the moment the
+// envelope was serialised, refused and exited 2. The command did every part of
+// its job and reported that it had failed, which is the worst of the two
+// answers available: a caller retrying on failure re-runs a completed
+// initialisation, and a caller trusting the exit code believes a repository is
+// uninitialised when it is not.
+//
+// Of the two honest fixes — refuse before acting, or act and report success
+// honestly — only the first is available. Reporting success would mean emitting
+// the paths, and emitting the paths is exactly what cannot be done; a report
+// that omitted them would answer "where does this repository's state live?" with
+// silence, in the one command whose whole output is that answer.
+//
+// The check costs a second read-only startup, and only on `init --json`. It is
+// the real startup rather than a hand-rolled prefix of it because the strings at
+// risk come from three different layers — git's answers, the configuration's
+// runtime overrides and the paths derived from both — and a second
+// implementation that resolved two of the three would refuse exactly the cases
+// it happened to know about. Read-only mode creates nothing (decision D-01), so
+// the probe leaves the disk as it found it.
+//
+// A start that failed produces no refusal. Whatever went wrong is the real run's
+// to report, and a repository nobody could resolve has no paths to be
+// unrepresentable.
+func (inv invocation) refuseUnrepresentableRepository(ctx context.Context) error {
+	if !inv.flags.json {
+		return nil
+	}
+
+	probe := bootstrap.New(bootstrap.Options{
+		StartDir: inv.startDir,
+		Mode:     bootstrap.ModeReadOnly,
+		Runner:   inv.runner(),
+		Logger:   inv.logger,
+		Environ:  inv.environ,
+	})
+	defer shutdown(ctx, probe, inv.logger)
+
+	if err := probe.Start(ctx); err != nil {
+		return nil
+	}
+
+	subject := probe.Subject()
+	return refuseUnrepresentableJSON(struct {
+		Repo   git.Repository
+		Paths  filesystem.RuntimePaths
+		Config config.Config
+	}{
+		Repo:   subject.Repo,
+		Paths:  subject.Paths,
+		Config: subject.Config.Config,
+	}, nil)
 }
 
 // initReportOf assembles what init did and how the repository ended up.

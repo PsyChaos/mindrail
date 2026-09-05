@@ -166,6 +166,25 @@ type Probes struct {
 	CacheDir      filesystem.Writability
 	CacheDirKnown bool
 
+	// RepoConfigDir answers the same question about <worktree>/.mindrail, the
+	// directory `mindrail init` lays the repository scaffolding down in.
+	//
+	// It is asked apart from the two above because EnsureDirs does not create it:
+	// it is repository content, committed and shared, not machine-local state.
+	// That exemption is exactly why nothing ever asked about it, and it is
+	// finding D4. On a checkout whose worktree refuses new entries, `doctor`
+	// printed `repo_config_dir` as a detail line, reported all seven checks OK,
+	// exited 0 and offered `mindrail init` as the remedy — and that init failed
+	// with RUNTIME_PATH_UNWRITABLE and exit 4 every single time it was run. The
+	// report named the directory and never asked the one question about it that
+	// decides whether its own remedy can succeed.
+	//
+	// RepoConfigDirKnown is the discriminator a zero value cannot supply, with
+	// the same meaning it has on the two roots above: an unasked question and an
+	// unwritable directory both leave Usable false.
+	RepoConfigDir      filesystem.Writability
+	RepoConfigDirKnown bool
+
 	// DBPath is what occupies the runtime database path, and DBPathErr the
 	// structured obstruction when that is something a database can never be.
 	// An empty DBPath means the question was not asked.
@@ -230,6 +249,16 @@ func Probe(s Subject) Subject {
 		}
 	}
 
+	// The repository config directory is not one of the roots EnsureDirs creates,
+	// so ProbeRoots has nothing to say about it — and neither did anything else
+	// in the report, which is finding D4. It is asked here, beside the roots,
+	// rather than by the check that reports it, so status and doctor read the
+	// same disk.
+	if repoConfig, known := s.Paths.ProbeRepoConfig(); known {
+		s.Probes.RepoConfigDir = repoConfig
+		s.Probes.RepoConfigDirKnown = true
+	}
+
 	// The presence probe only has something to add where bootstrap's own answer
 	// was "no database": RuntimePaths.Exists() is a stat that cannot tell an
 	// empty path from an occupied one, and the occupied case is precisely the
@@ -277,6 +306,69 @@ func (s Subject) obstruction() (diagnosis, bool) {
 	return diagnosis{}, false
 }
 
+// repoConfigBlocksInit reports a repository config directory that `mindrail
+// init` would fail on, as opposed to one it has no work left to do in.
+//
+// The distinction was measured rather than assumed, because guessing it in
+// either direction is a finding. Against a fully scaffolded `.mindrail` at mode
+// 0500, `mindrail init` exits 0: WriteIfAbsent finds config.toml already there
+// and writes nothing, EnsureKnowledgeDirs finds both knowledge directories and
+// their .gitkeep files already there and creates nothing, and the repository
+// keeps working. Grading that as fatal would be finding F13 again, one directory
+// over — a fully working repository driven to ERROR and exit 4 over a directory
+// this run never needs to write to. Against the same directory with
+// `.mindrail/knowledge` removed, init exits 4: the mkdir it has to perform lands
+// directly in `.mindrail`.
+//
+// So the condition is exactly "init still has an entry to create in .mindrail
+// itself", and the two entries it creates there are config.toml and knowledge/.
+// Both are already answered by the Subject: the config loader records RepoFile
+// only for a file it actually found, and the knowledge loader records Present
+// only for a directory it actually stat'ed. Re-deriving either from a path
+// string here would put a second copy of the scaffold's layout in a package that
+// does not own it.
+//
+// It claims nothing when the knowledge step never ran. A startup that stopped at
+// the runtime store leaves Knowledge.Present false because nobody looked, and
+// reading that as "the scaffold is missing" would be the report inventing a
+// finding out of an unasked question — the defect this whole file exists to
+// prevent.
+func (s Subject) repoConfigBlocksInit() bool {
+	if !s.Probes.RepoConfigDirKnown || s.Probes.RepoConfigDir.Usable {
+		return false
+	}
+	if !s.reached(stepValidateKnowledge) || s.KnowledgeErr != nil {
+		return false
+	}
+	return s.Config.RepoFile == "" || !s.Knowledge.Present
+}
+
+// repoConfigObstruction is the repository config directory as a blockage, for
+// the readings that would otherwise send the reader to `mindrail init`.
+//
+// It is deliberately not part of obstruction(). That function answers for the
+// runtime store, and its callers name their own summaries from it — a reading
+// that took this answer through it printed "Runtime database path unusable" over
+// a database path with nothing wrong with it, mislabelling both the state and
+// the subject to deliver a remedy about the working tree. supersede is the one
+// caller that wants it, because supersede replaces only the remedy and leaves
+// the reading's own state and summary alone.
+//
+// The remedy comes from the filesystem probe, which is the same function
+// `init` itself fails through, so doctor, status and the init that fails here
+// print one sentence naming one path rather than three.
+func (s Subject) repoConfigObstruction() (diagnosis, bool) {
+	if !s.repoConfigBlocksInit() {
+		return diagnosis{}, false
+	}
+
+	return explain(s.Probes.RepoConfigDir.Err, diagnosis{
+		code:   app.CodeRuntimePathUnwritable,
+		impact: filesystem.RootRepository.Impact() + ".",
+		next:   []string{"Make " + s.Probes.RepoConfigDir.Probed + " writable."},
+	}), true
+}
+
 // unwritableDatabase reports a runtime database that can be read and not
 // written, and is the reading finding W5 is about.
 //
@@ -290,6 +382,20 @@ func (s Subject) obstruction() (diagnosis, bool) {
 // else in the report can see are claimed: the database file's own mode, and the
 // `-shm` index beside it whose mode refuses every write while the database
 // file's own mode looks perfectly correct.
+//
+// The third condition it does claim is space, and it is the one this reading
+// was still missing after W5 closed. ProbeWriteAccess used to answer entirely
+// from access(2), and mode bits are perfectly correct on a filesystem with zero
+// bytes free: with the database held open by another process — so its `-shm`
+// already existed and needed no resizing — `doctor` opened it, read WAL and
+// foreign keys back, printed `✓ Runtime database healthy` beside
+// `db_writable: false` in the same block, exited 0 and left `status` reporting
+// READY, while `mindrail init` in the same repository failed with
+// RUNTIME_PATH_UNWRITABLE and exit 4 (finding D1). One line of one check
+// contradicted the line above it, and the report as a whole contradicted the
+// only command that writes. "Permitted" is not "possible", and a blocker no
+// chmod can clear must not be dropped on the floor by the check whose whole
+// job is to predict whether a write would land.
 //
 // Narrowing detection is also what keeps it from over-firing. The cache
 // directory, the repository config directory and every other path Mindrail
@@ -312,7 +418,7 @@ func (s Subject) unwritableDatabase() (diagnosis, bool) {
 		return diagnosis{}, false
 	}
 	switch s.Probes.DBWrite.Blocker {
-	case storage.BlockerDatabaseFile, storage.BlockerSidecar:
+	case storage.BlockerDatabaseFile, storage.BlockerSidecar, storage.BlockerNoSpace:
 	default:
 		return diagnosis{}, false
 	}
@@ -320,12 +426,17 @@ func (s Subject) unwritableDatabase() (diagnosis, bool) {
 	// The remedy comes from the layer that established the refusal, so `doctor`,
 	// `status` and the `mindrail init` that fails here all print the same
 	// sentence naming the same files. It is carried out and verified rather than
-	// asserted: restoring write permission on those paths is what clears this
-	// condition.
+	// asserted: restoring write permission on those paths, or freeing space on
+	// the filesystem under them, is what clears this condition.
+	//
+	// The fallback below is only reached by a refusal that arrived without a
+	// payload, and even there it may not hand a full disk a chmod: that dead-end
+	// remedy is the whole reason space is a blocker of its own rather than a
+	// fourth spelling of "unwritable".
 	d := explain(s.Probes.DBWrite.Err, diagnosis{
 		code:   app.CodeRuntimePathUnwritable,
 		impact: "Mindrail can read the state already recorded here but cannot record anything new, so `mindrail init` and every other command that writes will fail.",
-		next:   []string{"restore write permission on " + s.Probes.DBWrite.Blocked},
+		next:   []string{fallbackWriteRemedy(s.Probes.DBWrite)},
 	})
 
 	// A repository whose database is unwritable *and* not yet established needs
@@ -337,6 +448,32 @@ func (s Subject) unwritableDatabase() (diagnosis, bool) {
 		d.next = append(slices.Clone(d.next), initCommand)
 	}
 	return d, true
+}
+
+// fallbackWriteRemedy is the remedy for a write refusal that carried no payload
+// of its own. It exists so that the fallback is chosen from the blocker rather
+// than written once for the common case: a chmod prescribed for a full disk is
+// the dead end this classification was split apart to remove, and a fallback is
+// still a sentence somebody reads.
+func fallbackWriteRemedy(access storage.WriteAccess) string {
+	if access.Blocker == storage.BlockerNoSpace {
+		return "free space on the filesystem holding " + access.Blocked
+	}
+	return "restore write permission on " + access.Blocked
+}
+
+// unwritableDatabaseSummary names the condition in the one line a human reads
+// first.
+//
+// A full disk and a refused mode bit are one state — no write lands — with
+// nothing in common to do about them, and the summary is where a reader decides
+// whether to reach for chmod or for df. "Runtime database is not writable" over
+// a filesystem with zero bytes free is true and points at the wrong tool.
+func unwritableDatabaseSummary(blocker storage.WriteBlocker) string {
+	if blocker == storage.BlockerNoSpace {
+		return "Runtime database cannot be written: the filesystem is full"
+	}
+	return "Runtime database is not writable"
 }
 
 // supersede replaces a remedy the reader cannot carry out with the obstruction
@@ -366,6 +503,14 @@ func (s Subject) supersede(result Result) Result {
 	}
 
 	obstruction, blocked := s.obstruction()
+	if !blocked {
+		// The runtime store is sound and `mindrail init` would still fail, because
+		// the directory init has to write the repository scaffolding into refuses
+		// it. Nothing in the runtime store's own three checks can see that, and
+		// before this the whole document — every check OK, exit 0 — recommended
+		// the command that could not succeed (finding D4).
+		obstruction, blocked = s.repoConfigObstruction()
+	}
 	if !blocked {
 		return result
 	}

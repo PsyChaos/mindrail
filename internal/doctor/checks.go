@@ -205,26 +205,62 @@ func runtimePathResult(s Subject) Result {
 		"repo_config_dir": s.Paths.RepoConfigDir,
 	}
 
+	// The repository config directory was printed as a location for five audits
+	// and never as an answer, which is finding D4: a detail line naming a
+	// directory nobody had asked a question about. Both readings are published on
+	// every branch below, including the failing ones, because a reader who is
+	// being told the runtime root is broken still has to be able to see whether
+	// the worktree half of the installation is sound.
+	if s.Probes.RepoConfigDirKnown {
+		details["repo_config_dir_exists"] = strconv.FormatBool(s.Probes.RepoConfigDir.Exists)
+		details["repo_config_dir_usable"] = strconv.FormatBool(s.Probes.RepoConfigDir.Usable)
+	}
+
 	if s.Probes.RuntimeDirKnown {
 		details["runtime_root_exists"] = strconv.FormatBool(s.Probes.RuntimeDir.Exists)
 		details["runtime_root_usable"] = strconv.FormatBool(s.Probes.RuntimeDir.Usable)
-
-		if !s.Probes.RuntimeDir.Usable {
-			result := failure(StateError, "Runtime paths unusable", s.completeRootRemedy(explain(s.Probes.RuntimeDir.Err, diagnosis{
-				code:   app.CodeRuntimePathUnwritable,
-				impact: "Mindrail cannot store runtime state for this repository, so `mindrail init` would fail here too.",
-				next: []string{
-					"Make " + s.Probes.RuntimeDir.Probed + " writable.",
-					"Or set MINDRAIL_RUNTIME_DIR to a writable directory.",
-				},
-			})))
-			result.Details = details
-			return result
-		}
 	}
 	if s.Probes.CacheDirKnown {
 		details["cache_dir_exists"] = strconv.FormatBool(s.Probes.CacheDir.Exists)
 		details["cache_dir_usable"] = strconv.FormatBool(s.Probes.CacheDir.Usable)
+	}
+
+	// A repository config directory `mindrail init` still has to write into and
+	// cannot is fatal, and is the other half of finding D4. Severity follows what
+	// the condition actually prevents: here it prevents the one command in MR-001
+	// that writes, so a report that graded it any lower would be the report that
+	// exits 0 and recommends an init which exits 4. repoConfigBlocksInit is what
+	// keeps that from over-firing on the adjacent condition — a `.mindrail` that
+	// refuses writes but has nothing left to receive, where `mindrail init`
+	// exits 0 and the repository works.
+	//
+	// It is asked before the runtime root, and the order is the fix rather than a
+	// detail of it. Two failures can be true at once — a whole filesystem mounted
+	// read-only makes both directories unusable — and when they are, whichever
+	// this check names first is what the document's error object becomes. `init`
+	// meets the repository config directory at §87 step 2 and the runtime root at
+	// step 3, so naming the runtime root first published a different `why` and a
+	// different path from the `init` that was about to fail on the same disk.
+	// Following init's own order is what keeps the two documents describing one
+	// condition the same way. Where only one of them is broken the order changes
+	// nothing, because only one branch can fire.
+	if repoConfig, blocked := s.repoConfigObstruction(); blocked {
+		result := failure(StateError, "Repository config directory unusable", repoConfig)
+		result.Details = details
+		return result
+	}
+
+	if s.Probes.RuntimeDirKnown && !s.Probes.RuntimeDir.Usable {
+		result := failure(StateError, "Runtime paths unusable", s.completeRootRemedy(explain(s.Probes.RuntimeDir.Err, diagnosis{
+			code:   app.CodeRuntimePathUnwritable,
+			impact: "Mindrail cannot store runtime state for this repository, so `mindrail init` would fail here too.",
+			next: []string{
+				"Make " + s.Probes.RuntimeDir.Probed + " writable.",
+				"Or set MINDRAIL_RUNTIME_DIR to a writable directory.",
+			},
+		})))
+		result.Details = details
+		return result
 	}
 
 	// A cache directory Mindrail cannot use is reported and is not fatal.
@@ -244,6 +280,24 @@ func runtimePathResult(s Subject) Result {
 				"Or point MINDRAIL_CACHE_DIR at a usable location.",
 			},
 		}))
+		result.Details = details
+		return result
+	}
+
+	// The same directory, with the scaffold already in it. Nothing MR-001 does is
+	// stopped — `mindrail init` re-run against it exits 0, having nothing to
+	// create — so it is reported and it does not block. DEGRADED is §84's word
+	// for running with less than it wants, and what is wanted here is the ability
+	// to add to the repository's own knowledge tree.
+	if s.Probes.RepoConfigDirKnown && !s.Probes.RepoConfigDir.Usable {
+		unwritable := explain(s.Probes.RepoConfigDir.Err, diagnosis{
+			code: app.CodeRuntimePathUnwritable,
+			next: []string{"Make " + s.Probes.RepoConfigDir.Probed + " writable."},
+		})
+		unwritable.impact = "The repository scaffolding is already in place and every command still runs; " +
+			"Mindrail cannot add anything to it while this directory refuses writes."
+
+		result := failure(StateDegraded, "Repository config directory is not writable", unwritable)
 		result.Details = details
 		return result
 	}
@@ -440,8 +494,15 @@ func sqliteResult(s Subject) Result {
 	// `Overall: OK` at exit 0 while every command that writes failed forever
 	// (finding W5). A check that has not looked must not report OK, so the
 	// writability probe is asked before the healthy verdict is given, not after.
+	//
+	// It is asked about space as well as about permission, which is what closes
+	// finding D1. Detail and verdict were being read from two different probes:
+	// `db_writable: false` was printed from the write probe on the line
+	// immediately below `✓ Runtime database healthy`, which was decided without
+	// consulting it, so a single block of one report asserted both halves of a
+	// contradiction over a filesystem with zero bytes free.
 	if unwritable, blocked := s.unwritableDatabase(); blocked {
-		result := failure(StateError, "Runtime database is not writable", unwritable)
+		result := failure(StateError, unwritableDatabaseSummary(s.Probes.DBWrite.Blocker), unwritable)
 		result.Details = details
 		return result
 	}

@@ -30,8 +30,12 @@ func TestRepositoryBlockIsMarkedWhenDiscoveryDidNotAnswer(t *testing.T) {
 	}
 
 	human := renderHuman(t, report)
-	if !strings.Contains(human, "Linked worktree: unknown") {
-		t.Errorf("human report states a linked-worktree verdict it never observed:\n%s", human)
+	// The value the JSON member carries, with the observation the JSON member is
+	// qualified by. The marker used to replace the value with "unknown", which
+	// left the human report and the JSON report stating different things about
+	// one repository at one instant.
+	if !strings.Contains(human, "Linked worktree: false ("+string(Indeterminate)+")") {
+		t.Errorf("human report states a linked-worktree verdict as a fact it never observed:\n%s", human)
 	}
 	if !strings.Contains(human, observationNote(Indeterminate)) {
 		t.Errorf("human report carries no observation note for the repository block:\n%s", human)

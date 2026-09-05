@@ -60,6 +60,22 @@ func WriteJSON(w io.Writer, command string, data any, warnings []Warning, err er
 // not a terminal — in that last case the escapes would end up in a pipe or a
 // log file, which is exactly where they do damage.
 //
+// "always" is the one preference that overrides the last of those, and it is the
+// only thing the value can honestly mean. Overriding terminal detection is the
+// entire difference between it and "auto"; without that they are the same
+// answer, and the configuration file scaffolded by `mindrail init` documented
+// three settings of which two were one. A user who writes `output.color =
+// "always"` is asking for escapes in a pipe — that is what the word is for
+// everywhere else a CLI offers it — and answering "auto" to them is a setting
+// that reports itself as accepted and does nothing.
+//
+// It overrides nothing above it. `--json` still wins, because JSON never
+// contains ANSI (tech-stack §12) and a document is not a terminal whatever the
+// configuration says; NO_COLOR still wins, because it is the more specific and
+// more recent statement, made about this invocation rather than about the
+// repository; and `--no-color` reaches here as "never", which wins for the same
+// reason.
+//
 // environ is passed in rather than read from the process so that callers, and
 // tests, control it.
 func ColorEnabled(w io.Writer, environ []string, colorPref string, jsonMode bool) bool {
@@ -72,12 +88,18 @@ func ColorEnabled(w io.Writer, environ []string, colorPref string, jsonMode bool
 	if colorPref == colorNever {
 		return false
 	}
+	if colorPref == colorAlways {
+		return true
+	}
 	return isTerminal(w)
 }
 
-// colorNever is the only colour preference this package has to recognise; the
-// remaining values ("auto", "always") all defer to terminal detection.
-const colorNever = "never"
+// The two colour preferences that decide the answer on their own. "auto" is the
+// third and is not named here: it is what the terminal detection below is.
+const (
+	colorNever  = "never"
+	colorAlways = "always"
+)
 
 // hasEnvKey reports presence, not truth: NO_COLOR is an opt-out flag, so an
 // empty value still counts as set.

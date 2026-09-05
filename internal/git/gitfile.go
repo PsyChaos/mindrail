@@ -248,21 +248,48 @@ func danglingGitFileError(startDir string, fault gitFileFault, stderr string, ca
 // action that resolves this is taken over there and not in this directory at
 // all. Which action depends on whether the repository still exists, so that is
 // established rather than guessed.
+//
+// Both branches were carried out against a real orphaned worktree before they
+// were written down, and the first draft of them survived to pass 6 without
+// being. It said to run `git worktree prune` in the surviving repository and
+// then re-create the worktree with `git worktree add`, and neither half does
+// anything: `prune` only deletes administrative records for worktrees that have
+// gone missing, so against a record that is already gone it is a no-op that
+// prints nothing, and `git worktree add` then refuses with
+// "fatal: '<path>' already exists" because the directory is still there with the
+// reader's files in it. `git worktree repair` was tried too and does not help —
+// it re-links a record that exists, and this one does not. What works, measured,
+// is to move the directory aside, add the worktree back, and put the files
+// where they were.
 func orphanedWorktreeError(startDir string, fault gitFileFault, stderr string, cause error) error {
+	// `git worktree add` will not adopt a directory that already has anything in
+	// it, so every route back goes through emptying this path first. Both
+	// branches say so in the same words, because it is the same obstacle.
+	recreate := "move " + startDir + " aside, run `git worktree add " + startDir +
+		"` in the repository at " + fault.CommonDir + ", then copy your files back into it"
+
 	why := "this is a linked worktree, and the repository it belongs to is not there"
-	remedy := "restore the repository at " + fault.CommonDir + ", or clone it again and re-create this worktree with `git worktree add`"
+	remedy := []string{
+		"restore the repository at " + fault.CommonDir + ", which is where this worktree's administrative record lives",
+		"or clone the repository again and then " + recreate,
+	}
 	if fault.CommonDirPresent {
 		why = "this is a linked worktree, and the repository it belongs to no longer has a record of it"
-		remedy = "run `git worktree prune` in the repository at " + fault.CommonDir + ", then re-create this worktree with `git worktree add`"
+		remedy = []string{
+			recreate,
+			"`git worktree prune` cannot restore this: it only removes records for worktrees that have gone missing, and this worktree's record is the one that is already gone",
+		}
 	}
+
+	actions := append(remedy,
+		"the files in this directory are not touched by git either way; copy anything unsaved out of it first")
 
 	return decorate(app.NewError(
 		app.CodeNotAGitRepository,
 		app.KindUsage,
 		why,
 		"Mindrail keeps a repository's state under its common directory, and this worktree can no longer reach one",
-		remedy,
-		"the files in this directory are not touched by either; copy anything unsaved out of it first",
+		actions...,
 	), startDir, stderr).
 		WithMetadata("git_file", fault.GitFile).
 		WithMetadata("git_file_target", fault.Target).

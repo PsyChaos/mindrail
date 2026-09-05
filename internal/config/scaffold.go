@@ -6,8 +6,18 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
+)
+
+// The noun phrases a scaffold failure is reported with. They exist because the
+// repository config directory is one root holding several distinct things: a
+// create refused on one .gitkeep is not the root itself being unusable, and
+// reporting it as "the repository config directory <path>/.gitkeep" names a
+// directory that is a file.
+const (
+	repoConfigFileSubject = "repository configuration file"
+	knowledgeDirSubject   = "repository knowledge directory"
+	knowledgeKeepSubject  = "repository knowledge placeholder"
 )
 
 //go:embed templates/config.toml
@@ -56,17 +66,17 @@ func WriteIfAbsent(worktreeRoot string) (path string, written bool, err error) {
 
 	root, rootErr := filesystem.NewRoot(worktreeRoot)
 	if rootErr != nil {
-		return path, false, scaffoldError(dir, rootErr)
+		return path, false, scaffoldError("", dir, rootErr)
 	}
 
 	if _, _, mkErr := root.EnsureDirMode(RepoDir, repoModes.Dir); mkErr != nil {
-		return path, false, scaffoldError(dir, mkErr)
+		return path, false, scaffoldError("", dir, mkErr)
 	}
 
 	written, _, writeErr := root.WriteFileIfAbsentMode(
 		RepoDir+"/"+ConfigFileName, defaultTemplate, repoModes)
 	if writeErr != nil {
-		return path, false, scaffoldError(path, writeErr)
+		return path, false, scaffoldError(repoConfigFileSubject, path, writeErr)
 	}
 
 	return path, written, nil
@@ -81,7 +91,7 @@ func WriteIfAbsent(worktreeRoot string) (path string, written bool, err error) {
 func EnsureKnowledgeDirs(worktreeRoot string) (created []string, err error) {
 	root, rootErr := filesystem.NewRoot(worktreeRoot)
 	if rootErr != nil {
-		return nil, scaffoldError(filepath.Join(worktreeRoot, RepoDir), rootErr)
+		return nil, scaffoldError("", filepath.Join(worktreeRoot, RepoDir), rootErr)
 	}
 
 	created = make([]string, 0, len(knowledgeSubdirs))
@@ -91,7 +101,7 @@ func EnsureKnowledgeDirs(worktreeRoot string) (created []string, err error) {
 
 		_, madeIt, mkErr := root.EnsureDirMode(rel, repoModes.Dir)
 		if mkErr != nil {
-			return nil, scaffoldError(dir, mkErr)
+			return nil, scaffoldError(knowledgeDirSubject, dir, mkErr)
 		}
 		if madeIt {
 			created = append(created, rel)
@@ -100,7 +110,7 @@ func EnsureKnowledgeDirs(worktreeRoot string) (created []string, err error) {
 		// An existing .gitkeep is left alone: someone may have put a note in it.
 		keep := rel + "/.gitkeep"
 		if _, _, keepErr := root.WriteFileIfAbsentMode(keep, nil, repoModes); keepErr != nil {
-			return nil, scaffoldError(filepath.Join(dir, ".gitkeep"), keepErr)
+			return nil, scaffoldError(knowledgeKeepSubject, filepath.Join(dir, ".gitkeep"), keepErr)
 		}
 	}
 
@@ -114,37 +124,23 @@ func EnsureKnowledgeDirs(worktreeRoot string) (created []string, err error) {
 // unwritable path would send the user to chmod a directory whose permissions
 // are fine.
 //
-// Everything else is KindUnavailable rather than KindUsage: an unwritable
-// checkout is an environment condition, not a malformed request (decision
-// D-03). It carries the repository config directory's root_kind so a consumer
-// grading by root kind can tell it from the runtime and cache roots, which are
-// machine-local, relocatable by environment variable, and not the thing that
-// failed here.
-func scaffoldError(path string, cause error) error {
+// Everything else is handed to filesystem.UnwritablePath, which classifies the
+// obstruction and names the directory that actually carries the permission. The
+// sentence used to be built here instead, and it was wrong in both directions:
+// "Check the permissions and free space on <repo>/.mindrail" was printed for a
+// directory that did not exist — the mode that refused the create belonged to
+// the worktree above it — and for a regular file sitting at that path, which is
+// mode 0644, owned by the caller, and cleared only by moving it (findings D4 and
+// D5). The result is still KindUnavailable and still carries the repository
+// config directory's root_kind, because an unwritable checkout is an environment
+// condition (D-03) and a consumer grading by root kind must be able to tell it
+// from the machine-local roots.
+//
+// subject names what is at path when that is not the repository config directory
+// itself, so a failure on one .gitkeep is not reported as the whole root.
+func scaffoldError(subject, path string, cause error) error {
 	if errors.Is(cause, filesystem.ErrEscapesRoot) {
 		return cause
 	}
-
-	return app.NewError(
-		app.CodeRuntimePathUnwritable,
-		app.KindUnavailable,
-		"cannot write "+path+": "+reason(cause),
-		filesystem.RootRepository.Impact(),
-		"Check the permissions and free space on "+path,
-	).WithMetadata("path", path).
-		WithMetadata("root_kind", string(filesystem.RootRepository)).
-		WithCause(cause)
-}
-
-// reason is what goes after "cannot write <path>". The filesystem package names
-// the path in its own wrapper, so quoting that verbatim printed the same path
-// three times in one sentence; one level down is the operating system's own
-// complaint, which is the part the reader has to act on. The full chain is still
-// attached with WithCause, so nothing is lost to errors.Is or to the payload's
-// cause field.
-func reason(cause error) string {
-	if inner := errors.Unwrap(cause); inner != nil {
-		return inner.Error()
-	}
-	return cause.Error()
+	return filesystem.UnwritablePath(filesystem.RootRepository, subject, path, cause)
 }

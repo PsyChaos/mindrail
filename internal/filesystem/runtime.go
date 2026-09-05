@@ -104,15 +104,12 @@ func (p RuntimePaths) EnsureDirs() error {
 // different sentence from the one the probe prints for the identical condition
 // (finding F8). Naming them here is what makes `doctor` and `init` agree.
 func ensureDir(kind RootKind, dir string) error {
-	clean := filepath.Clean(dir)
-
-	if dangling(clean) {
-		return unwritablePathError(kind, dir, clean, ErrDanglingSymlink)
-	}
-	// os.Stat, not Lstat: a symlink to a real directory is a directory here,
-	// and refusing it would break a deliberately relocated runtime root.
-	if info, err := os.Stat(clean); err == nil && !info.IsDir() {
-		return unwritablePathError(kind, dir, clean, ErrNotDirectory)
+	// Both obstructions are named by ObstructedDir, which is also what the
+	// config loader asks before it reads: one function answers "is something
+	// else standing here?" for every caller, so no two of them can answer it
+	// differently.
+	if err := ObstructedDir(kind, dir); err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(dir, DirMode); err != nil {

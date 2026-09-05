@@ -137,6 +137,16 @@ func (l *Loader) Load() (Loaded, error) {
 // different condition, and turning it into a refusal here would take down every
 // command in a worktree git itself was happy to resolve; the read below then
 // fails, or succeeds, exactly as it did before.
+//
+// The second refusal is an obstruction at .mindrail itself, and it is asked
+// before the read because the read cannot describe it. A regular file there
+// fails the open with ENOTDIR, which arrived here as "config.toml cannot be
+// read", coded CONFIG_INVALID at exit 2, remedied with "fix or remove the
+// offending entry in <repo>/.mindrail/config.toml" — a path that cannot be
+// reached at all — while `init` called the identical disk RUNTIME_PATH_UNWRITABLE
+// at exit 4 (finding D5). filesystem.ObstructedDir is the single answer both now
+// use, so one condition has one code, one exit class and one remedy that clears
+// it.
 func (l *Loader) repoConfigFile() (string, error) {
 	if l.opts.WorktreeRoot == "" {
 		return "", nil
@@ -150,6 +160,11 @@ func (l *Loader) repoConfigFile() (string, error) {
 	}
 	if _, err := root.Resolve(RepoDir + "/" + ConfigFileName); errors.Is(err, filesystem.ErrEscapesRoot) {
 		return "", err
+	}
+
+	repoDir := filepath.Join(l.opts.WorktreeRoot, RepoDir)
+	if obstruction := filesystem.ObstructedDir(filesystem.RootRepository, repoDir); obstruction != nil {
+		return "", obstruction
 	}
 	return path, nil
 }

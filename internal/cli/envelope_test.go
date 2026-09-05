@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -617,24 +618,41 @@ func TestStatusDistinguishesLookedAndCouldNotTell(t *testing.T) {
 				t.Errorf("runtime.observation = %q, want %q", envelope.Data.Runtime.Observation, tc.want)
 			}
 
-			// The values are only publishable when the report can vouch for
-			// them; the human view has to agree with the JSON about that.
+			// The values are only publishable as facts when the report can vouch
+			// for them; the human view has to agree with the JSON about that, and
+			// about the value itself.
+			//
+			// The marker used to be the word "unknown" in place of the value,
+			// which made the two views disagree: the human said `Initialized:
+			// unknown` while the JSON beside it said `"initialized": false` about
+			// the same repository at the same instant. The value is now printed in
+			// both, with the observation the JSON carries spelled out beside it in
+			// the human one.
 			human := run(t, repo, "status", "--no-color")
 			runtimeBlock := sectionOf(human.stdout, "Runtime")
 			if tc.want == status.Observed {
-				if strings.Contains(runtimeBlock, "unknown") {
-					t.Errorf("an observed runtime block hides its values:\n%s", runtimeBlock)
+				for _, marker := range []string{string(status.NotObserved), string(status.Indeterminate)} {
+					if strings.Contains(runtimeBlock, "("+marker+")") {
+						t.Errorf("an observed runtime block disclaims its own values:\n%s", runtimeBlock)
+					}
 				}
 				return
 			}
-			for _, label := range []string{"Schema version:", "Initialized:"} {
+			for label, want := range map[string]string{
+				"Schema version:": strconv.FormatInt(envelope.Data.Runtime.SchemaVersion, 10),
+				"Initialized:":    strconv.FormatBool(envelope.Data.Runtime.Initialized),
+			} {
 				line := lineWithPrefix(runtimeBlock, label)
 				if line == "" {
 					t.Errorf("runtime block has no %q line:\n%s", label, runtimeBlock)
 					continue
 				}
-				if !strings.HasSuffix(line, "unknown") {
+				if !strings.HasSuffix(line, "("+string(tc.want)+")") {
 					t.Errorf("%q is published as a fact although the report cannot vouch for it: %q", label, line)
+				}
+				if !strings.Contains(line, want) {
+					t.Errorf("%q prints %q while the JSON member of the same report carries %q; "+
+						"two renderings of one report may not disagree", label, line, want)
 				}
 			}
 		})
