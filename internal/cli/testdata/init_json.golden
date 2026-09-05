@@ -2,8 +2,10 @@ command
 data.command
 data.config_created
 data.config_path
+data.config_present
 data.duration_ms
 data.knowledge_dirs_created[]
+data.knowledge_dirs_present
 data.migrations_applied[].applied_at
 data.migrations_applied[].checksum
 data.migrations_applied[].name
@@ -35,6 +37,7 @@ data.status.repository.common_dir
 data.status.repository.git_dir
 data.status.repository.git_version
 data.status.repository.is_linked_worktree
+data.status.repository.observation
 data.status.repository.worktree_root
 data.status.runtime.cache_dir
 data.status.runtime.db_path

@@ -1365,7 +1365,13 @@ MR-001 must **not** implement any of the following. Owner in brackets.
 The 40+ questions from the four readers, deduplicated. One is BLOCKING; the rest
 are decided here.
 
-### BLOCKING
+### RESOLVED (was BLOCKING)
+
+> **Ruling, 2026-09-05:** candidate **(b)**. MR-014 owns the `AGENTS.md` managed
+> section and writes it once the MCP surface is real. MR-001 writes nothing to
+> `AGENTS.md`, which is what the implementation already does — no code change
+> follows from this ruling, only the removal of the open question.
+
 
 > **OQ-01 — Who owns the `AGENTS.md` managed section, and what does it contain in 0.1?**
 >

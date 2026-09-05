@@ -27,6 +27,30 @@ const (
 	FileMode os.FileMode = 0o600
 )
 
+// Modes are the permissions one create uses.
+//
+// The two travel together as a named value rather than as two os.FileMode
+// arguments in a row, because a caller that swaps those two arguments gets no
+// complaint from the compiler and a 0o600 directory at runtime.
+//
+// They are a parameter at all because not everything Mindrail creates is
+// machine-local: the runtime tree is owner-only (spec §113), while the
+// repository scaffolding under .mindrail/ is committed, reviewed and read by
+// every contributor and by CI, so it takes ordinary repository modes. Both
+// still have to pass the same containment boundary, and before this existed the
+// package that needed the second pair went around the boundary to get it.
+type Modes struct {
+	Dir  os.FileMode
+	File os.FileMode
+}
+
+// PrivateModes is the owner-only pair used for everything machine-local. It is
+// a function rather than a variable so no caller can reassign the default out
+// from under the rest of the process.
+func PrivateModes() Modes {
+	return Modes{Dir: DirMode, File: FileMode}
+}
+
 var (
 	// ErrEscapesRoot reports a path that resolves outside its containment
 	// boundary. It stays a plain sentinel so callers can branch on it with
@@ -150,24 +174,35 @@ func (r Root) RelSlash(abs string) (string, error) {
 // already there; an existing non-directory is an error rather than a silent
 // replacement.
 func (r Root) EnsureDir(rel string) (string, error) {
-	abs, err := r.Resolve(rel)
+	abs, _, err := r.EnsureDirMode(rel, DirMode)
+	return abs, err
+}
+
+// EnsureDirMode is EnsureDir with the directory permission spelled out, and it
+// also reports whether the directory was created by this call.
+//
+// The second result is what lets a caller say what an operation changed without
+// a stat of its own: a stat outside this package would be taken on a path the
+// boundary has not vetted, which is the mistake this method exists to remove.
+func (r Root) EnsureDirMode(rel string, mode os.FileMode) (abs string, created bool, err error) {
+	abs, err = r.Resolve(rel)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	if info, statErr := os.Stat(abs); statErr == nil {
 		if !info.IsDir() {
-			return "", fmt.Errorf("filesystem: %q: %w", abs, ErrNotDirectory)
+			return "", false, fmt.Errorf("filesystem: %q: %w", abs, ErrNotDirectory)
 		}
-		return abs, nil
+		return abs, false, nil
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
-		return "", fmt.Errorf("filesystem: stat %q: %w", abs, statErr)
+		return "", false, fmt.Errorf("filesystem: stat %q: %w", abs, statErr)
 	}
 
-	if err := os.MkdirAll(abs, DirMode); err != nil {
-		return "", fmt.Errorf("filesystem: create directory %q: %w", abs, err)
+	if err := os.MkdirAll(abs, mode); err != nil {
+		return "", false, fmt.Errorf("filesystem: create directory %q: %w", abs, err)
 	}
-	return abs, nil
+	return abs, true, nil
 }
 
 // WriteFileIfAbsent creates a file only when nothing occupies its path, and
@@ -178,16 +213,22 @@ func (r Root) EnsureDir(rel string) (string, error) {
 // containment check and the open still cannot get Mindrail to follow a
 // planted symlink.
 func (r Root) WriteFileIfAbsent(rel string, data []byte) (bool, string, error) {
+	return r.WriteFileIfAbsentMode(rel, data, PrivateModes())
+}
+
+// WriteFileIfAbsentMode is WriteFileIfAbsent with the permissions spelled out,
+// for content that is repository material rather than machine-local state.
+func (r Root) WriteFileIfAbsentMode(rel string, data []byte, modes Modes) (bool, string, error) {
 	abs, err := r.Resolve(rel)
 	if err != nil {
 		return false, "", err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(abs), DirMode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), modes.Dir); err != nil {
 		return false, abs, fmt.Errorf("filesystem: create parent of %q: %w", abs, err)
 	}
 
-	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, FileMode)
+	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, modes.File)
 	if errors.Is(err, fs.ErrExist) {
 		return false, abs, nil
 	}

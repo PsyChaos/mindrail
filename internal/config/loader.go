@@ -13,6 +13,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
 
 // Source names the layer a value came from. It is part of the wire shape of
@@ -95,7 +96,11 @@ func (l *Loader) Load() (Loaded, error) {
 		}
 	}
 
-	if repoFile := l.repoConfigFile(); repoFile != "" {
+	repoFile, repoErr := l.repoConfigFile()
+	if repoErr != nil {
+		return Loaded{}, repoErr
+	}
+	if repoFile != "" {
 		present, err := applyFile(repoFile, &loaded.Config, loaded.Provenance, SourceRepo)
 		if err != nil {
 			return Loaded{}, err
@@ -120,11 +125,33 @@ func (l *Loader) Load() (Loaded, error) {
 
 // repoConfigFile is <worktreeRoot>/.mindrail/config.toml, or "" when the
 // caller has no worktree — status outside a repository still needs defaults.
-func (l *Loader) repoConfigFile() string {
+//
+// The repository layer is the only one that is supposed to come from inside the
+// worktree, so it is the one that has to be containment-checked. Without the
+// check, a .mindrail symlink pointing out of the repository had Mindrail read
+// its configuration from wherever the link went and then report the in-repo
+// path as the file it had loaded, which is the reading half of what spec §113
+// forbids and what escapeError already promises not to do.
+//
+// Only an escape refuses. A boundary that could not be evaluated at all is a
+// different condition, and turning it into a refusal here would take down every
+// command in a worktree git itself was happy to resolve; the read below then
+// fails, or succeeds, exactly as it did before.
+func (l *Loader) repoConfigFile() (string, error) {
 	if l.opts.WorktreeRoot == "" {
-		return ""
+		return "", nil
 	}
-	return filepath.Join(l.opts.WorktreeRoot, RepoDir, ConfigFileName)
+
+	path := filepath.Join(l.opts.WorktreeRoot, RepoDir, ConfigFileName)
+
+	root, err := filesystem.NewRoot(l.opts.WorktreeRoot)
+	if err != nil {
+		return path, nil
+	}
+	if _, err := root.Resolve(RepoDir + "/" + ConfigFileName); errors.Is(err, filesystem.ErrEscapesRoot) {
+		return "", err
+	}
+	return path, nil
 }
 
 // userConfigFile is <os.UserConfigDir()>/mindrail/config.toml. A host with no

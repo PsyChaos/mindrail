@@ -15,6 +15,8 @@
       "applied_at": "2026-03-14T09:26:53Z"
     }
   ],
+  "config_present": true,
+  "knowledge_dirs_present": true,
   "schema_current": true,
   "status": {
     "command": "status",
@@ -46,6 +48,7 @@
       }
     },
     "repository": {
+      "observation": "observed",
       "common_dir": "/repo/.git",
       "worktree_root": "/repo",
       "git_dir": "/repo/.git",

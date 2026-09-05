@@ -278,6 +278,17 @@ func TestUnusableWorkingDirectoryIsNotBlamedOnGit(t *testing.T) {
 	}{
 		{name: "directory does not exist", dir: filepath.Join(tmp, "no-such-directory")},
 		{name: "path is a file", dir: file},
+		// Finding H6. This is the shape the F3 fix missed: os/exec's pre-flight
+		// check is an os.Stat, which a directory at mode 0000 passes, so the
+		// refusal happens after the fork and arrives as an *fs.PathError whose
+		// Op is "fork/exec" and whose Path is the git binary. Read literally it
+		// says git could not be executed — GIT_UNAVAILABLE, exit 4, "install
+		// git", and the directory never named at all.
+		{name: "directory exists but cannot be entered", dir: unenterableDir(t, 0o000)},
+		// The same refusal from the other direction: read permission without
+		// the search bit. chdir needs the search bit, so git cannot enter this
+		// one either.
+		{name: "directory is readable but not searchable", dir: unenterableDir(t, 0o444)},
 	}
 
 	for _, tt := range tests {
@@ -403,6 +414,62 @@ func TestWorkingDirectoryDetectionDoesNotOverFire(t *testing.T) {
 		}
 	})
 
+	// The adjacent condition the H6 fix must not steal. A git binary that
+	// exists but is not executable fails with exactly the error a directory at
+	// mode 0000 produces — *fs.PathError, Op "fork/exec", permission denied —
+	// and here the directory really is fine and git really is the problem.
+	t.Run("a git binary that cannot be executed is still reported as unavailable", func(t *testing.T) {
+		requirePermissionsAreEnforced(t)
+
+		bin := filepath.Join(t.TempDir(), "git")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+			t.Fatalf("write fixture binary: %v", err)
+		}
+
+		runner := &ExecRunner{Bin: bin}
+		_, _, err := runner.Run(context.Background(), t.TempDir(), "rev-parse")
+
+		if !errors.Is(err, ErrGitUnavailable) {
+			t.Fatalf("error = %v, want ErrGitUnavailable", err)
+		}
+		if errors.Is(err, ErrWorkingDirectory) {
+			t.Fatalf("a non-executable git binary was blamed on the working directory: %v", err)
+		}
+		payload, _ := app.PayloadOf(err)
+		if payload.Code != app.CodeGitUnavailable {
+			t.Fatalf("code = %q, want %q", payload.Code, app.CodeGitUnavailable)
+		}
+	})
+
+	// The over-fire the obvious implementation makes. Opening a directory needs
+	// read permission; entering it needs the search bit. An execute-only
+	// directory is entirely usable to git, and an os.Open-based probe would
+	// condemn it.
+	t.Run("an execute-only directory is usable and is left alone", func(t *testing.T) {
+		requireGit(t)
+		requirePermissionsAreEnforced(t)
+
+		dir := filepath.Join(t.TempDir(), "execute-only")
+		if err := os.Mkdir(dir, 0o111); err != nil {
+			t.Fatalf("create fixture directory: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		if fault := directoryEntryFault(dir); fault != nil {
+			t.Fatalf("directoryEntryFault(%q) = %v, want nil: git enters this directory happily", dir, fault)
+		}
+
+		_, stderr, err := NewExecRunner().Run(context.Background(), dir, "rev-parse", "--is-inside-work-tree")
+
+		// git runs, and then fails for its own reason: there is no repository
+		// here. That is a completely different verdict and must survive.
+		if errors.Is(err, ErrWorkingDirectory) {
+			t.Fatalf("an execute-only directory git can enter was reported as unusable: %v", err)
+		}
+		if !strings.Contains(strings.ToLower(string(stderr)), "not a git repository") {
+			t.Fatalf("stderr = %q, want git's own not-a-repository message", stderr)
+		}
+	})
+
 	t.Run("Version runs with no directory at all", func(t *testing.T) {
 		requireGit(t)
 
@@ -416,6 +483,43 @@ func TestWorkingDirectoryDetectionDoesNotOverFire(t *testing.T) {
 			t.Fatalf("Version = %q", version)
 		}
 	})
+}
+
+// unenterableDir builds a directory at a mode that denies the search
+// permission chdir needs. It restores the mode afterwards so the test framework
+// can remove the temp tree.
+func unenterableDir(t *testing.T, mode os.FileMode) string {
+	t.Helper()
+	requirePermissionsAreEnforced(t)
+
+	dir := filepath.Join(t.TempDir(), "unenterable")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("create fixture directory: %v", err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatalf("chmod fixture directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	// The precondition is established by observation rather than asserted: on a
+	// filesystem or platform that does not enforce the mode, the fixture cannot
+	// stand for "cannot be entered" and the test says so instead of passing for
+	// the wrong reason.
+	if _, err := os.Stat(dir + string(os.PathSeparator) + "."); err == nil {
+		t.Skipf("this environment does not enforce mode %o on %q", mode, dir)
+	}
+	return dir
+}
+
+// requirePermissionsAreEnforced skips tests that depend on a permission bit
+// actually denying something. Running as root defeats every one of them, and a
+// test that silently passes because it proved nothing is worse than a skip.
+func requirePermissionsAreEnforced(t *testing.T) {
+	t.Helper()
+
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny anything")
+	}
 }
 
 func mentionsGitInit(actions []string) bool {

@@ -30,6 +30,15 @@ type InitReport struct {
 	KnowledgeDirsCreated []string            `json:"knowledge_dirs_created"`
 	MigrationsApplied    []migration.Applied `json:"migrations_applied"`
 
+	// ConfigPresent and KnowledgeDirsPresent report that the scaffold is on
+	// disk, whoever put it there. Neither is derivable from the two fields above
+	// it: a run that stopped before the scaffold step also creates no config and
+	// no directories, and reading that silence as "already present" is how init
+	// came to report a configuration file and two knowledge directories that do
+	// not exist (finding H13).
+	ConfigPresent        bool `json:"config_present"`
+	KnowledgeDirsPresent bool `json:"knowledge_dirs_present"`
+
 	// SchemaCurrent reports that the migration ledger was read and found
 	// complete. It is not derivable from an empty MigrationsApplied: a run that
 	// stopped before a database existed also applies no migration, and reading

@@ -32,6 +32,11 @@ const bookkeepingDDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
 
 const bookkeepingTable = "schema_migrations"
 
+// tableKind is the way sqlite_master spells a table, and the only object kind
+// the schema verification in this file draws conclusions from. See
+// verifySchemaObjects for why the others are out.
+const tableKind = "table"
+
 // Applied is one row of the ledger.
 type Applied struct {
 	Version   int64     `json:"version"`
@@ -83,6 +88,15 @@ var (
 	// ErrSchemaShapeChanged means an object is present under the right name but
 	// is missing columns the applied migrations declared.
 	ErrSchemaShapeChanged = errors.New("an applied migration's table no longer has the columns it declared")
+
+	// ErrSchemaBehindLedger means the ledger does not record a migration whose
+	// tables the database already holds -- the schema is ahead of the record of
+	// it, so applying the migration would fail on a table that exists.
+	ErrSchemaBehindLedger = errors.New("the schema holds tables the migration ledger does not record")
+
+	// ErrBookkeepingOccupied means something that is not the ledger table
+	// already stands under the ledger table's name.
+	ErrBookkeepingOccupied = errors.New("another object occupies the bookkeeping table's name")
 )
 
 // Up applies every pending migration in ascending order and returns what it
@@ -145,11 +159,13 @@ func (m *Migrator) Up(ctx context.Context) (Result, error) {
 // not an error -- doctor reports it rather than failing on it.
 //
 // The ledger is a claim about the schema, not the schema, so Status also
-// confirms that the objects the recorded migrations create are still there.
-// Without that confirmation a database whose tables were dropped -- by a
-// half-finished manual repair, or by a tool that mistook the runtime store for
-// scratch space -- reports "Schema up to date (version 1)", and every command
-// that trusts the report then fails on a table the report said existed.
+// confirms that the two still describe each other -- in both directions. A
+// database whose tables were dropped, by a half-finished manual repair or by a
+// tool that mistook the runtime store for scratch space, would otherwise report
+// "Schema up to date (version 1)" and then fail every command on a table the
+// report said existed. A database whose ledger rows were lost while its tables
+// survived would otherwise report "Schema is behind this binary" and send the
+// user to an `init` that cannot ever succeed.
 //
 // Status deliberately does not run verifyLedger. A ledger this binary is behind
 // -- decision D-25's newer database -- has to stay *reportable*, or doctor
@@ -179,7 +195,7 @@ func (m *Migrator) readLedger(ctx context.Context) ([]Applied, error) {
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version`)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", bookkeepingTable, err)
+		return nil, unreadableFailure(ledgerDescription, fmt.Errorf("read %s: %w", bookkeepingTable, err))
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -190,20 +206,29 @@ func (m *Migrator) readLedger(ctx context.Context) ([]Applied, error) {
 			appliedAt string
 		)
 		if err := rows.Scan(&row.Version, &row.Name, &row.Checksum, &appliedAt); err != nil {
-			return nil, fmt.Errorf("scan %s row: %w", bookkeepingTable, err)
+			return nil, unreadableFailure(ledgerDescription, fmt.Errorf("scan %s row: %w", bookkeepingTable, err))
 		}
 		row.AppliedAt, err = app.ParseTime(appliedAt)
 		if err != nil {
-			return nil, fmt.Errorf("%s version %d: %w", bookkeepingTable, row.Version, err)
+			return nil, unreadableFailure(ledgerDescription,
+				fmt.Errorf("%s version %d: %w", bookkeepingTable, row.Version, err))
 		}
 		ledger = append(ledger, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read %s: %w", bookkeepingTable, err)
+		return nil, unreadableFailure(ledgerDescription, fmt.Errorf("read %s: %w", bookkeepingTable, err))
 	}
 
 	return ledger, nil
 }
+
+// ledgerDescription names the ledger the way a user should read about it. It is
+// spelled once so the three ways reading it can fail cannot describe it three
+// different ways.
+const ledgerDescription = "the migration ledger in the runtime database"
+
+// columnsDescription is the same for the table shapes.
+const columnsDescription = "the runtime database's table columns"
 
 // Pending returns the migrations Up would apply next, in order.
 func (m *Migrator) Pending(ctx context.Context) ([]Migration, error) {
@@ -272,60 +297,168 @@ func (m *Migrator) apply(ctx context.Context, pending Migration) (Applied, bool,
 	return row, applied, nil
 }
 
-// verifySchemaObjects checks that the schema still looks the way the recorded
-// version says it should: the objects are in sqlite_master, and the tables
-// among them still carry the columns their migration declared.
+// verifySchemaObjects checks the two ways the ledger and the schema can
+// contradict each other, and then the one way a table can contradict itself.
 //
-// Two queries with a handful of bound names, on purpose: this runs on the warm
-// path of every command, so the check has to cost less than the report it
-// protects. Existence is asked first because a missing object is the commoner
-// damage and names it better; the column pass is a containment assertion and
-// nothing more. Types, defaults, constraints and collations are still not
-// compared -- that would be the schema diff this package refuses to be, and the
-// parsing it does need happens once at Load against embedded files, never here.
+// The ledger is behind: a table a migration the ledger does not record would
+// create is already standing (H2). The ledger is ahead: a table the recorded
+// migrations should have left behind is gone (F4/S4). And the shape pass, which
+// catches the table that kept its name and lost its columns (F9).
+//
+// # Only tables
+//
+// Indexes, views and triggers are deliberately not verified, and that narrowing
+// is what makes the check safe rather than merely correct today (finding H1).
+//
+// The expected set is a fold of the recorded migrations' effects, and a fold is
+// only sound for objects whose removal is always written down. In SQLite a
+// table is the only such object: nothing removes a table as a side effect of
+// something else. Everything else is removed implicitly -- `DROP TABLE` takes
+// the table's indexes and triggers with it, `DROP VIEW` takes the view's
+// triggers -- so the fold keeps demanding an index the schema is *correct* not
+// to have the moment any migration retires a table. That is not a hypothetical:
+// it is how the standard 12-step table rebuild is written, and it bricked every
+// command, `mindrail init` included, with a remedy that rebuilt the database,
+// replayed both migrations and landed in the identical state.
+//
+// The alternative was to model the cascade -- parse `CREATE INDEX ... ON t` and
+// `CREATE TRIGGER ... ON t`, track ownership across renames, and subtract the
+// blast radius of every drop. That is a second guess layered on the first, and a
+// wrong guess brings back exactly the bricking this narrowing removes. It also
+// buys nothing against the failure this check exists for: a missing index costs
+// query time, never a failed command, while a missing table or column is the
+// `no such table` that made `doctor` report health over a database no command
+// could use. Load still records every kind, so a later milestone that needs
+// index or trigger verification has the material -- and will have to argue the
+// cascade separately.
+//
+// # Cost
+//
+// Two queries with a handful of bound names on the warm path of every command,
+// and a third only when a contradiction is found. Types, defaults, constraints
+// and collations are not compared -- that would be the schema diff this package
+// refuses to be, and the parsing it does need happens once at Load against
+// embedded files, never here.
 func (m *Migrator) verifySchemaObjects(ctx context.Context, ledger []Applied) error {
-	if err := m.verifyObjectsExist(ctx, m.declaredObjects(ledger)); err != nil {
+	expected := m.expectedTables(ledger)
+	unrecorded := m.unrecordedTables(ledger, expected)
+
+	present, err := m.presentTables(ctx, expected, unrecorded)
+	if err != nil {
 		return err
 	}
+
+	if missing := namesAbsentFrom(expected, present); len(missing) != 0 {
+		return schemaObjectFailure(missing)
+	}
+
+	if conflicts := namesPresentIn(unrecorded, present); len(conflicts) != 0 {
+		// One re-read closes the D-24 race. Another process applying the first
+		// migration commits its tables and its ledger rows in one transaction,
+		// but this check reads the two with separate statements, so a ledger read
+		// from before that commit can meet a table list from after it. The tables
+		// were observed present, so the winner's commit is already durable, so a
+		// ledger read *now* cannot miss it: a ledger that changed means the
+		// contradiction was this process's snapshot rather than the database's
+		// state.
+		unchanged, err := m.ledgerUnchanged(ctx, ledger)
+		if err != nil {
+			return err
+		}
+		if unchanged {
+			return schemaBehindLedgerFailure(conflicts, unrecorded)
+		}
+	}
+
 	return m.verifyTableShapes(ctx, m.declaredColumns(ledger))
 }
 
-func (m *Migrator) verifyObjectsExist(ctx context.Context, declared map[string]SchemaObject) error {
-	if len(declared) == 0 {
-		return nil
+// presentTables reports which of the named tables sqlite_master actually holds.
+//
+// Both directions are asked in one query because both are about the same list
+// of names on the same warm path, and asking twice would double the cost of the
+// cheaper half of the check.
+func (m *Migrator) presentTables(
+	ctx context.Context,
+	expected map[string]struct{},
+	unrecorded map[string]Migration,
+) (map[string]struct{}, error) {
+	names := make([]any, 0, len(expected)+len(unrecorded))
+	for name := range expected {
+		names = append(names, name)
+	}
+	for name := range unrecorded {
+		if _, duplicate := expected[name]; !duplicate {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil
 	}
 
-	names := make([]any, 0, len(declared))
-	placeholders := make([]string, 0, len(declared))
-	for name := range declared {
-		names = append(names, name)
-		placeholders = append(placeholders, "?")
+	placeholders := make([]string, len(names))
+	for i := range placeholders {
+		placeholders[i] = "?"
 	}
 
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT type, name FROM sqlite_master WHERE name IN (`+strings.Join(placeholders, ", ")+`)`, names...)
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (`+
+			strings.Join(placeholders, ", ")+`)`, names...)
 	if err != nil {
-		return fmt.Errorf("read sqlite_master: %w", err)
+		return nil, unreadableFailure("the runtime database's table list", err)
 	}
 	defer func() { _ = rows.Close() }()
 
+	present := make(map[string]struct{}, len(names))
 	for rows.Next() {
-		var kind, name string
-		if err := rows.Scan(&kind, &name); err != nil {
-			return fmt.Errorf("scan sqlite_master row: %w", err)
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, unreadableFailure("the runtime database's table list", err)
 		}
-		if object, ok := declared[name]; ok && object.Kind == kind {
-			delete(declared, name)
-		}
+		present[name] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read sqlite_master: %w", err)
-	}
-	if len(declared) != 0 {
-		return schemaObjectFailure(declared)
+		return nil, unreadableFailure("the runtime database's table list", err)
 	}
 
-	return nil
+	return present, nil
+}
+
+// ledgerUnchanged re-reads the ledger and reports whether it is still the one a
+// contradiction was computed against. Only the identifying columns are compared:
+// a row cannot change its name or its applied_at without changing its version or
+// its checksum too, and comparing the parsed timestamp would make the answer
+// depend on formatting.
+func (m *Migrator) ledgerUnchanged(ctx context.Context, before []Applied) (bool, error) {
+	after, err := m.readLedger(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.EqualFunc(before, after, func(a, b Applied) bool {
+		return a.Version == b.Version && a.Checksum == b.Checksum
+	}), nil
+}
+
+func namesAbsentFrom(expected, present map[string]struct{}) []string {
+	absent := make([]string, 0, len(expected))
+	for name := range expected {
+		if _, found := present[name]; !found {
+			absent = append(absent, name)
+		}
+	}
+	slices.Sort(absent)
+	return absent
+}
+
+func namesPresentIn(candidates map[string]Migration, present map[string]struct{}) []string {
+	found := make([]string, 0, len(candidates))
+	for name := range candidates {
+		if _, exists := present[name]; exists {
+			found = append(found, name)
+		}
+	}
+	slices.Sort(found)
+	return found
 }
 
 // verifyTableShapes checks that every column the recorded migrations declared
@@ -359,7 +492,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 		`SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_xinfo(m.name) p `+
 			`WHERE m.type = 'table' AND m.name IN (`+strings.Join(placeholders, ", ")+`)`, names...)
 	if err != nil {
-		return fmt.Errorf("read table columns: %w", err)
+		return unreadableFailure(columnsDescription, fmt.Errorf("read table columns: %w", err))
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -367,7 +500,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 	for rows.Next() {
 		var table, column string
 		if err := rows.Scan(&table, &column); err != nil {
-			return fmt.Errorf("scan table column row: %w", err)
+			return unreadableFailure(columnsDescription, fmt.Errorf("scan table column row: %w", err))
 		}
 		if present[table] == nil {
 			present[table] = make(map[string]struct{})
@@ -375,7 +508,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 		present[table][strings.ToLower(column)] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read table columns: %w", err)
+		return unreadableFailure(columnsDescription, fmt.Errorf("read table columns: %w", err))
 	}
 
 	missing := make(map[string][]string)
@@ -431,36 +564,120 @@ func (m *Migrator) declaredColumns(ledger []Applied) map[string][]string {
 	return columns
 }
 
-// declaredObjects replays the recorded migrations' schema effects in version
-// order and returns what the schema is expected to contain at that version,
-// keyed by name.
+// expectedTables replays the recorded migrations' table effects in version
+// order and returns the tables the schema is expected to contain at that
+// version.
 //
 // It is a fold rather than a union, and that is the whole point (finding F4).
 // The union of every create is not a description of any schema: the first
-// migration that legitimately drops or renames an earlier object would make the
+// migration that legitimately drops or renames an earlier table would make the
 // check demand something the schema is correct not to have, and no remedy could
 // clear it -- rebuilding replays the same migrations and reaches the same state.
 // Replaying the effects instead asks the only question that has an answer:
 // "does this database look the way version N is supposed to look?"
 //
-// Only recorded versions are replayed: an object a pending migration will
-// create is legitimately absent, and one a pending migration will drop is
-// legitimately still there.
+// Only recorded versions are replayed: a table a pending migration will create
+// is legitimately absent, and one a pending migration will drop is legitimately
+// still there.
 //
-// Names are unique across types in sqlite_master, so one map keyed by name
-// cannot conflate a table with an index of the same name.
-func (m *Migrator) declaredObjects(ledger []Applied) map[string]SchemaObject {
-	declared := make(map[string]SchemaObject)
+// Non-table objects are skipped; verifySchemaObjects explains why the fold is
+// only sound for tables.
+func (m *Migrator) expectedTables(ledger []Applied) map[string]struct{} {
+	expected := make(map[string]struct{})
 	for _, candidate := range m.replayable(ledger) {
 		for _, effect := range candidate.Effects {
-			if effect.Removed {
-				delete(declared, effect.Object.Name)
+			if effect.Object.Kind != tableKind {
 				continue
 			}
-			declared[effect.Object.Name] = effect.Object
+			if effect.Removed {
+				delete(expected, effect.Object.Name)
+				continue
+			}
+			expected[effect.Object.Name] = struct{}{}
 		}
 	}
-	return declared
+	return expected
+}
+
+// unrecordedTables returns the tables that must *not* already exist for the
+// pending migrations to run, mapped to the migration that would create each.
+//
+// This is the other direction of disagreement (finding H2). A ledger that lost
+// its rows while the schema kept its tables reads as "not migrated yet", so
+// `doctor` called it merely DEGRADED and prescribed `mindrail init`, while
+// `init` failed on `table projects already exists` every single time and printed
+// a remedy that sent the user back to `init`. The tool's own instructions were a
+// loop, and CI stayed green over a repository whose `init` was dead.
+//
+// Nothing here is healed. Re-inserting the missing rows would record a claim --
+// "migration 000001 ran" -- from circumstantial evidence, which is the exact
+// kind of lie the ledger verification was added to catch; the tables could have
+// been made by hand or by another tool. What the tool owes the user instead is
+// an honest name for the condition and a remedy that actually clears it. At
+// MR-001 the runtime database holds only the project and workspace rows `init`
+// re-derives, so rebuilding it costs nothing that cannot be recreated; a
+// milestone that stores something irreplaceable has to revisit this remedy.
+//
+// The walk is a simulation, not a union, for the same reason the fold above is:
+//
+//   - A name the recorded fold already expects is not a conflict. The 12-step
+//     table rebuild drops a table and recreates it under the same name, and
+//     reading that create on its own would refuse a perfectly good upgrade over
+//     the table the migration is about to drop itself.
+//   - A name any earlier pending effect already created *or removed* is not a
+//     conflict either, for the same reason one step further out: the sequence
+//     has already dealt with whatever was standing there.
+//   - `CREATE TABLE IF NOT EXISTS` is never a conflict. The author said an
+//     existing table is acceptable, and refusing would block an init that would
+//     have succeeded.
+//
+// The whole pass is skipped unless every ledger row is one this binary can read
+// -- a known version whose file still checksums the same. A database written by
+// a newer Mindrail (decision D-25) has tables from migrations this binary cannot
+// see, and answering "your schema is ahead of its ledger, rebuild it" there
+// would bury RUNTIME_DB_SCHEMA_TOO_NEW under a remedy that destroys the newer
+// database. Every other disagreement already has its own diagnosis, so failing
+// open whenever one of them is in play is the right bias.
+func (m *Migrator) unrecordedTables(ledger []Applied, expected map[string]struct{}) map[string]Migration {
+	replayable := m.replayable(ledger)
+	if len(replayable) != len(ledger) {
+		return nil
+	}
+
+	recorded := make(map[int64]struct{}, len(ledger))
+	for _, row := range ledger {
+		recorded[row.Version] = struct{}{}
+	}
+
+	// settled is every name the sequence has already accounted for: the tables
+	// the recorded fold expects, plus every table an earlier pending statement
+	// creates or drops.
+	settled := maps.Clone(expected)
+	if settled == nil {
+		settled = make(map[string]struct{})
+	}
+
+	conflicts := make(map[string]Migration)
+	for _, candidate := range m.ordered() {
+		if _, applied := recorded[candidate.Version]; applied {
+			continue
+		}
+		for _, effect := range candidate.Effects {
+			if effect.Object.Kind != tableKind {
+				continue
+			}
+			name := effect.Object.Name
+			if _, accounted := settled[name]; !accounted && !effect.Removed && !effect.IfNotExists {
+				conflicts[name] = candidate
+			}
+			settled[name] = struct{}{}
+		}
+	}
+
+	if len(conflicts) == 0 {
+		return nil
+	}
+	return conflicts
 }
 
 // replayable returns the migrations whose files still describe what the ledger
@@ -489,17 +706,22 @@ func (m *Migrator) replayable(ledger []Applied) []Migration {
 		recorded[row.Version] = row.Checksum
 	}
 
-	ordered := slices.SortedFunc(slices.Values(m.set), func(a, b Migration) int {
-		return cmp.Compare(a.Version, b.Version)
-	})
-
-	replayable := make([]Migration, 0, len(ordered))
-	for _, candidate := range ordered {
+	replayable := make([]Migration, 0, len(m.set))
+	for _, candidate := range m.ordered() {
 		if checksum, applied := recorded[candidate.Version]; applied && checksum == candidate.Checksum {
 			replayable = append(replayable, candidate)
 		}
 	}
 	return replayable
+}
+
+// ordered returns the migration set in ascending version order. Load already
+// orders it, but every fold in this file is only correct in version order, so
+// the order is established where it is depended on rather than assumed.
+func (m *Migrator) ordered() []Migration {
+	return slices.SortedFunc(slices.Values(m.set), func(a, b Migration) int {
+		return cmp.Compare(a.Version, b.Version)
+	})
 }
 
 // verifyLedger is the fail-closed gate of decisions D-23 and D-25. It runs on
@@ -536,6 +758,22 @@ func (m *Migrator) ensureBookkeeping(ctx context.Context) error {
 		return nil
 	}
 
+	// The name has to be free, not merely free of tables. `CREATE TABLE IF NOT
+	// EXISTS` matches on the name and not on the kind, so a view standing under
+	// schema_migrations makes the create a silent no-op; the INSERT that records
+	// the first migration then fails inside the apply transaction, and the whole
+	// thing is reported as a broken migration with "inspect the migration SQL and
+	// re-run `mindrail init`" -- which fails identically, forever. The lookup
+	// costs one query on the only path that reaches it: an `init` that has no
+	// ledger table yet.
+	kind, occupied, err := m.bookkeepingOccupant(ctx)
+	if err != nil {
+		return unreadableFailure(ledgerDescription, fmt.Errorf("look up %s: %w", bookkeepingTable, err))
+	}
+	if occupied {
+		return bookkeepingOccupiedFailure(kind)
+	}
+
 	err = storage.InTx(ctx, m.db, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, bookkeepingDDL)
 		return err
@@ -556,11 +794,26 @@ func (m *Migrator) ensureBookkeeping(ctx context.Context) error {
 func (m *Migrator) bookkeepingExists(ctx context.Context) (bool, error) {
 	var count int
 	err := m.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, bookkeepingTable).Scan(&count)
+		`SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, tableKind, bookkeepingTable).Scan(&count)
 	if err != nil {
-		return false, fmt.Errorf("look up %s: %w", bookkeepingTable, err)
+		return false, unreadableFailure(ledgerDescription, fmt.Errorf("look up %s: %w", bookkeepingTable, err))
 	}
 	return count > 0, nil
+}
+
+// bookkeepingOccupant reports what is standing under the ledger table's name
+// when it is not a table.
+func (m *Migrator) bookkeepingOccupant(ctx context.Context) (string, bool, error) {
+	var kind string
+	err := m.db.QueryRowContext(ctx,
+		`SELECT type FROM sqlite_master WHERE name = ? AND type <> ?`, bookkeepingTable, tableKind).Scan(&kind)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	case err != nil:
+		return "", false, err
+	}
+	return kind, true, nil
 }
 
 func readLedgerRow(ctx context.Context, q storage.Querier, version int64) (Applied, bool, error) {
@@ -625,12 +878,10 @@ func checksumFailure(expected Migration, recorded Applied) error {
 // longer has. The remedy is a rebuild rather than `mindrail init`, because init
 // would find every version already recorded, apply nothing, and leave the
 // database in exactly the state that produced this error.
-func schemaObjectFailure(missing map[string]SchemaObject) error {
-	names := slices.Sorted(maps.Keys(missing))
-
+func schemaObjectFailure(names []string) error {
 	detail := make([]string, 0, len(names))
 	for _, name := range names {
-		detail = append(detail, missing[name].Kind+" "+name)
+		detail = append(detail, tableKind+" "+name)
 	}
 	listed := strings.Join(detail, ", ")
 
@@ -670,6 +921,93 @@ func schemaShapeFailure(missing map[string][]string) error {
 		WithMetadata("missing_columns", listed).
 		WithMetadata("missing_table_count", strconv.Itoa(len(tables))).
 		WithCause(ErrSchemaShapeChanged)
+}
+
+// schemaBehindLedgerFailure reports the ledger that lost rows the schema still
+// reflects (finding H2).
+//
+// The migration named is the lowest-versioned unrecorded one that collides,
+// because that is the one `mindrail init` reaches first and therefore the one
+// whose failure the user would otherwise be reading.
+//
+// The remedy is the rebuild and not `mindrail init`, because init is the command
+// that cannot work here: it would take the missing rows as work to do and fail
+// on the first `CREATE TABLE`, every time, forever. A rebuilt database has no
+// tables to collide with, so this is a remedy that ends the loop rather than
+// re-entering it.
+func schemaBehindLedgerFailure(conflicts []string, unrecorded map[string]Migration) error {
+	first := unrecorded[conflicts[0]]
+	for _, name := range conflicts[1:] {
+		if unrecorded[name].Version < first.Version {
+			first = unrecorded[name]
+		}
+	}
+
+	listed := strings.Join(conflicts, ", ")
+	migrationName := fmt.Sprintf("%06d_%s", first.Version, first.Name)
+
+	return app.NewError(
+		app.CodeMigrationFailed,
+		app.KindFailed,
+		"the migration ledger does not record migration "+migrationName+
+			", but the tables it creates are already in this database: "+listed,
+		"The ledger no longer describes this database, so `mindrail init` would try to create tables that already exist and would fail the same way every time it ran.",
+		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+	).
+		WithMetadata("unrecorded_version", strconv.FormatInt(first.Version, 10)).
+		WithMetadata("unrecorded_name", first.Name).
+		WithMetadata("existing_tables", listed).
+		WithMetadata("existing_table_count", strconv.Itoa(len(conflicts))).
+		WithCause(ErrSchemaBehindLedger)
+}
+
+// bookkeepingOccupiedFailure reports a runtime database in which something that
+// is not the ledger holds the ledger's name. Every run of `mindrail init` fails
+// on the same `CREATE TABLE IF NOT EXISTS`, so the remedy has to be the rebuild
+// rather than another init.
+func bookkeepingOccupiedFailure(kind string) error {
+	return app.NewError(
+		app.CodeMigrationFailed,
+		app.KindFailed,
+		"the runtime database has a "+kind+" named "+bookkeepingTable+", which is the name the migration ledger needs",
+		"Mindrail cannot record which schema migrations have run, so `mindrail init` would fail on the same name every time it ran.",
+		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+	).
+		WithMetadata("occupying_kind", kind).
+		WithCause(fmt.Errorf("%w: sqlite_master holds a %s named %s", ErrBookkeepingOccupied, kind, bookkeepingTable))
+}
+
+// unreadableFailure turns a failure to read the runtime database's own
+// bookkeeping into the four things a user can act on (finding H3).
+//
+// Without it the driver's own words -- `no such column: checksum (1)`, or
+// database/sql's `converting driver.Value type string ("one") to a int64` --
+// arrived as the user-facing `why` of a MIGRATION_FAILED, under a `next_action`
+// recommending the `mindrail init` that had just failed in exactly the same way.
+// The raw text stays on as the cause, which is where `--verbose` prints it and
+// where a maintainer can still read it.
+//
+// A cancelled or expired context is told apart because it is not damage: telling
+// someone who pressed Ctrl-C to move their database aside would be a worse
+// remedy than the one this function exists to replace.
+func unreadableFailure(what string, cause error) error {
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return app.NewError(
+			app.CodeMigrationFailed,
+			app.KindFailed,
+			"reading "+what+" was interrupted before it finished",
+			"Mindrail cannot confirm which schema migrations have run, so it will not write to this database.",
+			"Run the command again.",
+		).WithCause(cause)
+	}
+
+	return app.NewError(
+		app.CodeMigrationFailed,
+		app.KindFailed,
+		what+" could not be read",
+		"Mindrail cannot confirm which schema migrations have run, so it will not trust or write to this database.",
+		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+	).WithCause(cause)
 }
 
 func schemaAheadFailure(row Applied) error {

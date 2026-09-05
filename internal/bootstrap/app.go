@@ -95,6 +95,15 @@ type InitResult struct {
 	ConfigCreated        bool
 	KnowledgeDirsCreated []string
 	MigrationsApplied    []migration.Applied
+
+	// ConfigPresent and KnowledgeDirsPresent record that the scaffold step ran
+	// to completion, so the file and the directories are on disk whether or not
+	// this run is the one that put them there. They are separate from the two
+	// "created" fields because an empty create list has two meanings — nothing
+	// needed doing, or nothing was attempted — and only the first of them
+	// licenses `init` to report the scaffold as present (finding H13).
+	ConfigPresent        bool
+	KnowledgeDirsPresent bool
 }
 
 // App is one started (or half-started) Mindrail process.
@@ -421,6 +430,9 @@ func (a *App) loadConfig(context.Context) error {
 			a.subject.ConfigErr = err
 			return err
 		}
+		// WriteIfAbsent returned, so the file is there: this run wrote it, or it
+		// was already there and was left alone (spec §82).
+		a.initResult.ConfigPresent = true
 
 		dirs, err := config.EnsureKnowledgeDirs(worktreeRoot)
 		if err != nil {
@@ -428,6 +440,7 @@ func (a *App) loadConfig(context.Context) error {
 			return err
 		}
 		a.initResult.KnowledgeDirsCreated = dirs
+		a.initResult.KnowledgeDirsPresent = true
 	} else if worktreeRoot != "" {
 		a.initResult.ConfigPath = filepath.Join(worktreeRoot, config.RepoDir, config.ConfigFileName)
 	}
@@ -501,11 +514,19 @@ func (a *App) resolveRuntimePaths(context.Context) error {
 // so with a next action. That is decision D-01 and it is what keeps
 // `mindrail status` usable as the thing you run to find out you need to run
 // `mindrail init`.
+//
+// "Never initialised" includes the zero-length file an interrupted first run
+// leaves behind. RuntimePaths.Exists() is a stat, and a stat cannot tell a
+// database from a file that was created and never written; opening the second
+// one read-only reported "not in WAL mode" and exited 4 for the same state the
+// absent case reports at exit 0 (finding H14). storage.IsUnwritten is the one
+// question that separates them, and it is asked in read-only mode only: init
+// opens the same file for writing and finishes creating it, which is exactly
+// the remedy the report recommends.
 func (a *App) openSQLite(ctx context.Context) error {
 	a.record(StepOpenSQLite)
 
-	present := a.subject.Paths.Exists()
-	if a.opts.Mode == ModeReadOnly && !present {
+	if a.opts.Mode == ModeReadOnly && !a.runtimeDatabaseExists() {
 		a.subject.DBPresent = false
 		return nil
 	}
@@ -543,6 +564,15 @@ func (a *App) openSQLite(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// runtimeDatabaseExists reports whether there is a database at the runtime path
+// for a read-only command to open. A path that is occupied by something a
+// database can never be still counts: that is an obstruction Open has to
+// describe, not an absence, and swallowing it here would report a directory on
+// the database path as a repository nobody has initialised.
+func (a *App) runtimeDatabaseExists() bool {
+	return a.subject.Paths.Exists() && !storage.IsUnwritten(a.subject.Paths.DBPath)
 }
 
 // integrityOK is what PRAGMA integrity_check reports for a healthy file.

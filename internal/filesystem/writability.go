@@ -10,16 +10,17 @@ import (
 	"github.com/PsyChaos/mindrail/internal/app"
 )
 
-// RootKind names which of Mindrail's machine-local directories an answer is
+// RootKind names which of the directories Mindrail writes into an answer is
 // about.
 //
 // It exists because "unusable" is not one fact. The runtime root holds the
 // database and the state every command reads; the cache directory holds
-// derived data MR-001 never writes. A report that labelled both "the runtime
-// directory" told a user to fix a path that was not the one that failed, and a
-// caller that could not tell them apart had to treat them as equally fatal
-// (finding F7). This package states which root failed and what it is for, and
-// leaves the severity to the caller.
+// derived data MR-001 never writes; the repository config directory holds
+// committed repository content and is not machine-local at all. A report that
+// labelled all of them "the runtime directory" told a user to fix a path that
+// was not the one that failed, and a caller that could not tell them apart had
+// to treat them as equally fatal (finding F7). This package states which root
+// failed and what it is for, and leaves the severity to the caller.
 type RootKind string
 
 const (
@@ -28,35 +29,66 @@ const (
 
 	// RootCache is the directory derived data lives in.
 	RootCache RootKind = "cache directory"
+
+	// RootRepository is <worktree>/.mindrail, the repository's own
+	// configuration and knowledge scaffolding.
+	//
+	// It is a third kind rather than a variant of the runtime root because
+	// everything a consumer would grade it on differs: it lives in the working
+	// tree, it is version-controlled, it is shared by every contributor, and no
+	// environment variable relocates it. Without its own kind an unwritable
+	// checkout arrived carrying no root_kind at all, so a caller grading by root
+	// kind had to file it under whichever root it guessed.
+	RootRepository RootKind = "repository config directory"
 )
 
 // Purpose says what the directory is used for, in a noun phrase a report can
 // put after "Mindrail stores ... here".
 func (k RootKind) Purpose() string {
-	if k == RootCache {
+	switch k {
+	case RootCache:
 		return "derived cache data"
+	case RootRepository:
+		return "the repository's configuration and the knowledge scaffolding committed with it"
+	default:
+		return "the runtime database and the workspace state recorded in it"
 	}
-	return "the runtime database and the workspace state recorded in it"
 }
 
-// impact states what is lost when this root is unusable, without ruling on how
+// Impact states what is lost when this root is unusable, without ruling on how
 // fatal that is: MR-001 reads and writes the runtime root on every command and
 // never touches the cache, and which of those should stop a command is the
 // caller's call, not this package's.
-func (k RootKind) impact() string {
-	if k == RootCache {
+//
+// It is exported so that a package which creates one of these roots itself
+// describes the loss in the same words the probe does, instead of keeping a
+// second copy of the sentence that can drift from this one.
+func (k RootKind) Impact() string {
+	switch k {
+	case RootCache:
 		return "Mindrail cannot store derived cache data for this repository"
+	case RootRepository:
+		return "Mindrail cannot lay down the repository scaffolding, so knowledge records have nowhere to live"
+	default:
+		return "Mindrail cannot store its runtime state, so no command that needs the database can run"
 	}
-	return "Mindrail cannot store its runtime state, so no command that needs the database can run"
 }
 
 // override names the environment variable that relocates this root, so a remedy
-// can offer the escape hatch that actually applies to it.
+// can offer the escape hatch that actually applies to it. The empty string means
+// there is none: the repository config directory is where the repository says it
+// is, and offering MINDRAIL_RUNTIME_DIR for it would send a user to relocate a
+// root that is not the one that failed (decision D-07 names those two overrides
+// and only those two).
 func (k RootKind) override() string {
-	if k == RootCache {
+	switch k {
+	case RootCache:
 		return "MINDRAIL_CACHE_DIR"
+	case RootRepository:
+		return ""
+	default:
+		return "MINDRAIL_RUNTIME_DIR"
 	}
-	return "MINDRAIL_RUNTIME_DIR"
 }
 
 // RootKindOf reports which runtime root a RUNTIME_PATH_UNWRITABLE error is
@@ -77,6 +109,8 @@ func RootKindOf(err error) (RootKind, bool) {
 		return RootRuntime, true
 	case RootCache:
 		return RootCache, true
+	case RootRepository:
+		return RootRepository, true
 	default:
 		return "", false
 	}
@@ -286,13 +320,15 @@ func unwritablePathError(kind RootKind, dir, probed string, cause error) error {
 		why = fmt.Sprintf("the %s %q cannot be created because %q is not writable", label, dir, probed)
 	}
 
-	next = append(next, fmt.Sprintf("or point %s at a usable location", kind.override()))
+	if override := kind.override(); override != "" {
+		next = append(next, fmt.Sprintf("or point %s at a usable location", override))
+	}
 
 	return app.NewError(
 		app.CodeRuntimePathUnwritable,
 		app.KindUnavailable,
 		why,
-		kind.impact(),
+		kind.Impact(),
 		next...,
 	).WithMetadata("path", dir).
 		WithMetadata("probed_path", probed).

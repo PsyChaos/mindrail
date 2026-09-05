@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
@@ -170,6 +171,13 @@ type Probes struct {
 	// An empty DBPath means the question was not asked.
 	DBPath    storage.Presence
 	DBPathErr error
+
+	// DBFileUnwritten marks a zero-length file sitting at the database path: an
+	// interrupted first run. It is reported at the same severity as an absent
+	// database, because it is the same state (finding H14), but the diagnostic
+	// has to say which of the two the reader is looking at — "there is nothing
+	// here" sends someone who can see the file looking for a second problem.
+	DBFileUnwritten bool
 }
 
 // Probe answers the read-only questions doctor is allowed to ask the disk and
@@ -212,6 +220,8 @@ func Probe(s Subject) Subject {
 	// one `mindrail init` cannot fix.
 	if s.reached(stepOpenSQLite) && !s.DBPresent && s.DBErr == nil && s.Paths.DBPath != "" {
 		s.Probes.DBPath, s.Probes.DBPathErr = storage.Probe(s.Paths.DBPath)
+		s.Probes.DBFileUnwritten = s.Probes.DBPath == storage.PresenceFile &&
+			storage.IsUnwritten(s.Paths.DBPath)
 	}
 
 	return s
@@ -236,6 +246,61 @@ func (s Subject) obstruction() (diagnosis, bool) {
 		}), true
 	}
 	return diagnosis{}, false
+}
+
+// supersede replaces a remedy the reader cannot carry out with the obstruction
+// that stops them.
+//
+// The runtime store is described by three checks, and each learns about a
+// failure from a different layer: the SQLite driver's refusal, the migrator's,
+// the workspace query's. None of those layers can see that the directory holding
+// the database is unwritable or that its path is occupied — doctor's own
+// read-only probe establishes that, and it is the same probe the document's
+// top-level error object is built from. Without this, one rendered document
+// carried two remedies for one condition: the error object said "make the
+// directory writable" while the component printed beside it said "run
+// `mindrail init`", the command that fails there identically every time
+// (finding H11).
+//
+// Two guards keep it from firing where it is not wanted. It touches only a
+// reading that actually offers `mindrail init`, so a remedy that already names
+// the real blockage is left exactly as the layer that wrote it intended. And the
+// obstruction it defers to is the runtime *root* and the database path, never
+// the cache directory — a cache Mindrail cannot write costs nothing, and grading
+// it like the runtime root once drove a fully working repository to BLOCKED and
+// exit 4 (finding F13).
+func (s Subject) supersede(result Result) Result {
+	if !offersInit(result.NextAction) {
+		return result
+	}
+
+	obstruction, blocked := s.obstruction()
+	if !blocked {
+		return result
+	}
+
+	superseded := failure(result.State, result.Summary, obstruction)
+	superseded.Name = result.Name
+	superseded.Section = result.Section
+	superseded.Details = result.Details
+	return superseded
+}
+
+// offersInit reports whether any of these actions sends the reader to `mindrail
+// init`.
+//
+// The match is on a mention rather than on the whole action. "Move the file
+// aside and run `mindrail init`" is a good remedy when the only thing in the way
+// is that file — and it is still the wrong one when the directory holding it
+// cannot be written, because the second half fails whatever the reader does
+// about the first.
+func offersInit(actions []string) bool {
+	for _, action := range actions {
+		if strings.Contains(action, initCommand) {
+			return true
+		}
+	}
+	return false
 }
 
 // cacheObstruction returns the cache directory failure, from wherever it was

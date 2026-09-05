@@ -37,10 +37,11 @@ func (r Report) RenderHuman(w io.Writer, color bool) error {
 	writeLines(&b, "Next", r.NextAction)
 
 	writeSection(&b, "Repository", []field{
+		{"Observation", observationNote(r.Repository.Observation)},
 		{"Common dir", r.Repository.CommonDir},
 		{"Worktree root", r.Repository.WorktreeRoot},
 		{"Git dir", r.Repository.GitDir},
-		{"Linked worktree", strconv.FormatBool(r.Repository.IsLinkedWorktree)},
+		{"Linked worktree", observed(r.Repository.Observation, strconv.FormatBool(r.Repository.IsLinkedWorktree))},
 		{"Git version", r.Repository.GitVersion},
 	})
 	writeSection(&b, "Runtime", []field{
@@ -89,21 +90,37 @@ func (r InitReport) RenderHuman(w io.Writer, color bool) error {
 
 	b.WriteString("Mindrail Init\n\n")
 
-	disposition := "preserved"
-	if r.ConfigCreated {
-		disposition = "created"
+	// "Absent" has two meanings on all three of these lines, and only one of
+	// them was told apart. A run that found the config already there wrote
+	// nothing, and so did a run that stopped before the scaffold step — and the
+	// second one printed "Config: (preserved)" and "Knowledge directories:
+	// already present" about files that are not on disk at all (finding H13),
+	// which is the same defect the migration line below was fixed for
+	// (finding F14). ConfigPresent and KnowledgeDirsPresent are what tell them
+	// apart; each is set only when the step that establishes it returned.
+	switch {
+	case r.ConfigCreated:
+		fmt.Fprintf(&b, "Config: %s (created)\n", r.ConfigPath)
+	case r.ConfigPresent:
+		fmt.Fprintf(&b, "Config: %s (preserved)\n", r.ConfigPath)
+	case r.ConfigPath != "":
+		fmt.Fprintf(&b, "Config: %s (not written)\n", r.ConfigPath)
+	default:
+		b.WriteString("Config: not written (init stopped before the repository scaffold step)\n")
 	}
-	fmt.Fprintf(&b, "Config: %s (%s)\n", r.ConfigPath, disposition)
 
-	if len(r.KnowledgeDirsCreated) == 0 {
-		b.WriteString("Knowledge directories: already present\n")
-	} else {
+	switch {
+	case len(r.KnowledgeDirsCreated) > 0:
 		b.WriteString("Knowledge directories created:\n")
 		for _, dir := range r.KnowledgeDirsCreated {
 			b.WriteString("  ")
 			b.WriteString(dir)
 			b.WriteString("\n")
 		}
+	case r.KnowledgeDirsPresent:
+		b.WriteString("Knowledge directories: already present\n")
+	default:
+		b.WriteString("Knowledge directories: not created (init stopped before the repository scaffold step)\n")
 	}
 
 	// "none" has two meanings and they are not interchangeable. A run that

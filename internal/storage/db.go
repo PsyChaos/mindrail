@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -257,10 +258,44 @@ func classifyPragmaMismatch(opts Options, want, got Pragmas) error {
 	return pragmaFailure(opts.Path, want, got)
 }
 
+// IsUnwritten reports a runtime database path that no database has ever been
+// written to: nothing is there, or a regular file of zero length is.
+//
+// A zero-length mindrail.db is what an interrupted first run leaves behind. The
+// file exists, and it holds no header, no schema, no workspace row and no
+// journal — which is the same condition as a repository that was never
+// initialised at all, cleared by the same `mindrail init`. Decision D-03 puts
+// "not initialised" at exit 0, and the other half of the same interrupted first
+// run — a database created but not yet migrated — is already reported that way.
+// Treating the zero-length file as a database and opening it produced
+// "not in WAL mode": a fatal RUNTIME_DB_UNAVAILABLE at exit 4 for the identical
+// condition, two spellings of one state with two exit codes (finding H14).
+//
+// It is a separate question from Probe's rather than a fourth Presence value.
+// Probe answers "can a database live at this path?", and for a zero-length file
+// the answer is yes; this answers "does one live there yet?", which is what
+// decides between reporting a state and reporting a failure.
+//
+// A path that cannot be stat'ed for any other reason is not unwritten: that is
+// an obstruction, and Probe is the function that describes it.
+func IsUnwritten(path string) bool {
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	return err == nil && info.Mode().IsRegular() && info.Size() == 0
+}
+
 // notWALFailure reports a runtime database file that is not in WAL mode, with
 // the remedy that converts it. The two spellings differ only in what the user
 // is looking at: an empty file is a first run that did not finish, and a
 // populated one is a database somebody else made.
+//
+// The empty branch is the last resort, not the reported one: a caller that asks
+// IsUnwritten first — every MR-001 command does, through bootstrap — never gets
+// here with a zero-length file, because that condition is a reportable state
+// rather than an open failure (finding H14). It stays because storage.Open owes
+// a usable diagnosis to a caller that did not ask.
 func notWALFailure(path, observed string) error {
 	why := "the runtime database at " + path + " is not in WAL mode"
 	impact := "Mindrail requires WAL journalling before it will read or write this database."

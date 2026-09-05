@@ -97,13 +97,21 @@ func (r *ExecRunner) Run(ctx context.Context, dir string, args ...string) ([]byt
 // Cmd.Dir rather than because of git. It returns nil for a usable directory, so
 // every other failure keeps its existing classification.
 //
-// Two signals are consulted because neither alone is sufficient: os/exec
-// surfaces the chdir refusal itself as an *fs.PathError, which names the exact
-// cause including a directory that exists but cannot be entered, while the stat
-// is the portable fallback for a platform that reports the same condition some
-// other way.
+// The *fs.PathError with Op == "chdir" is os/exec's own pre-flight verdict and
+// carries the exact cause, so it is consulted first — but it is only ever
+// raised for a directory that fails os.Stat. Every other refusal reaches us as
+// a fork/exec error naming the *binary*, so the directory has to be probed
+// directly (finding H6).
 func workingDirectoryFault(dir string, runErr error) error {
 	if dir == "" {
+		return nil
+	}
+
+	// git having run and exited settles the question: the directory was
+	// entered. Probing it again could only misfire on a concurrent chmod and
+	// turn an ordinary git fatal into a directory complaint.
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
 		return nil
 	}
 
@@ -112,14 +120,55 @@ func workingDirectoryFault(dir string, runErr error) error {
 		return workingDirectoryError(dir, pathErr.Err)
 	}
 
-	info, statErr := os.Stat(dir)
-	if statErr != nil {
-		return workingDirectoryError(dir, statErr)
-	}
-	if !info.IsDir() {
-		return workingDirectoryError(dir, errors.New("not a directory"))
+	if fault := directoryEntryFault(dir); fault != nil {
+		return workingDirectoryError(dir, fault)
 	}
 	return nil
+}
+
+// directoryEntryFault reports why dir cannot be used as a working directory, or
+// nil when it can.
+//
+// The enterability probe is a stat of dir's "." entry rather than of dir
+// itself. os.Stat(dir) answers "does something exist there", which is true of a
+// directory at mode 0000 that no process can enter — and that gap is the whole
+// of finding H6, because os/exec's own pre-flight check is the same stat: the
+// 0000 directory passes it, the refusal happens in the child after the fork,
+// and it surfaces as an *fs.PathError whose Op is "fork/exec" and whose Path is
+// the git binary. Read literally that error says git could not be executed, so
+// the reader was told to install git and never told which directory was at
+// fault.
+//
+// Resolving the "." component requires search permission on dir, which is
+// exactly the permission chdir needs, so the probe answers the question that
+// was actually asked.
+//
+// It has to be "." specifically. Opening dir needs *read* permission, which
+// chdir does not: an execute-only directory (mode 0111) that git enters happily
+// would be condemned by an os.Open probe, and a read-only one (mode 0444) that
+// git cannot enter would be waved through by it. Both were measured.
+func directoryEntryFault(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return underlyingError(err)
+	}
+	if !info.IsDir() {
+		return errors.New("not a directory")
+	}
+	if _, err := os.Stat(dir + string(os.PathSeparator) + "."); err != nil {
+		return underlyingError(err)
+	}
+	return nil
+}
+
+// underlyingError strips the path-and-syscall framing off a filesystem error so
+// the remaining sentence composes into a message that already names the path.
+func underlyingError(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && pathErr.Err != nil {
+		return pathErr.Err
+	}
+	return err
 }
 
 // command builds the subprocess. It is separate from Run so the isolation rules

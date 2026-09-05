@@ -177,7 +177,7 @@ func TestAdapterResolveInsideGitDirectory(t *testing.T) {
 		t.Errorf("start_dir metadata = %q, want %q", payload.Metadata["start_dir"], startDir)
 	}
 
-	outside, _ := app.PayloadOf(notARepositoryError(startDir, nil))
+	outside, _ := app.PayloadOf(notARepositoryError(startDir, "", nil))
 	if payload.Why == outside.Why {
 		t.Errorf("the .git case reuses the outside-every-repository why: %q", payload.Why)
 	}

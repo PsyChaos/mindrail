@@ -64,6 +64,14 @@ type SchemaObject struct {
 type SchemaEffect struct {
 	Object  SchemaObject
 	Removed bool
+
+	// IfNotExists marks a create the author wrote as `CREATE ... IF NOT
+	// EXISTS`, which is a statement about what the migration tolerates: an
+	// object already standing under that name is not an error and the statement
+	// is a no-op. Anything that reasons about what must be *absent* before a
+	// migration runs has to honour that, or it refuses an init the database
+	// would have accepted.
+	IfNotExists bool
 }
 
 // Removes lists the objects this migration takes away, in file order. It is the
@@ -166,7 +174,7 @@ func Load(fsys fs.FS) ([]Migration, error) {
 // deliberately no fourth: everything else a migration can write leaves the set
 // of object names alone.
 var effectPattern = regexp.MustCompile(`(?im)^[\t ]*(?:` +
-	`CREATE[\t ]+((?:(?:UNIQUE|TEMP|TEMPORARY|VIRTUAL)[\t ]+)*)(TABLE|INDEX|VIEW|TRIGGER)[\t ]+(?:IF[\t ]+NOT[\t ]+EXISTS[\t ]+)?(` + identifier + `)` +
+	`CREATE[\t ]+((?:(?:UNIQUE|TEMP|TEMPORARY|VIRTUAL)[\t ]+)*)(TABLE|INDEX|VIEW|TRIGGER)[\t ]+(IF[\t ]+NOT[\t ]+EXISTS[\t ]+)?(` + identifier + `)` +
 	`|DROP[\t ]+(TABLE|INDEX|VIEW|TRIGGER)[\t ]+(?:IF[\t ]+EXISTS[\t ]+)?(` + identifier + `)` +
 	`|ALTER[\t ]+TABLE[\t ]+(` + identifier + `)[\t ]+RENAME[\t ]+TO[\t ]+(` + identifier + `)` +
 	`)`)
@@ -177,13 +185,14 @@ const identifier = `"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*`
 // Submatch indices of effectPattern, named because seven positional groups in
 // one alternation is where an off-by-one hides.
 const (
-	groupCreateModifiers = 1
-	groupCreateKind      = 2
-	groupCreateName      = 3
-	groupDropKind        = 4
-	groupDropName        = 5
-	groupRenameFrom      = 6
-	groupRenameTo        = 7
+	groupCreateModifiers   = 1
+	groupCreateKind        = 2
+	groupCreateIfNotExists = 3
+	groupCreateName        = 4
+	groupDropKind          = 5
+	groupDropName          = 6
+	groupRenameFrom        = 7
+	groupRenameTo          = 8
 )
 
 // schemaEffects lists what body does to the expected object set, in file order.
@@ -204,6 +213,7 @@ func schemaEffects(body string) []SchemaEffect {
 					Kind: strings.ToLower(match[groupCreateKind]),
 					Name: unquote(match[groupCreateName]),
 				},
+				IfNotExists: match[groupCreateIfNotExists] != "",
 			})
 		case match[groupDropKind] != "":
 			effects = append(effects, SchemaEffect{

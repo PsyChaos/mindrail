@@ -365,6 +365,18 @@ func TestResolveOverFireGuard(t *testing.T) {
 				if got.IsBare {
 					t.Errorf("Resolve %s: IsBare = true for a repository with a worktree", tc.name)
 				}
+				// Each of these is somewhere `init` will create a directory, so
+				// a value that is merely plausible is not enough: it has to
+				// name a path that is actually there (finding H5).
+				for label, value := range map[string]string{
+					"CommonDir":    got.CommonDir,
+					"GitDir":       got.GitDir,
+					"WorktreeRoot": got.WorktreeRoot,
+				} {
+					if _, statErr := os.Stat(value); statErr != nil {
+						t.Errorf("Resolve %s: %s = %q, which does not exist: %v", tc.name, label, value, statErr)
+					}
+				}
 			}
 
 			t.Run("linked worktree is still flagged as one", func(t *testing.T) {
@@ -390,6 +402,12 @@ func TestResolveOverFireGuard(t *testing.T) {
 				}
 				if errors.Is(err, ErrRepositoryUnreadable) {
 					t.Fatalf("an absent repository was reported as an unreadable one: %v", err)
+				}
+				// The classifications added for H7 and H8 are the newest thing
+				// that could steal this case, and stealing it would replace the
+				// one remedy `git init` is right for.
+				if errors.Is(err, ErrDanglingGitFile) || errors.Is(err, ErrOrphanedWorktree) {
+					t.Fatalf("an empty directory was reported as a broken checkout: %v", err)
 				}
 				payload, ok := app.PayloadOf(err)
 				if !ok {

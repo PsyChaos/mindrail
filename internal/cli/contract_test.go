@@ -373,6 +373,54 @@ func TestBrokenSetupMatrix(t *testing.T) {
 			unusableRemedies: []string{"mindrail init"},
 		},
 		{
+			name: "runtime directory unwritable after init",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyWrites(t, filepath.Join(repo, ".git", "mindrail"))
+				return repo
+			},
+			// Finding H11. The unwritable-runtime-path row above breaks a
+			// repository that was never initialised, so the database is absent and
+			// the sqlite check reaches the obstruction branch that already knew
+			// better. This one breaks an initialised repository, so the open
+			// itself fails and the storage layer's own remedy — "run `mindrail
+			// init` if this repository has not been initialised yet" — reached the
+			// reader beside an error object that said to fix the permissions.
+			wantExit:      app.ExitUnavailable,
+			wantCode:      app.CodeRuntimePathUnwritable,
+			wantState:     doctor.StateError,
+			wantError:     true,
+			wantComponent: status.ComponentRuntimeDB,
+			wantCheck:     "sqlite",
+			// init is the command that has to write into the directory nothing
+			// can write into.
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
+			name: "runtime database created but never written",
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				runtimeRoot := filepath.Join(repo, ".git", "mindrail")
+				if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
+					t.Fatalf("create %s: %v", runtimeRoot, err)
+				}
+				writeFile(t, runtimeDBPath(t, repo), nil)
+				return repo
+			},
+			// Finding H14: the other half of an interrupted first run. A
+			// zero-length mindrail.db holds no schema and no state, which is the
+			// same condition as the "runtime directory deleted after init" row
+			// above and as "first run still in flight" below — and decision D-03
+			// puts all three at exit 0. It was the only one of them reported as a
+			// fatal RUNTIME_DB_UNAVAILABLE at exit 4. The remedy really is init,
+			// so assertRemedyWorks runs it.
+			wantExit:      app.ExitSuccess,
+			wantCode:      app.CodeWorkspaceNotInitialized,
+			wantState:     doctor.StateUnavailable,
+			wantComponent: status.ComponentRuntimeDB,
+			wantCheck:     "sqlite",
+		},
+		{
 			name: "database path occupied by a directory",
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)

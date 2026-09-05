@@ -25,6 +25,7 @@ data.repository.common_dir
 data.repository.git_dir
 data.repository.git_version
 data.repository.is_linked_worktree
+data.repository.observation
 data.repository.worktree_root
 data.runtime.cache_dir
 data.runtime.db_path

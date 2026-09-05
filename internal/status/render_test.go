@@ -212,6 +212,90 @@ func TestInitReportNamesThePreservedConfig(t *testing.T) {
 	}
 }
 
+// TestInitReportNeverClaimsAScaffoldItDidNotEstablish is finding H13.
+//
+// "Nothing was created" has the same two meanings on the config line and the
+// knowledge-directories line that it had on the migrations line one line below
+// them, and only the migrations line was ever taught to tell them apart
+// (finding F14). A run blocked before the scaffold step created no config file
+// and no directories, and reported "Config: (preserved)" and "Knowledge
+// directories: already present" about a `.mindrail` that is not on disk — the
+// two sentences a user checks to find out whether their own settings survived.
+func TestInitReportNeverClaimsAScaffoldItDidNotEstablish(t *testing.T) {
+	report := blockedInitReport()
+	report.ConfigCreated = false
+	report.ConfigPresent = false
+	report.KnowledgeDirsCreated = nil
+	report.KnowledgeDirsPresent = false
+
+	var buf bytes.Buffer
+	if err := report.RenderHuman(&buf, false); err != nil {
+		t.Fatalf("RenderHuman: %v", err)
+	}
+	got := buf.String()
+
+	for _, forbidden := range []string{"preserved", "already present"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("init reports %q about a scaffold it never wrote:\n%s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "Config: ") || !strings.Contains(got, "Knowledge directories: ") {
+		t.Errorf("init dropped the scaffold lines instead of qualifying them:\n%s", got)
+	}
+}
+
+// TestInitReportStillReportsAScaffoldItDidEstablish is the over-fire guard for
+// finding H13, in both directions.
+//
+// A second init has to say the existing config was preserved — spec §82's
+// promise is unverifiable otherwise — and a first init has to say it created
+// one. Qualifying the lines must not cost either sentence.
+func TestInitReportStillReportsAScaffoldItDidEstablish(t *testing.T) {
+	tests := map[string]struct {
+		mutate func(*InitReport)
+		want   []string
+		absent []string
+	}{
+		"a second init that changed nothing": {
+			mutate: func(r *InitReport) {
+				r.ConfigCreated = false
+				r.KnowledgeDirsCreated = nil
+			},
+			want:   []string{"preserved", "already present"},
+			absent: []string{"not written", "not created"},
+		},
+		"a first init that created everything": {
+			mutate: func(*InitReport) {},
+			want:   []string{"created", ".mindrail/knowledge/decisions"},
+			absent: []string{"not written", "not created", "already present"},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			report := readyInitReport()
+			tc.mutate(&report)
+
+			var buf bytes.Buffer
+			if err := report.RenderHuman(&buf, false); err != nil {
+				t.Fatalf("RenderHuman: %v", err)
+			}
+			got := buf.String()
+
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("output does not say %q:\n%s", want, got)
+				}
+			}
+			for _, forbidden := range tc.absent {
+				if strings.Contains(got, forbidden) {
+					t.Errorf("output says %q about work it did do:\n%s", forbidden, got)
+				}
+			}
+		})
+	}
+}
+
 // TestInitReportGolden pins both terminal outcomes byte for byte.
 func TestInitReportGolden(t *testing.T) {
 	for name, report := range map[string]InitReport{
@@ -261,10 +345,17 @@ func readyInitReport() InitReport {
 		TerminalState: TerminalReady,
 		ConfigPath:    "/repo/.mindrail/config.toml",
 		ConfigCreated: true,
+		// The scaffold step ran and returned, which is what licenses the report
+		// to describe the config file and the knowledge directories as being on
+		// disk at all (finding H13). A fixture that left these false was
+		// describing a run that never reached the scaffold while asserting it
+		// had created one.
+		ConfigPresent: true,
 		KnowledgeDirsCreated: []string{
 			".mindrail/knowledge/decisions",
 			".mindrail/knowledge/invariants",
 		},
+		KnowledgeDirsPresent: true,
 		MigrationsApplied: []migration.Applied{{
 			Version:   1,
 			Name:      "initial",
@@ -284,7 +375,9 @@ func blockedInitReport() InitReport {
 		Reason:               "the runtime database has not been created",
 		ConfigPath:           "/repo/.mindrail/config.toml",
 		ConfigCreated:        true,
+		ConfigPresent:        true,
 		KnowledgeDirsCreated: nil,
+		KnowledgeDirsPresent: true,
 		MigrationsApplied:    nil,
 		Status:               Build(uninitializedSubject(), 3*time.Millisecond),
 		DurationMS:           9,

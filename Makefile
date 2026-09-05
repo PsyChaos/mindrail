@@ -72,7 +72,16 @@ tidy-check: ## Fail if go.mod or go.sum are not tidy
 	exit $$status
 
 .PHONY: check
-check: fmt-check vet test ## Local quality gate
+check: fmt-check vet test ## Local quality gate (fast: runs on every save)
+
+# The gate that has to be green before a change is proposed. `check` stays fast
+# enough to run continuously; `verify` adds the two suites that are too slow for
+# that but too load-bearing to leave to a human's memory — the race detector and
+# the clean-binary smoke tests, which are the only thing that exercises the
+# compiled binary as a subprocess. A CI workflow that runs this belongs to
+# MR-018/MR-019; until then this target is the gate.
+.PHONY: verify
+verify: check race smoke ## Full quality gate: check + race detector + smoke tests
 
 .PHONY: clean
 clean: ## Remove build and coverage output

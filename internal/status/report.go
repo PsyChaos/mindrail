@@ -12,12 +12,21 @@ import (
 // are separate fields because they are separate answers: every linked worktree
 // of a repository shares the first and owns the second, and acceptance
 // criterion 3 is about reporting both correctly.
+//
+// Observation qualifies every other field, for the same reason it does in
+// RuntimeInfo and for the block acceptance criterion 3 is actually about. When
+// discovery fails, `init` still renders a whole report, and the three path
+// fields are the empty string while IsLinkedWorktree is false — three unasked
+// questions and one flat assertion that this is not a linked worktree, about a
+// repository nobody could reach. It was the one block that gained no marker
+// (finding H12).
 type RepositoryInfo struct {
-	CommonDir        string `json:"common_dir"`
-	WorktreeRoot     string `json:"worktree_root"`
-	GitDir           string `json:"git_dir"`
-	IsLinkedWorktree bool   `json:"is_linked_worktree"`
-	GitVersion       string `json:"git_version,omitempty"`
+	Observation      Observation `json:"observation"`
+	CommonDir        string      `json:"common_dir"`
+	WorktreeRoot     string      `json:"worktree_root"`
+	GitDir           string      `json:"git_dir"`
+	IsLinkedWorktree bool        `json:"is_linked_worktree"`
+	GitVersion       string      `json:"git_version,omitempty"`
 }
 
 // Observation says how much a block of the report is worth.
@@ -135,6 +144,11 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 	// and doctor describe the same disk (decision D-01: probe, never create).
 	s = doctor.Probe(s)
 
+	// The git reading is not a component — §107 has no slot for the repository
+	// itself — but it is what grades the repository block, and reading it here
+	// rather than re-deriving the verdict is what keeps status and doctor from
+	// disagreeing about whether the layout was actually resolved.
+	repository := doctor.GitCheck(s).Run(ctx)
 	knowledge := doctor.KnowledgeCheck(s).Run(ctx)
 	runtimePaths := doctor.RuntimePathCheck(s).Run(ctx)
 	sqlite := doctor.SQLiteCheck(s).Run(ctx)
@@ -170,6 +184,7 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 		NextAction:        next,
 		Components:        components,
 		Repository: RepositoryInfo{
+			Observation:      repositoryObservation(repository),
 			CommonDir:        s.Repo.CommonDir,
 			WorktreeRoot:     s.Repo.WorktreeRoot,
 			GitDir:           s.Repo.GitDir,
@@ -207,6 +222,28 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 		},
 		DurationMS: elapsed.Milliseconds(),
 	}
+}
+
+// repositoryObservation grades the Git layout block.
+//
+// It is deliberately not observationOf(git). That function reads UNAVAILABLE as
+// a real finding, which is right for a database path that was inspected and
+// found empty, and wrong here: a git that is missing or that timed out reports
+// UNAVAILABLE (decision D-30) and leaves every layout field at zero, so
+// "is_linked_worktree: false" would be published as an inspected fact about a
+// repository nobody reached.
+//
+// The block is never NotObserved. Discovery is step 1 of the §87 sequence, so it
+// always runs; every field of the block comes from that one reading, and a
+// reading that is anything but OK leaves all of them at zero. That makes
+// Indeterminate — "looked, and cannot vouch for this" — the honest answer for
+// every failure, including a bare repository, where the worktree root really is
+// unknown rather than absent.
+func repositoryObservation(repository doctor.Result) Observation {
+	if repository.State == doctor.StateOK {
+		return Observed
+	}
+	return Indeterminate
 }
 
 // observationOf grades the readings behind one block of the report, worst
@@ -327,6 +364,13 @@ func stateRank(s doctor.State) int {
 // reporting order says. Otherwise a run that stopped at the runtime store would
 // name `knowledge` — the first slot in §107's list, and the one subsystem
 // nobody looked at — as the reason work cannot start.
+//
+// When nothing was inspected at all, no component is named. Readiness is still
+// BLOCKED — work cannot start on an installation this report cannot vouch for —
+// but blocking_component stays empty, because every candidate for it is a
+// subsystem that was never read, and picking the first one asserted that
+// `knowledge` stopped a run the error object in the same document attributes to
+// the `git` check (finding H15). stopped_at_step carries what is actually known.
 func classify(components map[ComponentName]Component) (Readiness, ComponentName, []string) {
 	for _, name := range componentOrder {
 		if component := components[name]; component.blocks() && component.inspected() {
@@ -335,7 +379,7 @@ func classify(components map[ComponentName]Component) (Readiness, ComponentName,
 	}
 	for _, name := range componentOrder {
 		if component := components[name]; component.blocks() {
-			return ReadinessBlocked, name, component.NextAction
+			return ReadinessBlocked, "", component.NextAction
 		}
 	}
 	for _, name := range componentOrder {

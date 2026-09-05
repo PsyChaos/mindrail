@@ -172,17 +172,41 @@ func (a *Adapter) absolutePath(ctx context.Context, startDir, flag string) (stri
 	return filepath.Clean(out), nil
 }
 
-// revParse returns rev-parse's trimmed stdout together with its stderr. The
-// second value is not decoration: when git fails, its stderr is the only text
-// that distinguishes an absent repository from a damaged one, and the exit
-// status alone cannot tell them apart (finding F1).
+// revParse returns rev-parse's stdout with its output terminator removed,
+// together with its stderr. The second value is not decoration: when git fails,
+// its stderr is the only text that distinguishes an absent repository from a
+// damaged one, and the exit status alone cannot tell them apart (finding F1).
 func (a *Adapter) revParse(ctx context.Context, startDir string, args ...string) (string, string, error) {
 	stdout, stderr, err := a.runner.Run(ctx, startDir, append([]string{"rev-parse"}, args...)...)
 	trimmedErr := stderrSummary(string(stderr))
 	if err != nil {
 		return "", trimmedErr, err
 	}
-	return strings.TrimSpace(string(stdout)), trimmedErr, nil
+	return trimOutputTerminator(string(stdout)), trimmedErr, nil
+}
+
+// trimOutputTerminator removes the single newline rev-parse writes after its
+// answer, and nothing else.
+//
+// This used to be strings.TrimSpace, which is wrong for every rev-parse that
+// answers with a *path*. A trailing space, tab or carriage return is a legal
+// byte in a POSIX path name, so trimming whitespace silently shortens the
+// answer to a path that is not the repository — and because the shortened path
+// is still plausible, nothing downstream notices: `init` creates `.mindrail/`
+// in a directory it invents next to the worktree, reports READY FOR TARGETED
+// WORK and exits 0 (finding H5).
+//
+// The newline is the only byte git adds, so it is the only byte that can be
+// removed without guessing. rev-parse emits path names raw: measured against
+// git 2.55, neither core.quotePath nor a non-UTF-8 byte nor an embedded quote,
+// backslash or newline makes it quote or escape the output, so there is nothing
+// to unescape here and a path containing a newline survives intact — only the
+// terminator goes.
+//
+// Boolean answers keep going through parseGitBool, which trims whitespace on
+// purpose: "true" is not a path.
+func trimOutputTerminator(out string) string {
+	return strings.TrimSuffix(out, "\n")
 }
 
 // classifyProbeFailure decides what a failed discovery probe actually means.
@@ -196,10 +220,18 @@ func (a *Adapter) revParse(ctx context.Context, startDir string, args ...string)
 // Anything git did not call "not a git repository" keeps the repository's
 // existence an open question, so it must not be handed the `git init` remedy.
 func (a *Adapter) classifyProbeFailure(startDir, stderr string, cause error) error {
-	if gitReportedNoRepository(stderr) {
-		return notARepositoryError(startDir, joinStderr(cause, stderr))
+	if !gitReportedNoRepository(stderr) {
+		return repositoryUnreadableError(startDir, stderr, cause)
 	}
-	return repositoryUnreadableError(startDir, stderr, cause)
+	// "There is no repository here" and "the pointer to the repository is
+	// broken" are the same message from git and completely different situations
+	// for the reader: the second one is a checkout that used to work, and
+	// `git init` inside it would bury the problem under a new empty repository
+	// rather than fix it (findings H7 and H8).
+	if fault := brokenGitFileFault(startDir, stderr); fault != nil {
+		return fault.asError(startDir, stderr, cause)
+	}
+	return notARepositoryError(startDir, stderr, cause)
 }
 
 // gitReportedNoRepository reports whether stderr is git's own verdict that
@@ -334,15 +366,24 @@ func firstLine(s string) string {
 // is correct advice from a home directory and baffling from what the user
 // believes is their checkout. Any renderer of this error is expected to show
 // it.
-func notARepositoryError(startDir string, cause error) error {
-	return app.NewError(
+// git's own words travel in `git_stderr` metadata as well as in the cause
+// chain. Every sibling classification in this package already does that, and a
+// machine consumer that has to regex a joined cause string to recover them is
+// reading a field nobody promised the shape of (finding H7).
+func notARepositoryError(startDir, stderr string, cause error) error {
+	err := app.NewError(
 		app.CodeNotAGitRepository,
 		app.KindUsage,
 		"the directory is not inside a Git repository worktree",
 		"Mindrail scopes all of its state to a repository and has nothing to attach to here",
 		"change into a Git repository and run the command again",
 		"or run `git init` to create one first",
-	).WithMetadata("start_dir", startDir).WithCause(errors.Join(ErrNotARepository, cause))
+	).WithMetadata("start_dir", startDir)
+
+	if stderr != "" {
+		err = err.WithMetadata("git_stderr", stderr)
+	}
+	return err.WithCause(errors.Join(ErrNotARepository, joinStderr(cause, stderr)))
 }
 
 // insideGitDirectoryError reports a start directory inside a repository's .git

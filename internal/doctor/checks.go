@@ -334,11 +334,15 @@ func configResult(s Subject) Result {
 // SQLiteCheck reports the runtime database. It never opens or creates one:
 // the handle bootstrap managed to obtain, and the error it hit if it did not,
 // are both already in the Subject (decision D-01).
+//
+// Every reading of the runtime store passes through Subject.supersede, which is
+// what keeps the three checks that describe it from contradicting the error
+// object rendered in the same document (finding H11).
 func SQLiteCheck(s Subject) Check {
 	return CheckFunc{
 		CheckName:    checkSQLite,
 		CheckSection: sectionRuntimeStore,
-		Fn:           func(context.Context) Result { return sqliteResult(s) },
+		Fn:           func(context.Context) Result { return s.supersede(sqliteResult(s)) },
 	}
 }
 
@@ -372,7 +376,7 @@ func sqliteResult(s Subject) Result {
 		// exits 0 and is reported, so the fix is discoverable instead of fatal.
 		return failure(StateUnavailable, "Runtime database not initialized", diagnosis{
 			code:       app.CodeWorkspaceNotInitialized,
-			diagnostic: "The runtime database path " + describePath(s.Paths.DBPath) + " was inspected and is empty.",
+			diagnostic: describeUninitializedDB(s),
 			impact:     "Runtime state is unavailable until this repository is initialized.",
 			next:       []string{initCommand},
 		})
@@ -401,13 +405,29 @@ func sqliteResult(s Subject) Result {
 	}
 }
 
+// describeUninitializedDB says which of the two uninitialised states the reader
+// is looking at.
+//
+// They are graded the same — both are "not initialised", both exit 0, both are
+// cleared by `mindrail init` (finding H14) — but they do not look the same from
+// the shell. Telling someone who can see a mindrail.db that the path "is empty"
+// sends them hunting for a second problem, so the file an interrupted first run
+// left behind is named as what it is.
+func describeUninitializedDB(s Subject) string {
+	path := describePath(s.Paths.DBPath)
+	if s.Probes.DBFileUnwritten {
+		return "The file at " + path + " is zero length: a previous `mindrail init` created it and did not get as far as writing a database."
+	}
+	return "The runtime database path " + path + " was inspected and is empty."
+}
+
 // MigrationCheck reports the schema ledger. It reads what bootstrap already
 // applied or refused to apply; status and doctor never migrate (decision D-01).
 func MigrationCheck(s Subject) Check {
 	return CheckFunc{
 		CheckName:    checkMigrations,
 		CheckSection: sectionRuntimeStore,
-		Fn:           func(context.Context) Result { return migrationResult(s) },
+		Fn:           func(context.Context) Result { return s.supersede(migrationResult(s)) },
 	}
 }
 
@@ -583,7 +603,7 @@ func WorkspaceCheck(s Subject) Check {
 	return CheckFunc{
 		CheckName:    checkWorkspace,
 		CheckSection: sectionWorkspace,
-		Fn:           func(context.Context) Result { return workspaceResult(s) },
+		Fn:           func(context.Context) Result { return s.supersede(workspaceResult(s)) },
 	}
 }
 
