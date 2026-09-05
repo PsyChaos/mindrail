@@ -119,6 +119,15 @@ func (r InitReport) RenderHuman(w io.Writer, color bool) error {
 		}
 	case r.KnowledgeDirsPresent:
 		b.WriteString("Knowledge directories: already present\n")
+	case r.ConfigPresent:
+		// "Absent" has a third meaning this line did not have a word for. The
+		// configuration is written and the knowledge directories are created by
+		// one step, in that order, so a run that established the first and not the
+		// second stopped *inside* the scaffold step — and saying it stopped
+		// "before" that step tells the reader to look for a failure one stage
+		// earlier than the one the report itself is about. It is the same defect
+		// as H13 and F14, in the branch those fixes left behind.
+		b.WriteString("Knowledge directories: not created (init stopped while laying down the repository scaffold)\n")
 	default:
 		b.WriteString("Knowledge directories: not created (init stopped before the repository scaffold step)\n")
 	}

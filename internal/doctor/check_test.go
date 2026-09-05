@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,3 +272,78 @@ func stateCheckIn(name, section string, state State) Check {
 		},
 	}
 }
+
+// TestHaltErrorPointsAtTheCheckThatExplainsTheHalt is finding W7.
+//
+// haltError is Verdict's backstop: the value a halted startup produces when the
+// halting check somehow did not speak for itself. Rewriting its remedy to
+// `mindrail init` left the entire suite green, because every test that touched
+// it asserted only that *a* remedy was present. That is the same gap the whole
+// W-family keeps coming back through — a remedy is checked for existence and
+// never for being the right one — and it matters most here, where the halt can
+// be at any of the seven §87 steps and `mindrail init` fixes none of them: it
+// cannot install git, correct a rejected config, or make an unwritable runtime
+// root writable, and offering it would be a closed loop over every step but one.
+//
+// The whole step order is walked rather than one sample, so a remedy that
+// happens to be right for the database step and wrong for the git step cannot
+// pass.
+func TestHaltErrorPointsAtTheCheckThatExplainsTheHalt(t *testing.T) {
+	halts := map[step]string{
+		stepResolveRepository:   checkGit,
+		stepLoadConfig:          checkConfig,
+		stepResolveRuntimePaths: checkRuntimePaths,
+		stepOpenSQLite:          checkSQLite,
+		stepMigrateDB:           checkMigrations,
+		stepValidateKnowledge:   checkKnowledge,
+		stepRegisterWorkspace:   checkWorkspace,
+	}
+	for _, st := range stepOrder {
+		check, named := halts[st]
+		if !named {
+			t.Fatalf("step %q has no check to report it; the table is out of date with stepOrder", st)
+		}
+
+		t.Run(string(st), func(t *testing.T) {
+			err := haltError(halt{step: st, check: check, code: app.CodeStartupIncomplete})
+
+			payload, ok := app.PayloadOf(err)
+			if !ok {
+				t.Fatalf("haltError produced an error with no payload: %v", err)
+			}
+			if len(payload.NextAction) != 1 {
+				t.Fatalf("next_action = %v, want exactly one action", payload.NextAction)
+			}
+
+			action := payload.NextAction[0]
+			if !strings.Contains(action, check) {
+				t.Errorf("next_action %q does not name the %q check, so the reader is not told "+
+					"which reading explains the halt", action, check)
+			}
+			if !strings.Contains(action, doctorCommand) {
+				t.Errorf("next_action %q does not send the reader to `%s`, which is the only place "+
+					"the halting reading is printed", action, doctorCommand)
+			}
+			if strings.Contains(action, initCommand) {
+				t.Errorf("next_action %q offers `%s` for a startup that halted at %q: init cannot "+
+					"install git, correct a config or make an unwritable path writable, so this is a "+
+					"remedy that re-enters the failure", action, initCommand, st)
+			}
+			if !strings.Contains(payload.Why, string(st)) {
+				t.Errorf("why = %q does not name the step that stopped the run (%q)", payload.Why, st)
+			}
+			if got := payload.Metadata["stopped_at_step"]; got != string(st) {
+				t.Errorf("metadata stopped_at_step = %q, want %q", got, st)
+			}
+			if got := payload.Metadata["check"]; got != check {
+				t.Errorf("metadata check = %q, want %q", got, check)
+			}
+		})
+	}
+}
+
+// doctorCommand is the command haltError's remedy has to send the reader to. It
+// is spelled here rather than imported because the assertion is about the text a
+// user reads, and a constant shared with the producer would let a rewrite of
+// both pass unnoticed.
+const doctorCommand = "mindrail doctor"

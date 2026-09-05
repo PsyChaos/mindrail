@@ -29,6 +29,7 @@ Runtime store
 ✓ Runtime database healthy
   busy_timeout: 5000
   db_path: <REPO>/.git/mindrail/mindrail.db
+  db_writable: true
   foreign_keys: 1
   journal_mode: wal
   synchronous: 1

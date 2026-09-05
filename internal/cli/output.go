@@ -163,6 +163,16 @@ func (inv invocation) emit(data any, human humanRenderer, warnings []app.Warning
 	inv.logCause(verdict)
 
 	if inv.flags.json {
+		// A document JSON cannot carry unchanged is refused rather than mangled
+		// (finding W9). The swap happens here, before the envelope is built, so
+		// that `ok`, the error object and the exit code all still follow from one
+		// value: doing it inside the serializer would have left emit returning the
+		// verdict of a report that was never published, which is finding F11's
+		// split wearing a new cause.
+		if refusal := refuseUnrepresentableJSON(data, verdict); refusal != nil {
+			data, verdict = nil, refusal
+		}
+
 		if err := app.WriteJSON(inv.stdout, inv.command, data, warnings, verdict); err != nil {
 			return app.Failed(fmt.Errorf("write %s output: %w", inv.command, err))
 		}

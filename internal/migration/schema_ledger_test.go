@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/migration"
@@ -35,13 +36,23 @@ var driverText = []string{
 
 func assertUserFacing(t *testing.T, err error) app.ErrorPayload {
 	t.Helper()
+	return assertUserFacingCode(t, err, app.CodeMigrationFailed)
+}
+
+// assertUserFacingCode is the same contract with the code named by the caller.
+// Most refusals in this package really are MIGRATION_FAILED, but not all of them
+// are: a write the driver refused because the database cannot be written is a
+// runtime-path condition, and asserting one code for every failure is what let
+// that one be filed as a broken migration.
+func assertUserFacingCode(t *testing.T, err error, want app.Code) app.ErrorPayload {
+	t.Helper()
 
 	payload, ok := app.PayloadOf(err)
 	if !ok {
 		t.Fatalf("PayloadOf(%v) = _, false, want a domain payload", err)
 	}
-	if payload.Code != app.CodeMigrationFailed {
-		t.Errorf("payload.Code = %q, want %q", payload.Code, app.CodeMigrationFailed)
+	if payload.Code != want {
+		t.Errorf("payload.Code = %q, want %q", payload.Code, want)
 	}
 	for _, fragment := range driverText {
 		if strings.Contains(payload.Why, fragment) {
@@ -486,11 +497,19 @@ func TestInitRefusesADatabaseWhereAnotherObjectOwnsTheLedgersName(t *testing.T) 
 	}
 }
 
-// TestABusyDatabaseIsStillReportedAsABusyDatabase is the over-fire guard for the
-// diagnosis above: a create that failed for a reason other than the name being
-// taken must keep the reading it always had, because "move the database aside"
+// TestAnUnwritableDatabaseIsNotBlamedOnANameCollision is the over-fire guard for
+// the diagnosis above: a create that failed for a reason other than the name
+// being taken must not inherit that reading, because "move the database aside"
 // is destructive advice for a database that is merely held open or read-only.
-func TestABusyDatabaseIsStillReportedAsABusyDatabase(t *testing.T) {
+//
+// It used to assert MIGRATION_FAILED, through a shared helper that assumed every
+// refusal in this package was one. That was the finding, not the contract: a
+// database the driver will not write to is an unwritable runtime path, which
+// decision D-03 rates exit 4 -- the code a caller retries on -- and not the exit
+// 1 that says the operation itself is broken. The assertion is now the corrected
+// code plus the kind that produces that exit, which is strictly more than it
+// pinned before.
+func TestAnUnwritableDatabaseIsNotBlamedOnANameCollision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mindrail.db")
 	writable := openDB(t, path)
 	if _, err := migration.New(writable.DB, embeddedSet(t), fixedClock()).Up(t.Context()); err != nil {
@@ -513,9 +532,16 @@ func TestABusyDatabaseIsStillReportedAsABusyDatabase(t *testing.T) {
 	if errors.Is(err, migration.ErrBookkeepingOccupied) {
 		t.Fatalf("Up = %v, which blames a name collision for a database it merely cannot write", err)
 	}
-	payload := assertUserFacing(t, err)
+	payload := assertUserFacingCode(t, err, app.CodeRuntimePathUnwritable)
 	if strings.Contains(strings.Join(payload.NextAction, " "), "aside") {
 		t.Errorf("next actions %v tell the user to discard a database that is only unwritable", payload.NextAction)
+	}
+	if got := app.ExitCode(err); got != app.ExitUnavailable {
+		t.Errorf("ExitCode = %d, want %d; decision D-03 rates an unwritable runtime path unavailable, not failed",
+			got, app.ExitUnavailable)
+	}
+	if !errors.Is(err, storage.ErrReadOnly) {
+		t.Errorf("Up = %v, want errors.Is(err, storage.ErrReadOnly)", err)
 	}
 }
 
@@ -529,4 +555,121 @@ func mustFailUp(t *testing.T, migrator *migration.Migrator) error {
 		t.Fatalf("Up = nil, want a refusal")
 	}
 	return err
+}
+
+// TestContentionOnTheWritePathIsRatedUnavailable is finding W1 at the layer that
+// reports it. Every write in this package went through app.KindFailed
+// unconditionally, so a database another `mindrail init` held for a few
+// milliseconds came back as MIGRATION_FAILED at exit 1 -- "this operation is
+// broken", with a remedy telling the user to inspect migration SQL that is
+// perfectly good -- while decision D-03 puts a locked database at exit 4, the
+// code a caller retries on.
+//
+// Both write points are covered: creating the ledger table, which is where the
+// very first `init` takes the lock, and applying a migration, which is where
+// every later one does.
+func TestContentionOnTheWritePathIsRatedUnavailable(t *testing.T) {
+	tests := []struct {
+		name          string
+		prepareLedger bool
+	}{
+		{name: "creating the bookkeeping table"},
+		{name: "applying a migration", prepareLedger: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "mindrail.db")
+			loser := openContendedDB(t, path)
+			if tt.prepareLedger {
+				if _, err := loser.ExecContext(t.Context(), `CREATE TABLE schema_migrations (
+					version INTEGER PRIMARY KEY, name TEXT NOT NULL,
+					checksum TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+					t.Fatalf("CREATE TABLE = %v, want no error", err)
+				}
+			}
+
+			holdWriteLock(t, path)
+
+			_, err := migration.New(loser.DB, embeddedSet(t), fixedClock()).Up(t.Context())
+			if err == nil {
+				t.Fatal("Up against a held write lock = nil, want a refusal")
+			}
+			if !errors.Is(err, storage.ErrBusy) {
+				t.Fatalf("Up = %v, want errors.Is(err, storage.ErrBusy)", err)
+			}
+
+			payload := assertUserFacingCode(t, err, app.CodeRuntimeDBUnavailable)
+			if got := app.ExitCode(err); got != app.ExitUnavailable {
+				t.Errorf("ExitCode = %d, want %d; a contended database is a wait, not a broken operation",
+					got, app.ExitUnavailable)
+			}
+			if strings.Contains(strings.Join(payload.NextAction, " "), "migration SQL") {
+				t.Errorf("NextAction = %q, which blames the migration for a lock somebody else holds",
+					payload.NextAction)
+			}
+		})
+	}
+}
+
+// TestAGenuineMigrationFailureIsStillAMigrationFailure is the over-fire guard
+// for the classification above. Only the driver's own busy, read-only and
+// disk-full codes may be re-rated; a migration whose SQL cannot run is a real
+// operation failure and must keep MIGRATION_FAILED at exit 1, or the one exit
+// code that means "your input is wrong" stops being reachable.
+func TestAGenuineMigrationFailureIsStillAMigrationFailure(t *testing.T) {
+	db := newDB(t)
+	broken := []migration.Migration{{
+		Version:  1,
+		Name:     "broken",
+		Checksum: "deadbeef",
+		SQL:      `CREATE TABLE ( this is not sql`,
+	}}
+
+	_, err := migration.New(db.DB, broken, fixedClock()).Up(t.Context())
+	if err == nil {
+		t.Fatal("Up with unparseable SQL = nil, want a refusal")
+	}
+	if errors.Is(err, storage.ErrBusy) || errors.Is(err, storage.ErrReadOnly) {
+		t.Fatalf("Up = %v, which blames the database for a migration that cannot parse", err)
+	}
+
+	assertUserFacingCode(t, err, app.CodeMigrationFailed)
+	if got := app.ExitCode(err); got != app.ExitFailed {
+		t.Errorf("ExitCode = %d, want %d; decision D-03 puts a migration failure at exit 1", got, app.ExitFailed)
+	}
+}
+
+// openContendedDB opens a handle with a short busy timeout. The production
+// budget is five seconds (decision D-08); a test that waited it out twice would
+// spend ten seconds proving a classification decided at BEGIN.
+func openContendedDB(t *testing.T, path string) *storage.DB {
+	t.Helper()
+
+	db, err := storage.Open(t.Context(), storage.Options{
+		Path: path, BusyTimeout: 50 * time.Millisecond, MaxOpenConns: 1,
+	})
+	if err != nil {
+		t.Fatalf("storage.Open(%q) = %v, want no error", path, err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// holdWriteLock takes the database's write lock on a second handle and keeps it
+// for the rest of the test, which is what a concurrent `mindrail init` looks
+// like from the loser's side.
+func holdWriteLock(t *testing.T, path string) {
+	t.Helper()
+
+	holder := openContendedDB(t, path)
+	tx, err := holder.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx = %v, want no error", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	if _, err := tx.ExecContext(t.Context(), `CREATE TABLE lock_holder (x INTEGER)`); err != nil {
+		t.Fatalf("write inside the holding transaction = %v, want no error", err)
+	}
 }

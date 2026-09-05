@@ -73,6 +73,34 @@ func coherenceSetups() []coherenceSetup {
 				return repo
 			},
 		},
+		{
+			// Finding W6. The matrix reached the runtime root through its mode
+			// bits and through the database path's contents, and never through a
+			// regular file standing where the root itself should be — so the
+			// disagreement this invariant exists to catch went on being produced
+			// by a condition it simply never ran over. Every row here is a
+			// condition, and a condition nobody set up is a condition nobody
+			// checked.
+			name: "regular file occupying the runtime root",
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				writeFile(t, filepath.Join(repo, ".git", "mindrail"), []byte("not a directory"))
+				return repo
+			},
+		},
+		{
+			// Finding W5's condition, added here as well as to its own test: the
+			// document it produces has an error object and four readings of the
+			// runtime store, and they have to agree about whether `mindrail init`
+			// is worth running. It is not — the write it makes is the one that
+			// fails.
+			name: "runtime database file unwritable",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				chmodForTest(t, runtimeDBPath(t, repo), 0o444)
+				return repo
+			},
+		},
 		{name: "healthy initialised repository", setup: newInitializedRepo},
 		{name: "repository that was never initialised", setup: newRepo},
 		{

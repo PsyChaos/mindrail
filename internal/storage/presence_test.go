@@ -214,6 +214,87 @@ func TestProbeFollowsAWorkingSymlink(t *testing.T) {
 	}
 }
 
+// TestProbeNamesAFileStandingWhereTheRuntimeRootShouldBe is finding W3. A stray
+// regular file at `.git/mindrail` makes every stat below it fail with ENOTDIR,
+// and the generic answer -- "the runtime database path could not be inspected",
+// remedied with "Check the permissions on the directory that holds it" -- was
+// wrong twice: permissions are not the problem, and the thing in the way is not
+// a directory whose permissions could be checked.
+//
+// The remedy that reached the status next_action and the runtime_db component
+// came from here, so human output printed two disagreeing `Next:` blocks one
+// screen apart: the runtime-paths check said "remove or move aside", this said
+// "check the permissions". The condition and its real remedy now travel in the
+// value rather than being reconstructed downstream from a fallback.
+func TestProbeNamesAFileStandingWhereTheRuntimeRootShouldBe(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "mindrail")
+	if err := os.WriteFile(root, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile = %v, want no error", err)
+	}
+	path := filepath.Join(root, "mindrail.db")
+
+	got, err := storage.Probe(path)
+	if got != storage.PresenceUnusable {
+		t.Fatalf("Probe(under a regular file) = %q, want %q", got, storage.PresenceUnusable)
+	}
+	if !errors.Is(err, storage.ErrNotDatabaseFile) {
+		t.Errorf("Probe = %v, want errors.Is(err, ErrNotDatabaseFile)", err)
+	}
+
+	payload, ok := app.PayloadOf(err)
+	if !ok {
+		t.Fatalf("PayloadOf(%v) = _, false, want a domain payload", err)
+	}
+	if !strings.Contains(payload.Why, root) {
+		t.Errorf("payload.Why = %q, want it to name the obstruction %q", payload.Why, root)
+	}
+
+	remedy := strings.Join(payload.NextAction, " ")
+	if !strings.Contains(remedy, root) {
+		t.Errorf("NextAction = %q, want it to name %q", payload.NextAction, root)
+	}
+	if strings.Contains(remedy, "permissions") {
+		t.Errorf("NextAction = %q, which sends the user to chmod a file whose mode is not the problem",
+			payload.NextAction)
+	}
+}
+
+// TestProbeKeepsThePermissionRemedyForAPermissionProblem is the over-fire guard
+// for the case above. An unsearchable directory really is a permission problem,
+// and the answer must not be rewritten into "remove or move aside" -- that would
+// tell a user to delete a directory holding their runtime state because one mode
+// bit was wrong.
+func TestProbeKeepsThePermissionRemedyForAPermissionProblem(t *testing.T) {
+	requireModeBitsAreEnforced(t)
+
+	root := filepath.Join(t.TempDir(), "mindrail")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("Mkdir = %v, want no error", err)
+	}
+	chmodForTest(t, root, 0o000, 0o700)
+	path := filepath.Join(root, "mindrail.db")
+
+	got, err := storage.Probe(path)
+	if got != storage.PresenceUnusable {
+		t.Fatalf("Probe(under an unsearchable directory) = %q, want %q", got, storage.PresenceUnusable)
+	}
+	if errors.Is(err, storage.ErrNotDatabaseFile) {
+		t.Errorf("Probe = %v, which calls a directory an obstruction because it could not be entered", err)
+	}
+
+	payload, ok := app.PayloadOf(err)
+	if !ok {
+		t.Fatalf("PayloadOf(%v) = _, false, want a domain payload", err)
+	}
+	remedy := strings.Join(payload.NextAction, " ")
+	if !strings.Contains(remedy, "permissions") {
+		t.Errorf("NextAction = %q, want the permission remedy for a permission problem", payload.NextAction)
+	}
+	if !strings.Contains(remedy, root) {
+		t.Errorf("NextAction = %q, want it to name the directory %q rather than describe it", payload.NextAction, root)
+	}
+}
+
 func TestProbeRejectsRelativePath(t *testing.T) {
 	got, err := storage.Probe("mindrail.db")
 	if got != storage.PresenceUnusable {

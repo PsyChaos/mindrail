@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -358,5 +359,144 @@ func TestRegisterRejectsIncompleteRegistration(t *testing.T) {
 				t.Errorf("payload = %+v (ok=%v), want %q", payload, ok, app.CodeWorkspaceRegistrationFailed)
 			}
 		})
+	}
+}
+
+// newStoreAt builds a migrated store over a database at a caller-chosen path, so
+// a test can go on to interfere with the file itself.
+func newStoreAt(t *testing.T, path string) (*workspace.Store, *storage.DB) {
+	t.Helper()
+
+	db, err := storage.Open(t.Context(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatalf("storage.Open = %v, want no error", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatalf("migration.Load = %v, want no error", err)
+	}
+	if _, err := migration.New(db.DB, set, app.FixedClock{Instant: baseInstant}).Up(t.Context()); err != nil {
+		t.Fatalf("migration Up = %v, want no error", err)
+	}
+
+	return workspace.NewStore(db.DB, newStepClock()), db
+}
+
+// TestRegisterOnAnUnwritableDatabaseGivesARemedyThatCanSucceed is finding W2 at
+// the point where a user actually meets it.
+//
+// `mindrail init` against a mindrail.db whose mode bits refuse writes failed
+// here with WORKSPACE_REGISTRATION_FAILED at exit 1, and its only remedy was
+// "Run `mindrail doctor` to check the runtime database, then re-run `mindrail
+// init`". Doctor opens the database read-only, never attempts a write, and
+// reported that same installation `Overall: OK` at exit 0 -- so the remedy sent
+// the user to a report that agreed with them and then back to the command that
+// had just failed. A closed loop over an installation the tool called healthy.
+func TestRegisterOnAnUnwritableDatabaseGivesARemedyThatCanSucceed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; mode bits do not refuse writes")
+	}
+
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	_, initial := newStoreAt(t, path)
+	// Closed before the mode changes, because the condition is about what the
+	// *next* process can do. A handle that already has the WAL open keeps writing
+	// into it; `mindrail init` starts from a cold open, and that is what fails.
+	if err := initial.Close(); err != nil {
+		t.Fatalf("Close = %v, want no error", err)
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatalf("Chmod = %v, want no error", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	store, _ := newStoreAt(t, path)
+	_, _, err := store.Register(t.Context(), registration("/repo/.git", "/repo", false))
+	if err == nil {
+		t.Fatal("Register against a read-only database = nil, want a refusal")
+	}
+	if !errors.Is(err, storage.ErrReadOnly) {
+		t.Fatalf("Register = %v, want errors.Is(err, storage.ErrReadOnly)", err)
+	}
+
+	payload, ok := app.PayloadOf(err)
+	if !ok {
+		t.Fatalf("PayloadOf(%v) = _, false, want a domain payload", err)
+	}
+	if payload.Code != app.CodeRuntimePathUnwritable {
+		t.Errorf("payload.Code = %q, want %q", payload.Code, app.CodeRuntimePathUnwritable)
+	}
+	if got := app.ExitCode(err); got != app.ExitUnavailable {
+		t.Errorf("ExitCode = %d, want %d; decision D-03 rates an unwritable runtime path unavailable",
+			got, app.ExitUnavailable)
+	}
+	if payload.Metadata["worktree_root"] != "/repo" {
+		t.Errorf("metadata worktree_root = %q, want %q; the caller's own detail must survive",
+			payload.Metadata["worktree_root"], "/repo")
+	}
+
+	remedy := strings.Join(payload.NextAction, " ")
+	if strings.Contains(remedy, "mindrail doctor") {
+		t.Errorf("NextAction = %q, which re-enters the loop: doctor reads this database and calls it healthy",
+			payload.NextAction)
+	}
+	if !strings.Contains(remedy, path) {
+		t.Errorf("NextAction = %q, want it to name %q", payload.NextAction, path)
+	}
+
+	// Carry the remedy out and re-run the command, which is what the next action
+	// tells the user to do. A next action that does not clear the condition is
+	// not a remedy, and this one had to be proved rather than asserted.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Chmod = %v, want no error", err)
+	}
+	retried, _ := newStoreAt(t, path)
+	if _, _, err := retried.Register(t.Context(), registration("/repo/.git", "/repo", false)); err != nil {
+		t.Fatalf("Register after the remedy = %v, want no error; the remedy has to end the loop", err)
+	}
+}
+
+// TestRegistrationFailureAlwaysCarriesANextAction is the mutation survivor of
+// finding W4: deleting the next_action argument from registrationFailure left
+// `go test ./...` green, so nothing in the suite required the one field a user
+// reads to know what to do.
+//
+// The failure is deliberately one the driver cannot classify -- a table that is
+// gone, not a database that is locked or read-only -- so it lands on the generic
+// diagnosis rather than on a named condition. That is precisely the branch the
+// mutation lived in.
+func TestRegistrationFailureAlwaysCarriesANextAction(t *testing.T) {
+	store, db := newStore(t, newStepClock())
+	if _, err := db.ExecContext(t.Context(), `DROP TABLE workspaces`); err != nil {
+		t.Fatalf("DROP TABLE workspaces = %v, want no error", err)
+	}
+
+	_, _, err := store.Register(t.Context(), registration("/repo/.git", "/repo", false))
+	if err == nil {
+		t.Fatal("Register against a missing table = nil, want a refusal")
+	}
+	if errors.Is(err, storage.ErrReadOnly) || errors.Is(err, storage.ErrBusy) {
+		t.Fatalf("Register = %v, which blames the database for a table that was dropped", err)
+	}
+
+	payload, ok := app.PayloadOf(err)
+	if !ok {
+		t.Fatalf("PayloadOf(%v) = _, false, want a domain payload", err)
+	}
+	if payload.Code != app.CodeWorkspaceRegistrationFailed {
+		t.Errorf("payload.Code = %q, want %q", payload.Code, app.CodeWorkspaceRegistrationFailed)
+	}
+	if payload.Impact == "" {
+		t.Error("payload.Impact is empty; a refusal owes the reader one")
+	}
+	if len(payload.NextAction) == 0 {
+		t.Fatal("payload.NextAction is empty; there is nothing for the user to do")
+	}
+	for i, action := range payload.NextAction {
+		if strings.TrimSpace(action) == "" {
+			t.Errorf("NextAction[%d] is blank; a remedy nobody can read is not one", i)
+		}
 	}
 }

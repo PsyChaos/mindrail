@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 )
@@ -54,11 +55,69 @@ func Probe(path string) (Presence, error) {
 	case errors.Is(err, fs.ErrNotExist):
 		return probeUnresolved(path)
 	case err != nil:
-		return PresenceUnusable, unusableFailure(path,
-			"the runtime database path could not be inspected",
-			"Check the permissions on the directory that holds it.", err)
+		return probeUninspectable(path, err)
 	default:
 		return classify(path, info)
+	}
+}
+
+// probeUninspectable is reached when the path could not be looked at, which is
+// two conditions wearing one errno.
+//
+// A regular file standing where the runtime root should be is the common one: a
+// stray `.git/mindrail` file makes os.Stat of `.git/mindrail/mindrail.db` fail
+// with ENOTDIR, and the generic answer -- "the runtime database path could not be
+// inspected", remedied with "Check the permissions on the directory that holds
+// it" -- was wrong twice over. Permissions are not the problem, and the file is
+// not a directory whose permissions could be checked. The runtime-paths check
+// spotted the same obstruction and printed the real remedy, so human output
+// carried two disagreeing `Next:` blocks one screen apart while the status
+// `next_action` published the wrong one (finding W3).
+//
+// The obstruction is found by walking up to the nearest path component that
+// exists, which is the same answer without the errno: a component that is on
+// disk and is not a directory is the thing in the way, and naming it is what
+// makes the remedy actionable. Anything else really is a permission or an I/O
+// problem, and keeps the remedy that fits it -- now naming the directory it is
+// about rather than "the directory that holds it".
+func probeUninspectable(path string, cause error) (Presence, error) {
+	obstruction, found := nonDirectoryAncestor(path)
+	if found {
+		return PresenceUnusable, unusableFailure(path,
+			obstruction+" is in the way of the runtime database path and is not a directory",
+			"Remove or move aside "+obstruction+", then run `mindrail init`.",
+			errors.Join(ErrNotDatabaseFile, cause))
+	}
+
+	return PresenceUnusable, unusableFailure(path,
+		"the runtime database path could not be inspected",
+		"Check the permissions on "+filepath.Dir(path)+".", cause)
+}
+
+// nonDirectoryAncestor returns the nearest existing ancestor of path when that
+// ancestor is not a directory, which is the component blocking every lookup
+// below it.
+//
+// The nearest *existing* ancestor is the only one worth inspecting: everything
+// below it is absent, and everything above it was walked through successfully.
+// Resolution is deliberate -- decision D-32 allows symlinks inside the runtime
+// root, so a link to a real directory is a supported layout and must not be
+// reported as an obstruction. The answer is claimed only when the component is
+// confirmed to be something other than a directory; every other reason a stat can
+// fail keeps the permission remedy, which is the one that fits it.
+func nonDirectoryAncestor(path string) (string, bool) {
+	current := filepath.Dir(filepath.Clean(path))
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			info, statErr := os.Stat(current)
+			return current, statErr == nil && !info.IsDir()
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		current = parent
 	}
 }
 

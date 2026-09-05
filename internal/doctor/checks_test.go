@@ -1052,3 +1052,65 @@ func TestHealthySubjectIsHealthy(t *testing.T) {
 		t.Error("healthy fixture leaked a repository error")
 	}
 }
+
+// TestRuntimePathSummarySaysWhereTheStateActuallyIs is the W10 half of
+// acceptance criterion 3.
+//
+// The summary asserted "resolved under the Git common-dir" whatever the paths
+// said, and MINDRAIL_RUNTIME_DIR makes that false: a reader with a runtime root
+// two directories away from any `.git` was told by the check whose whole job is
+// "which paths did Mindrail actually pick?" that it was somewhere it is not,
+// while the detail lines under the same summary named the real location.
+//
+// The default case is asserted in the same test, because a summary that had
+// simply stopped mentioning the common dir would satisfy the first row alone.
+func TestRuntimePathSummarySaysWhereTheStateActuallyIs(t *testing.T) {
+	tests := map[string]struct {
+		runtimeRoot string
+		want        string
+		absent      string
+	}{
+		"under the common dir": {
+			runtimeRoot: "/repo/.git/mindrail",
+			want:        "Runtime paths resolved under the Git common-dir",
+		},
+		"the common dir itself": {
+			runtimeRoot: "/repo/.git",
+			want:        "Runtime paths resolved under the Git common-dir",
+		},
+		"relocated by MINDRAIL_RUNTIME_DIR": {
+			runtimeRoot: "/var/lib/mindrail/repo",
+			want:        "/var/lib/mindrail/repo",
+			absent:      "under the Git common-dir",
+		},
+		"a sibling that merely shares a prefix": {
+			// /repo/.gitmodules-cache is not inside /repo/.git, and a prefix test
+			// without the separator would have said it was.
+			runtimeRoot: "/repo/.gitmodules-cache",
+			want:        "/repo/.gitmodules-cache",
+			absent:      "under the Git common-dir",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			s := healthySubject()
+			s.Probes.Taken = true
+			s.Paths.RuntimeRoot = tc.runtimeRoot
+
+			got := runtimePathResult(s)
+			if got.State != StateOK {
+				t.Fatalf("state = %q, want %q; the location is not a health question", got.State, StateOK)
+			}
+			if !strings.Contains(got.Summary, tc.want) {
+				t.Errorf("summary = %q, want it to mention %q", got.Summary, tc.want)
+			}
+			if tc.absent != "" && strings.Contains(got.Summary, tc.absent) {
+				t.Errorf("summary = %q claims %q about a root that is not there", got.Summary, tc.absent)
+			}
+			if got.Details["runtime_root"] != tc.runtimeRoot {
+				t.Errorf("runtime_root detail = %q, want %q", got.Details["runtime_root"], tc.runtimeRoot)
+			}
+		})
+	}
+}

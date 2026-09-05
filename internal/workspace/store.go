@@ -90,7 +90,7 @@ func (s *Store) Register(ctx context.Context, r Registration) (Project, Workspac
 		if _, isDomain := app.PayloadOf(err); isDomain {
 			return Project{}, Workspace{}, err
 		}
-		return Project{}, Workspace{}, registrationFailure(r, err)
+		return Project{}, Workspace{}, s.registrationFailure(ctx, r, err)
 	}
 
 	return project, workspace, nil
@@ -275,7 +275,22 @@ func validateRegistration(r Registration) error {
 	).WithMetadata("missing_field", missing)
 }
 
-func registrationFailure(r Registration, cause error) error {
+// registrationFailure reports a registration that did not reach the database.
+//
+// The driver's result code decides first. `mindrail init` against a mindrail.db
+// whose mode bits refuse writes failed here, at exit 1, with the remedy "Run
+// `mindrail doctor` to check the runtime database, then re-run `mindrail init`"
+// -- and doctor, which only ever reads, reported that same database healthy and
+// exited 0. The tool's own advice was a closed loop over an installation it
+// called fine (finding W2). A named condition carries a remedy that can succeed
+// and the exit 4 decision D-03 gives an unwritable runtime path; the generic
+// remedy below survives only for the failures that really are about the rows
+// being written, where doctor has something new to say.
+func (s *Store) registrationFailure(ctx context.Context, r Registration, cause error) error {
+	if named := storage.WriteFailure(ctx, s.db, "register this worktree", cause); named != nil {
+		return named.WithMetadata("worktree_root", r.WorktreeRoot)
+	}
+
 	return app.NewError(
 		app.CodeWorkspaceRegistrationFailed,
 		app.KindFailed,

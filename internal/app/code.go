@@ -19,6 +19,7 @@ const (
 	CodeGitUnavailable              Code = "GIT_UNAVAILABLE"
 	CodeGitTimeout                  Code = "GIT_TIMEOUT"
 	CodePathEscapesRoot             Code = "PATH_ESCAPES_ROOT"
+	CodePathNotRepresentable        Code = "PATH_NOT_REPRESENTABLE"
 	CodeRuntimePathUnwritable       Code = "RUNTIME_PATH_UNWRITABLE"
 	CodeRuntimeDBUnavailable        Code = "RUNTIME_DB_UNAVAILABLE"
 	CodeRuntimeDBCorrupt            Code = "RUNTIME_DB_CORRUPT"
@@ -48,6 +49,7 @@ var allCodes = sortedCodes([]Code{
 	CodeGitUnavailable,
 	CodeGitTimeout,
 	CodePathEscapesRoot,
+	CodePathNotRepresentable,
 	CodeRuntimePathUnwritable,
 	CodeRuntimeDBUnavailable,
 	CodeRuntimeDBCorrupt,

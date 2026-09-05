@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -209,14 +210,14 @@ func runtimePathResult(s Subject) Result {
 		details["runtime_root_usable"] = strconv.FormatBool(s.Probes.RuntimeDir.Usable)
 
 		if !s.Probes.RuntimeDir.Usable {
-			result := failure(StateError, "Runtime paths unusable", explain(s.Probes.RuntimeDir.Err, diagnosis{
+			result := failure(StateError, "Runtime paths unusable", s.completeRootRemedy(explain(s.Probes.RuntimeDir.Err, diagnosis{
 				code:   app.CodeRuntimePathUnwritable,
 				impact: "Mindrail cannot store runtime state for this repository, so `mindrail init` would fail here too.",
 				next: []string{
 					"Make " + s.Probes.RuntimeDir.Probed + " writable.",
 					"Or set MINDRAIL_RUNTIME_DIR to a writable directory.",
 				},
-			}))
+			})))
 			result.Details = details
 			return result
 		}
@@ -249,9 +250,38 @@ func runtimePathResult(s Subject) Result {
 
 	return Result{
 		State:   StateOK,
-		Summary: "Runtime paths resolved under the Git common-dir",
+		Summary: describeRuntimeLocation(s),
 		Details: details,
 	}
+}
+
+// describeRuntimeLocation says where the runtime state actually is, rather than
+// where it is by default.
+//
+// The summary used to assert "resolved under the Git common-dir" unconditionally,
+// which MINDRAIL_RUNTIME_DIR makes false: a reader looking at a runtime root two
+// directories away from any `.git` was told, by the check whose job is to answer
+// "which paths did Mindrail actually pick?", that it was somewhere it is not.
+// The detail lines carried the truth all along, and a summary that contradicts
+// the lines under it is the disagreement this package exists to prevent.
+func describeRuntimeLocation(s Subject) string {
+	if underCommonDir(s.Repo.CommonDir, s.Paths.RuntimeRoot) {
+		return "Runtime paths resolved under the Git common-dir"
+	}
+	return "Runtime paths resolved outside the Git common-dir, at " + s.Paths.RuntimeRoot
+}
+
+// underCommonDir reports whether root is the common dir or lives inside it. Both
+// paths are already absolute and cleaned by the time a check sees them, so this
+// is a prefix question and not a resolution one.
+func underCommonDir(commonDir, root string) bool {
+	if commonDir == "" || root == "" {
+		return false
+	}
+	if root == commonDir {
+		return true
+	}
+	return strings.HasPrefix(root, commonDir+string(filepath.Separator))
 }
 
 // cacheProbedPath names the directory a cache remedy has to talk about: the
@@ -392,16 +422,34 @@ func sqliteResult(s Subject) Result {
 		}))
 	}
 
+	details := map[string]string{
+		"db_path":      describePath(s.Paths.DBPath),
+		"journal_mode": s.Pragmas.JournalMode,
+		"foreign_keys": strconv.Itoa(s.Pragmas.ForeignKeys),
+		"busy_timeout": strconv.Itoa(s.Pragmas.BusyTimeout),
+		"synchronous":  strconv.Itoa(s.Pragmas.Synchronous),
+	}
+	if s.Probes.DBWriteKnown {
+		details["db_writable"] = strconv.FormatBool(s.Probes.DBWrite.Writable)
+	}
+
+	// Everything above this point established that the database could be *read*.
+	// That is not the question `mindrail init` asks of it, and for four audits
+	// this check answered the wrong one: a mindrail.db whose mode bits refuse
+	// writes opens, reports WAL and foreign keys in force, and was reported
+	// `Overall: OK` at exit 0 while every command that writes failed forever
+	// (finding W5). A check that has not looked must not report OK, so the
+	// writability probe is asked before the healthy verdict is given, not after.
+	if unwritable, blocked := s.unwritableDatabase(); blocked {
+		result := failure(StateError, "Runtime database is not writable", unwritable)
+		result.Details = details
+		return result
+	}
+
 	return Result{
 		State:   StateOK,
 		Summary: "Runtime database healthy",
-		Details: map[string]string{
-			"db_path":      describePath(s.Paths.DBPath),
-			"journal_mode": s.Pragmas.JournalMode,
-			"foreign_keys": strconv.Itoa(s.Pragmas.ForeignKeys),
-			"busy_timeout": strconv.Itoa(s.Pragmas.BusyTimeout),
-			"synchronous":  strconv.Itoa(s.Pragmas.Synchronous),
-		},
+		Details: details,
 	}
 }
 

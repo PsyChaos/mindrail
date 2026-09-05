@@ -20,10 +20,12 @@ const driverName = "sqlite"
 // modernc.org/sqlite/lib so that the extended-code masking below stays
 // readable; the values are fixed by the SQLite C API and cannot change.
 const (
-	sqliteBusy    = 5  // SQLITE_BUSY: another connection holds the lock
-	sqliteLocked  = 6  // SQLITE_LOCKED: a table in this database is locked
-	sqliteCorrupt = 11 // SQLITE_CORRUPT: the database disk image is malformed
-	sqliteNotADB  = 26 // SQLITE_NOTADB: the file is not a database
+	sqliteBusy     = 5  // SQLITE_BUSY: another connection holds the lock
+	sqliteLocked   = 6  // SQLITE_LOCKED: a table in this database is locked
+	sqliteReadOnly = 8  // SQLITE_READONLY: the database cannot be written to
+	sqliteCorrupt  = 11 // SQLITE_CORRUPT: the database disk image is malformed
+	sqliteFull     = 13 // SQLITE_FULL: the disk holding the database is full
+	sqliteNotADB   = 26 // SQLITE_NOTADB: the file is not a database
 )
 
 // sqlitePrimaryCodeMask strips the extended result code, whose high bits carry
@@ -66,17 +68,26 @@ func dsn(opts Options) string {
 // permanent failure as retryable would turn an immediate diagnosis into a
 // five-second stall followed by the same diagnosis.
 func isBusyError(err error) bool {
-	var sqliteErr *sqlitedriver.Error
-	if !errors.As(err, &sqliteErr) {
-		return false
-	}
+	return hasPrimaryCode(err, sqliteBusy, sqliteLocked)
+}
 
-	switch sqliteErr.Code() & sqlitePrimaryCodeMask {
-	case sqliteBusy, sqliteLocked:
-		return true
-	default:
-		return false
-	}
+// isReadOnlyError reports a database the driver will not write to. The primary
+// code is the same 8 whether the main file's mode bits refuse the write, the
+// directory refuses the WAL sidecars (SQLITE_READONLY_DIRECTORY, 1544), or the
+// filesystem itself is mounted read-only; the extended code names which, and the
+// mask deliberately drops that distinction because the remedy is "make the
+// runtime path writable" in every case and the probe in writable.go is what
+// tells the user which path to reach for.
+func isReadOnlyError(err error) bool {
+	return hasPrimaryCode(err, sqliteReadOnly)
+}
+
+// isDiskFullError reports a write that failed for want of space rather than for
+// want of permission. It is the one condition in this file that no change to the
+// database or its path can clear, so collapsing it into "unwritable" would hand
+// the user a chmod for a full disk.
+func isDiskFullError(err error) bool {
+	return hasPrimaryCode(err, sqliteFull)
 }
 
 // isCorruptError distinguishes "this file is not a usable database" from every
@@ -84,15 +95,25 @@ func isBusyError(err error) bool {
 // codes and two different remedies, so it is made on the driver's result code
 // rather than on message text (tech-stack §72).
 func isCorruptError(err error) bool {
+	return hasPrimaryCode(err, sqliteCorrupt, sqliteNotADB)
+}
+
+// hasPrimaryCode reports whether err is a driver error whose primary result code
+// is one of want. Every classifier in this file is the same three lines, and
+// writing them once keeps the extended-code masking in a single place: a
+// classifier that forgot the mask would silently stop matching the moment SQLite
+// returned the extended form of the code it was looking for.
+func hasPrimaryCode(err error, want ...int) bool {
 	var sqliteErr *sqlitedriver.Error
 	if !errors.As(err, &sqliteErr) {
 		return false
 	}
 
-	switch sqliteErr.Code() & sqlitePrimaryCodeMask {
-	case sqliteCorrupt, sqliteNotADB:
-		return true
-	default:
-		return false
+	code := sqliteErr.Code() & sqlitePrimaryCodeMask
+	for _, candidate := range want {
+		if code == candidate {
+			return true
+		}
 	}
+	return false
 }

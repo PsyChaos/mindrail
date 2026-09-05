@@ -466,3 +466,137 @@ func stripANSI(s string) string {
 	}
 	return out.String()
 }
+
+// TestHumanReportCarriesTheObservationMarker is finding W8.
+//
+// The Observation marker is the field that stops a reader taking "Registered:
+// unknown" for "Registered: false". The JSON half of it was tested; the human
+// half was not, and forcing observationNote to return the empty string deleted
+// the whole line from every human report while the suite stayed green — which
+// means the marker was, for the reader who actually reads the text output,
+// untested.
+//
+// The sentence itself is asserted, not merely the label. The two non-observed
+// cases are different situations with different remedies, and a marker that
+// printed the same words for both would be a line that says nothing.
+func TestHumanReportCarriesTheObservationMarker(t *testing.T) {
+	cases := []struct {
+		observation Observation
+		want        string
+	}{
+		{NotObserved, "not observed — startup stopped before this subsystem was read"},
+		{Indeterminate, "indeterminate — this subsystem was read and could not answer"},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.observation), func(t *testing.T) {
+			report := Build(healthySubject(), 3*time.Millisecond)
+			report.Workspace.Observation = tc.observation
+			report.Workspace.Registered = true
+
+			var buf bytes.Buffer
+			if err := report.RenderHuman(&buf, false); err != nil {
+				t.Fatalf("RenderHuman: %v", err)
+			}
+			got := buf.String()
+
+			if !strings.Contains(got, "Observation:") {
+				t.Fatalf("human report has no Observation line for a %s block:\n%s", tc.observation, got)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("human report does not say %q for a %s block:\n%s", tc.want, tc.observation, got)
+			}
+			// The marker exists to stop the zero being read as a finding, so the
+			// value it qualifies has to be hidden in the same breath.
+			if strings.Contains(got, "Registered:  true") {
+				t.Errorf("human report publishes Registered: true under a %s observation:\n%s",
+					tc.observation, got)
+			}
+		})
+	}
+}
+
+// TestHumanReportOmitsTheObservationMarkerWhenItLooked is the over-fire guard
+// for the assertion above.
+//
+// A line on every report saying the healthy answer is trustworthy would be noise
+// on the one answer nobody has to double-check, and a marker printed everywhere
+// is a marker that distinguishes nothing. The blocked report is checked in the
+// same test so that "no marker anywhere" cannot pass it.
+func TestHumanReportOmitsTheObservationMarkerWhenItLooked(t *testing.T) {
+	var healthy bytes.Buffer
+	if err := Build(healthySubject(), 3*time.Millisecond).RenderHuman(&healthy, false); err != nil {
+		t.Fatalf("RenderHuman: %v", err)
+	}
+	if strings.Contains(healthy.String(), "Observation:") {
+		t.Errorf("a healthy report marks its own findings as unreliable:\n%s", healthy.String())
+	}
+
+	blocked := Build(healthySubject(), 3*time.Millisecond)
+	blocked.Runtime.Observation = Indeterminate
+	var out bytes.Buffer
+	if err := blocked.RenderHuman(&out, false); err != nil {
+		t.Fatalf("RenderHuman: %v", err)
+	}
+	if !strings.Contains(out.String(), "Observation:") {
+		t.Fatalf("the marker never appears at all, so its absence above proves nothing:\n%s", out.String())
+	}
+}
+
+// TestInitReportTellsTheTwoScaffoldSilencesApart is the W10 half of findings
+// H13 and F14.
+//
+// "Not created" had two meanings and only one had a sentence. A run that never
+// reached the scaffold step creates nothing, and so does a run that wrote the
+// configuration and then failed on the knowledge directories — the two are one
+// step apart on disk and were reported identically, sending a reader whose init
+// failed *inside* the scaffold step to look for a failure before it.
+//
+// ConfigPresent is what tells them apart: the configuration and the knowledge
+// directories are established by one step, in that order, so a report that has
+// the first and not the second stopped between them.
+func TestInitReportTellsTheTwoScaffoldSilencesApart(t *testing.T) {
+	tests := map[string]struct {
+		configPresent bool
+		want          string
+		absent        string
+	}{
+		"stopped before the scaffold step": {
+			configPresent: false,
+			want:          "init stopped before the repository scaffold step",
+			absent:        "while laying down",
+		},
+		"stopped inside the scaffold step": {
+			configPresent: true,
+			want:          "init stopped while laying down the repository scaffold",
+			absent:        "stopped before",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			report := blockedInitReport()
+			report.ConfigCreated = false
+			report.ConfigPresent = tc.configPresent
+			report.KnowledgeDirsCreated = nil
+			report.KnowledgeDirsPresent = false
+
+			var buf bytes.Buffer
+			if err := report.RenderHuman(&buf, false); err != nil {
+				t.Fatalf("RenderHuman: %v", err)
+			}
+			got := buf.String()
+
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("output does not say %q:\n%s", tc.want, got)
+			}
+			if strings.Contains(got, tc.absent) {
+				t.Errorf("output says %q about the other silence:\n%s", tc.absent, got)
+			}
+			// Neither silence may be dressed up as a scaffold that exists.
+			if strings.Contains(got, "already present") {
+				t.Errorf("output claims knowledge directories that were never created:\n%s", got)
+			}
+		})
+	}
+}

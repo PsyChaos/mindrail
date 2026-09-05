@@ -178,6 +178,22 @@ type Probes struct {
 	// has to say which of the two the reader is looking at — "there is nothing
 	// here" sends someone who can see the file looking for a second problem.
 	DBFileUnwritten bool
+
+	// DBWrite answers whether the runtime database could be *written*, which is
+	// a different question from whether it opened.
+	//
+	// Every probe before this one stopped at openability, and a mindrail.db whose
+	// mode bits refuse writes opens perfectly: doctor read its pragmas back, found
+	// WAL and foreign keys in force, printed `Overall: OK` and exited 0 while
+	// `mindrail init` in the same directory failed forever (finding W5). A check
+	// that has not looked must not report OK, and "opened successfully" is not
+	// "usable".
+	//
+	// DBWriteKnown is the discriminator a zero value cannot supply: an
+	// unanswered probe and a refused write both leave Writable false, and reading
+	// the first as the second would fail every Subject a test builds by hand.
+	DBWrite      storage.WriteAccess
+	DBWriteKnown bool
 }
 
 // Probe answers the read-only questions doctor is allowed to ask the disk and
@@ -224,6 +240,16 @@ func Probe(s Subject) Subject {
 			storage.IsUnwritten(s.Paths.DBPath)
 	}
 
+	// The write-access probe is asked wherever the database path is known and the
+	// open step was reached, because the condition it finds is invisible to every
+	// other reading in the report: the database opens, its pragmas read back
+	// correctly, and nothing else in the sequence attempts a write. Asking costs
+	// three access(2) calls and no mutation, so decision D-01 still holds.
+	if s.reached(stepOpenSQLite) && s.Paths.DBPath != "" {
+		s.Probes.DBWrite = storage.ProbeWriteAccess(s.Paths.DBPath)
+		s.Probes.DBWriteKnown = true
+	}
+
 	return s
 }
 
@@ -245,7 +271,72 @@ func (s Subject) obstruction() (diagnosis, bool) {
 			next:   []string{"Make " + s.Probes.RuntimeDir.Probed + " writable."},
 		}), true
 	}
+	if unwritable, blocked := s.unwritableDatabase(); blocked {
+		return unwritable, true
+	}
 	return diagnosis{}, false
+}
+
+// unwritableDatabase reports a runtime database that can be read and not
+// written, and is the reading finding W5 is about.
+//
+// It is deliberately narrower than storage.ProbeWriteAccess's own verdict. Two
+// of that probe's blockers are already described, better, by the readings above
+// it: BlockerDirectory is the runtime root, which RuntimePathCheck names along
+// with the MINDRAIL_RUNTIME_DIR override, and BlockerObstruction is the occupied
+// path DBPathErr describes in full. Letting either of them speak here would put
+// a second, worse-worded remedy for one condition into the same document — the
+// defect this package exists to prevent — so only the two conditions nothing
+// else in the report can see are claimed: the database file's own mode, and the
+// `-shm` index beside it whose mode refuses every write while the database
+// file's own mode looks perfectly correct.
+//
+// Narrowing detection is also what keeps it from over-firing. The cache
+// directory, the repository config directory and every other path Mindrail
+// touches are outside the footprint this probe inspects; a pass that let one of
+// those decide the runtime database's verdict bricked a working repository
+// once already (finding F13).
+func (s Subject) unwritableDatabase() (diagnosis, bool) {
+	if !s.Probes.DBWriteKnown || s.Probes.DBWrite.Writable {
+		return diagnosis{}, false
+	}
+
+	// A database that could not be opened, or that opened and failed its
+	// integrity check, is already described by a stronger reading. A file at mode
+	// 0000 refuses reads as well as writes, and answering "restore write
+	// permission" there replaces "this is not a readable SQLite database" with a
+	// remedy that clears half the condition. W5 is about the database that opens
+	// perfectly and cannot be written; where the open itself failed, the driver's
+	// own diagnosis is the better one and this stays quiet.
+	if s.DBErr != nil || s.IntegrityErr != nil {
+		return diagnosis{}, false
+	}
+	switch s.Probes.DBWrite.Blocker {
+	case storage.BlockerDatabaseFile, storage.BlockerSidecar:
+	default:
+		return diagnosis{}, false
+	}
+
+	// The remedy comes from the layer that established the refusal, so `doctor`,
+	// `status` and the `mindrail init` that fails here all print the same
+	// sentence naming the same files. It is carried out and verified rather than
+	// asserted: restoring write permission on those paths is what clears this
+	// condition.
+	d := explain(s.Probes.DBWrite.Err, diagnosis{
+		code:   app.CodeRuntimePathUnwritable,
+		impact: "Mindrail can read the state already recorded here but cannot record anything new, so `mindrail init` and every other command that writes will fail.",
+		next:   []string{"restore write permission on " + s.Probes.DBWrite.Blocked},
+	})
+
+	// A repository whose database is unwritable *and* not yet established needs
+	// both steps, and a remedy that stops at the chmod would leave the reader one
+	// silent command short of a working install. The second action is added only
+	// where init still has work to do, so a fully registered repository is not
+	// told to run a command it does not need.
+	if !s.DBPresent {
+		d.next = append(slices.Clone(d.next), initCommand)
+	}
+	return d, true
 }
 
 // supersede replaces a remedy the reader cannot carry out with the obstruction
@@ -284,6 +375,44 @@ func (s Subject) supersede(result Result) Result {
 	superseded.Section = result.Section
 	superseded.Details = result.Details
 	return superseded
+}
+
+// initAfterObstruction is the step that gets a reader from "the thing in the way
+// is gone" back to a working installation. It is a sentence rather than the bare
+// command because it is appended to a remedy that already has steps in it, and a
+// list whose last line is two words reads as an afterthought.
+const initAfterObstruction = "Then run `" + initCommand + "`."
+
+// completeRootRemedy finishes the runtime-root remedy when the blockage is one
+// `mindrail init` can follow.
+//
+// It closes finding W6's half of the disagreement. A regular file standing where
+// the runtime root should be is described twice in one document by two layers:
+// the filesystem probe, which says to remove it or point MINDRAIL_RUNTIME_DIR
+// elsewhere, and the runtime-store probe, which says to remove it and then run
+// `mindrail init`. Both are true and only the second is complete — removing the
+// file leaves an uninitialised repository — but the first is the one the error
+// object is built from, so the document's authority stopped a step short of the
+// component printed beside it. The invariant that catches that class reads the
+// error object as authoritative, which made the incomplete remedy the one
+// everything else had to be cut down to; completing it is the fix that leaves
+// both readings able to succeed.
+//
+// It fires only where the same document already says init is worth running. A
+// runtime root whose *mode bits* refuse writes yields an obstruction whose remedy
+// is a chmod and no init, so that reading is left exactly as the filesystem layer
+// wrote it.
+func (s Subject) completeRootRemedy(d diagnosis) diagnosis {
+	if offersInit(d.next) {
+		return d
+	}
+	obstruction, blocked := s.obstruction()
+	if !blocked || !offersInit(obstruction.next) {
+		return d
+	}
+
+	d.next = append(slices.Clone(d.next), initAfterObstruction)
+	return d
 }
 
 // offersInit reports whether any of these actions sends the reader to `mindrail

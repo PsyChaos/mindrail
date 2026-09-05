@@ -261,7 +261,7 @@ func (m *Migrator) apply(ctx context.Context, pending Migration) (Applied, bool,
 	err := storage.InTx(ctx, m.db, func(ctx context.Context, tx *sql.Tx) error {
 		existing, found, err := readLedgerRow(ctx, tx, pending.Version)
 		if err != nil {
-			return applyFailure(pending, err)
+			return m.applyFailure(ctx, pending, err)
 		}
 		if found {
 			if existing.Checksum != pending.Checksum {
@@ -272,14 +272,14 @@ func (m *Migrator) apply(ctx context.Context, pending Migration) (Applied, bool,
 		}
 
 		if _, err := tx.ExecContext(ctx, pending.SQL); err != nil {
-			return applyFailure(pending, err)
+			return m.applyFailure(ctx, pending, err)
 		}
 
 		now := m.clock.Now().UTC()
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)`,
 			pending.Version, pending.Name, pending.Checksum, app.FormatTime(now)); err != nil {
-			return applyFailure(pending, err)
+			return m.applyFailure(ctx, pending, err)
 		}
 
 		row.AppliedAt = now
@@ -287,9 +287,12 @@ func (m *Migrator) apply(ctx context.Context, pending Migration) (Applied, bool,
 		return nil
 	})
 	if err != nil {
-		// InTx's own begin/commit failures are not domain errors yet.
+		// InTx's own begin/commit failures are not domain errors yet. BEGIN is
+		// where contention surfaces on this path: _txlock=immediate takes the
+		// write lock at the door, so a second `mindrail init` that outlasts
+		// busy_timeout fails here and nowhere else.
 		if _, isDomain := app.PayloadOf(err); !isDomain {
-			return Applied{}, false, applyFailure(pending, err)
+			return Applied{}, false, m.applyFailure(ctx, pending, err)
 		}
 		return Applied{}, false, err
 	}
@@ -779,16 +782,31 @@ func (m *Migrator) ensureBookkeeping(ctx context.Context) error {
 		return err
 	})
 	if err != nil {
-		return app.NewError(
-			app.CodeMigrationFailed,
-			app.KindFailed,
-			"the migration bookkeeping table could not be created",
-			"Mindrail cannot tell which schema migrations have run, so it will not write to this database.",
-			"Check that the runtime database is writable and not held open by another process.",
-		).WithCause(fmt.Errorf("%w: create %s: %w", ErrApplyFailed, bookkeepingTable, err))
+		return bookkeepingCreateFailure(ctx, m.db, err)
 	}
 
 	return nil
+}
+
+// bookkeepingCreateFailure reports a ledger table that could not be created.
+//
+// The generic remedy it falls back to -- "check that the runtime database is
+// writable and not held open by another process" -- names both conditions
+// because it can distinguish neither. When the driver can, the specific answer
+// wins: contention is a wait rather than a fault, an unwritable file is a chmod
+// on a named path, and neither is worth an exit 1 (finding W1).
+func bookkeepingCreateFailure(ctx context.Context, q storage.Querier, cause error) error {
+	if named := storage.WriteFailure(ctx, q, "create the migration bookkeeping table", cause); named != nil {
+		return named
+	}
+
+	return app.NewError(
+		app.CodeMigrationFailed,
+		app.KindFailed,
+		"the migration bookkeeping table could not be created",
+		"Mindrail cannot tell which schema migrations have run, so it will not write to this database.",
+		"Check that the runtime database is writable and not held open by another process.",
+	).WithCause(fmt.Errorf("%w: create %s: %w", ErrApplyFailed, bookkeepingTable, cause))
 }
 
 func (m *Migrator) bookkeepingExists(ctx context.Context) (bool, error) {
@@ -847,7 +865,22 @@ func highestVersion(ledger []Applied) int64 {
 	return highest
 }
 
-func applyFailure(pending Migration, cause error) error {
+// applyFailure reports a migration that did not run.
+//
+// The driver's result code is consulted first, because three of the reasons a
+// write fails are not about the migration at all. A database another process
+// holds, one whose file refuses writes, and a full disk were every one of them
+// reported as MIGRATION_FAILED at exit 1 -- "this operation is broken", with a
+// remedy telling the user to inspect SQL that is fine -- when decision D-03 rates
+// contention and an unwritable runtime path at exit 4, the code a caller retries
+// on (finding W1). What is left over is a genuine migration failure and keeps
+// the diagnosis below.
+func (m *Migrator) applyFailure(ctx context.Context, pending Migration, cause error) error {
+	if named := storage.WriteFailure(ctx, m.db,
+		fmt.Sprintf("apply migration %06d_%s", pending.Version, pending.Name), cause); named != nil {
+		return named
+	}
+
 	return app.NewError(
 		app.CodeMigrationFailed,
 		app.KindFailed,
