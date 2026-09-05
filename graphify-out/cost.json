@@ -1,0 +1,26 @@
+{
+  "runs": [
+    {
+      "date": "2026-09-04T18:34:03.594829+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 6,
+      "combined_tokens": 328981,
+      "split_available": false,
+      "note": "Extraction ran through a host-agent subagent; the harness reported only a combined subagent_tokens figure. The input/output split is unknown and is deliberately not estimated. combined_tokens is the authoritative cost for such runs; input_tokens/output_tokens are 0 so that later Gemini-backed runs (which do report a real split) keep accumulating correctly."
+    },
+    {
+      "date": "2026-09-04T23:13:41.168232+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "combined_tokens": 227014,
+      "split_available": false,
+      "note": "Incremental --update; host-agent subagent reported combined tokens only.",
+      "files": 4
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0,
+  "total_combined_tokens": 555995,
+  "note": "total_input_tokens/total_output_tokens count only runs that reported a real split. total_combined_tokens is the true all-time cost."
+}

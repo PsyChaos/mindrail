@@ -1,0 +1,38 @@
+{
+  ".docs/mindrail-0.1-kernel-scope.md": {
+    "mtime": 1788549444.2722874,
+    "seen": 1788563539.500254,
+    "ast_hash": "8840cf71df788d36e9653b20cd7de3bd",
+    "semantic_hash": "8840cf71df788d36e9653b20cd7de3bd"
+  },
+  ".docs/mindrail-tech-stack.md": {
+    "mtime": 1788549433.8091633,
+    "seen": 1788563539.5002575,
+    "ast_hash": "702f2625d0935aea1053a337c569eef5",
+    "semantic_hash": "702f2625d0935aea1053a337c569eef5"
+  },
+  ".docs/mindrail-technical-specification-1.0.md": {
+    "mtime": 1788549401.0250518,
+    "seen": 1788563539.5002596,
+    "ast_hash": "596644658e53d9b6bd583be216b928a6",
+    "semantic_hash": "596644658e53d9b6bd583be216b928a6"
+  },
+  ".tasks/mindrail-0.1-task-list.md": {
+    "mtime": 1788331109.1267939,
+    "seen": 1788546843.594311,
+    "ast_hash": "ef2e235b415bd29592382097260ad795",
+    "semantic_hash": "ef2e235b415bd29592382097260ad795"
+  },
+  "AGENTS.md": {
+    "mtime": 1788549465.433308,
+    "seen": 1788563539.500261,
+    "ast_hash": "9a08ff07c79a91cd9485343f034d226e",
+    "semantic_hash": "9a08ff07c79a91cd9485343f034d226e"
+  },
+  "CLAUDE.md": {
+    "mtime": 1788544677.2127361,
+    "seen": 1788546843.5943124,
+    "ast_hash": "82efb97a359f5c7290bf2513d14686be",
+    "semantic_hash": "82efb97a359f5c7290bf2513d14686be"
+  }
+}

@@ -1,0 +1,196 @@
+# ─────────────────────────────────────────────────────────────
+# Mindrail
+# ─────────────────────────────────────────────────────────────
+#
+# DİKKAT: `.mindrail/` ASLA ignore edilmez.
+#
+# `.mindrail/` repository-owned engineering knowledge tutar:
+#   .mindrail/config.toml
+#   .mindrail/knowledge/decisions/*.json
+#   .mindrail/knowledge/invariants/*.json
+#   .mindrail/policies/*.toml
+#
+# Bunlar Git ile versiyonlanmak, code review görmek ve CI clone'da
+# yeniden yüklenmek zorundadır (Technical Specification 1.0 §9).
+#
+# Runtime state <GIT_COMMON_DIR>/mindrail/ altında, yani `.git/`
+# içinde durur; zaten Git tarafından takip edilmez.
+#   <GIT_COMMON_DIR>/mindrail/mindrail.db
+#   <GIT_COMMON_DIR>/mindrail/cache/
+#
+# Managed resolver cache os.UserCacheDir() altındadır, repo dışında.
+
+# Geçici CI/change manifest artifact'ı (spec §76) — commit edilmesi gerekmez
+.mindrail-manifest
+*.mindrail-manifest
+
+# ─────────────────────────────────────────────────────────────
+# Go build artifacts
+# ─────────────────────────────────────────────────────────────
+
+# Root'a derlenen executable (cmd/mindrail/ dizinini etkilemesin diye anchor'lı)
+/mindrail
+/mindrail.exe
+
+# Release output (GoReleaser / manuel platform-native build matrix)
+/dist/
+/build/
+/bin/
+
+# Test binary'leri ve derleme çıktıları
+*.test
+*.exe
+*.exe~
+*.out
+*.o
+*.a
+
+# CGO / Tree-sitter native çıktıları
+# (grammar'lar executable'a link'lenir; repo'da shared library tutulmaz)
+*.so
+*.dylib
+*.dll
+
+# Go workspace — local çok-modüllü geliştirme, paylaşılmaz
+go.work
+go.work.sum
+
+# Bağımlılıklar go.mod/go.sum ile pinlenir; vendoring kullanılmıyor.
+# Vendoring'e geçilirse aşağıdaki satır SİLİNMELİ (vendor/ commit edilir).
+vendor/
+
+# ─────────────────────────────────────────────────────────────
+# Test, coverage, profiling
+# ─────────────────────────────────────────────────────────────
+
+coverage.out
+coverage.txt
+coverage.html
+cover.out
+*.cover
+*.coverprofile
+
+# pprof / trace çıktıları
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+block.prof
+mutex.prof
+trace.out
+*.trace
+
+# Benchmark sonuç dökümleri
+*.bench
+benchstat.txt
+
+# NOT: testdata/fuzz/ IGNORE EDİLMEZ.
+# Go fuzzing başarısız input'ları testdata/fuzz/FuzzXxx/ altına yazar ve
+# bunlar regression seed'i olarak commit edilmelidir. Fuzz cache GOCACHE'te durur.
+
+# ─────────────────────────────────────────────────────────────
+# Python fixture / resolver ekosistemi
+# (testdata/languages/python, testdata/repositories/fixture-python-*)
+# ─────────────────────────────────────────────────────────────
+
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+*.egg-info/
+.pyright/
+
+# ─────────────────────────────────────────────────────────────
+# Node / TypeScript fixture ekosistemi
+# (testdata/languages/typescript, fixture-ts-project-reference)
+# ─────────────────────────────────────────────────────────────
+
+node_modules/
+*.tsbuildinfo
+.pnpm-store/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─────────────────────────────────────────────────────────────
+# Secrets ve local environment
+# ─────────────────────────────────────────────────────────────
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!testdata/**/*.key
+secrets.toml
+credentials.json
+
+# ─────────────────────────────────────────────────────────────
+# Editor / IDE
+# ─────────────────────────────────────────────────────────────
+
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+*~
+.direnv/
+.envrc.local
+
+# ─────────────────────────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────────────────────────
+
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+Desktop.ini
+
+# ─────────────────────────────────────────────────────────────
+# Agent tooling — local çalışma alanları
+# ─────────────────────────────────────────────────────────────
+
+.claude/settings.local.json
+.claude/scratch/
+.claude/worktrees/
+*.graphify-bak
+.codex/
+.agents/
+
+# graphify: üretilen graph çıktıları (graph.json, graph.html, GRAPH_REPORT.md,
+# manifest.json, cost.json) izlenir — `.gitattributes` graph.json için merge
+# driver tanımlar. Aşağıdakiler makineye özgüdür ve mutlak path/run cache tutar.
+graphify-out/.graphify_root
+graphify-out/.graphify_python
+graphify-out/.graphify_detect.json
+graphify-out/.graphify_ast.json
+graphify-out/.graphify_semantic.json
+graphify-out/.graphify_cached.json
+graphify-out/.graphify_uncached.txt
+graphify-out/cache/
+
+# ─────────────────────────────────────────────────────────────
+# Genel geçici dosyalar
+# ─────────────────────────────────────────────────────────────
+
+*.log
+*.tmp
+*.bak
+/tmp/
