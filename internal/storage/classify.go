@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
 
 // The write-path conditions storage can name. They are sentinels rather than
@@ -23,6 +25,14 @@ var (
 
 	// ErrDiskFull means the write failed for want of space.
 	ErrDiskFull = errors.New("no space left for the runtime database")
+
+	// ErrSizeLimit means a size ceiling refused the write on a filesystem that
+	// still has room: a per-file limit (RLIMIT_FSIZE) or an exhausted per-user
+	// quota. It is a separate sentinel from ErrDiskFull because the remedies
+	// have nothing in common — freeing space clears one and does nothing at all
+	// for the other — and a caller that matched on ErrDiskFull would inherit the
+	// wrong one (finding F03).
+	ErrSizeLimit = errors.New("a size limit refused the runtime database its shared-memory index")
 )
 
 // IsBusy reports whether err is SQLite saying another connection holds the
@@ -163,6 +173,17 @@ func describeRefusedPaths(path string) string {
 func diskFullFailure(ctx context.Context, q Querier, what string, cause error) *app.DomainError {
 	path := mainDatabaseFile(ctx, q)
 
+	// The same corroboration the open path makes, for the same reason: this
+	// branch is reached for SQLITE_IOERR_SHMSIZE as well as SQLITE_FULL, and only
+	// the second has already asked the kernel about space (finding F03). A lookup
+	// that could not name the file cannot be corroborated either way, and keeps
+	// the sentence it had.
+	if path != "" {
+		if free, corroborated := spaceCorroboratesFullDisk(path); !corroborated {
+			return sizeLimitWriteFailure(path, free, what, cause)
+		}
+	}
+
 	return app.NewError(
 		app.CodeRuntimePathUnwritable,
 		app.KindUnavailable,
@@ -172,6 +193,27 @@ func diskFullFailure(ctx context.Context, q Querier, what string, cause error) *
 	).WithMetadata("condition", "disk_full").
 		WithMetadata("path", path).
 		WithCause(fmt.Errorf("%w: %w", ErrDiskFull, cause))
+}
+
+// sizeLimitWriteFailure is diskFullFailure's counterpart for a write refused by
+// a size ceiling rather than by an empty filesystem. Its wording matches
+// sizeLimitOpenFailure, so the `init` that meets the limit while migrating and
+// the `status` that meets it at the door print one condition rather than two.
+func sizeLimitWriteFailure(path string, free filesystem.FreeSpace, what string, cause error) *app.DomainError {
+	return app.NewError(
+		app.CodeRuntimePathUnwritable,
+		app.KindUnavailable,
+		"a size limit refused the runtime database at "+path+" the room it asked for, so Mindrail could not "+what+
+			"; the filesystem holding it reports "+strconv.FormatInt(free.AvailableBytes, 10)+" bytes available",
+		"Nothing was written, and freeing space will not change that: the filesystem has room, and a limit above it is what refused the write.",
+		"Check for a file-size limit on this process (`ulimit -f`, or a systemd LimitFSIZE= setting).",
+		"Check whether this user's disk quota is exhausted on the filesystem holding "+path+".",
+		"Check the database's own page ceiling with `PRAGMA max_page_count` on "+path+".",
+		"Or point MINDRAIL_RUNTIME_DIR at a location none of those limits reach.",
+	).WithMetadata("condition", "size_limit").
+		WithMetadata("path", path).
+		WithMetadata("available_bytes", strconv.FormatInt(free.AvailableBytes, 10)).
+		WithCause(fmt.Errorf("%w: %w", ErrSizeLimit, cause))
 }
 
 // describeDatabaseFile renders the path for a remedy, falling back to a name

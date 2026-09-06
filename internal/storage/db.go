@@ -12,10 +12,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
 
 // Options configures a runtime database handle. The zero value of every field
@@ -389,6 +391,10 @@ func classifyOpenError(path string, cause error) error {
 // runs out of space, because it is the same condition seen a few milliseconds
 // earlier and a reader who meets it twice should not have to work out that it is.
 func diskFullOpenFailure(path string, cause error) error {
+	if free, corroborated := spaceCorroboratesFullDisk(path); !corroborated {
+		return sizeLimitOpenFailure(path, free, cause)
+	}
+
 	return app.NewError(
 		app.CodeRuntimePathUnwritable,
 		app.KindUnavailable,
@@ -399,6 +405,62 @@ func diskFullOpenFailure(path string, cause error) error {
 		WithMetadata("path", path).
 		WithMetadata("condition", "disk_full").
 		WithCause(fmt.Errorf("%w: %w", ErrDiskFull, cause))
+}
+
+// spaceCorroboratesFullDisk asks the filesystem whether the "no room" the driver
+// reported is really the filesystem being out of room, and returns the reading so
+// the alternative sentence can quote it.
+//
+// It exists because two result codes reach the disk-full branch and only one of
+// them is trustworthy alone. SQLITE_FULL is the Unix VFS converting an ENOSPC out
+// of write(2), so the kernel has already been asked. SQLITE_IOERR_SHMSIZE is the
+// ftruncate of the 32 KiB `-shm` failing, and that fails for EFBIG and EDQUOT
+// too — a per-file size ceiling and an exhausted per-user quota — on a filesystem
+// with gigabytes free. Reporting those as a full disk asserted a fact about the
+// filesystem that this tool's own statfs reading contradicted three lines further
+// down the same doctor document, and prescribed a remedy that cannot succeed:
+// freeing space changes nothing while the limit is in force (finding F03).
+//
+// An unknown reading corroborates. statfs is the only thing that could say
+// otherwise, and a probe that could not look is not evidence of room.
+func spaceCorroboratesFullDisk(path string) (filesystem.FreeSpace, bool) {
+	free := filesystem.ProbeFreeSpace(filepath.Dir(path))
+	if !free.Known {
+		return free, true
+	}
+	return free, free.AvailableBytes <= 0
+}
+
+// sizeLimitOpenFailure reports SQLite being refused room on a filesystem that
+// still has some.
+//
+// The sentence quotes the reading it was decided from, because the claim it
+// replaces was contradicted by exactly that number — printed three checks away
+// in the same doctor document as `runtime_root_usable: true` — and a reader who
+// has been told once that the disk is full is owed the reason this run says
+// otherwise.
+//
+// The remedy names the three limits that produce this shape rather than
+// asserting which one is in force, because the driver's result code cannot tell
+// them apart and neither can this process: EFBIG, EDQUOT and SQLite's own
+// max_page_count all end here. Naming a candidate set the reader can check
+// through is honest; naming one of them would be the same guess in a new place.
+func sizeLimitOpenFailure(path string, free filesystem.FreeSpace, cause error) error {
+	return app.NewError(
+		app.CodeRuntimePathUnwritable,
+		app.KindUnavailable,
+		"the runtime database at "+path+" was refused the room it asked for, but the filesystem holding it "+
+			"reports "+strconv.FormatInt(free.AvailableBytes, 10)+" bytes available, "+
+			"so a size limit is refusing it rather than a full disk",
+		"Mindrail cannot open the runtime database until the limit is lifted or the runtime state is put somewhere it does not reach, and freeing space will not change that.",
+		"Check for a file-size limit on this process (`ulimit -f`, or a systemd LimitFSIZE= setting).",
+		"Check whether this user's disk quota is exhausted on the filesystem holding "+path+".",
+		"Check the database's own page ceiling with `PRAGMA max_page_count` on "+path+".",
+		"Or point MINDRAIL_RUNTIME_DIR at a location none of those limits reach.",
+	).WithMetadata("path", path).
+		WithMetadata("condition", "size_limit").
+		WithMetadata("available_bytes", strconv.FormatInt(free.AvailableBytes, 10)).
+		WithCause(fmt.Errorf("%w: %w", ErrSizeLimit, cause))
 }
 
 func openFailure(path string, cause error) error {

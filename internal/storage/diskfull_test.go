@@ -70,10 +70,22 @@ func TestIsDiskFullRecognisesTheDriversOwnFullError(t *testing.T) {
 	}
 }
 
-// TestWriteFailureRatesAFullDiskUnavailableWithASpaceRemedy is the remedy half.
+// TestWriteFailureNamesALimitWhenTheFilesystemStillHasRoom is the remedy half,
+// and it is the reproduction of finding F03 turned into a test.
+//
 // Rating the condition correctly is worth nothing if the sentence the user reads
-// still tells them to change a permission that is already correct.
-func TestWriteFailureRatesAFullDiskUnavailableWithASpaceRemedy(t *testing.T) {
+// cannot be carried out, and "free space on the filesystem holding X" cannot be
+// carried out on a filesystem with thirteen gigabytes free. The database in this
+// test is at its own `max_page_count` ceiling, which is one of the three ways
+// SQLite says "no room" while the disk has plenty; RLIMIT_FSIZE and an exhausted
+// quota are the other two, and all three used to be reported as a full disk with
+// a remedy that changed nothing and a loop that never ended.
+//
+// The condition this replaces is not gone: TestAFullFilesystemIsRefusedAndDiagnosed
+// mounts a real filesystem, fills it, and holds the disk-full sentence to every
+// word of itself. This test is its adjacent state — the one that must not trip
+// it — which is why the two belong side by side.
+func TestWriteFailureNamesALimitWhenTheFilesystemStillHasRoom(t *testing.T) {
 	cause, path := fullDatabaseWriteError(t)
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: path, MaxOpenConns: 1})
@@ -86,20 +98,26 @@ func TestWriteFailureRatesAFullDiskUnavailableWithASpaceRemedy(t *testing.T) {
 	if failure == nil {
 		t.Fatal("WriteFailure(SQLITE_FULL) = nil, want a named condition")
 	}
-	if !errors.Is(failure, storage.ErrDiskFull) {
-		t.Errorf("WriteFailure = %v, want errors.Is(err, ErrDiskFull)", failure)
+	if !errors.Is(failure, storage.ErrSizeLimit) {
+		t.Errorf("WriteFailure = %v, want errors.Is(err, ErrSizeLimit)", failure)
+	}
+	if errors.Is(failure, storage.ErrDiskFull) {
+		t.Errorf("WriteFailure = %v, which asserts a full disk on a filesystem that reports room", failure)
 	}
 
 	payload := assertRetryablePayload(t, failure, app.CodeRuntimePathUnwritable)
 	remedy := strings.Join(payload.NextAction, " ")
-	if !strings.Contains(remedy, "free space") {
-		t.Errorf("NextAction = %q, want it to ask for space", payload.NextAction)
+	if strings.Contains(remedy, "free space") {
+		t.Errorf("NextAction = %q, which asks the user to free space on a filesystem that has room", payload.NextAction)
 	}
 	if !strings.Contains(remedy, path) {
-		t.Errorf("NextAction = %q, want it to name %q so the user knows which filesystem", payload.NextAction, path)
+		t.Errorf("NextAction = %q, want it to name %q so the user knows which database", payload.NextAction, path)
 	}
 	if strings.Contains(remedy, "permission") || strings.Contains(remedy, "chmod") {
-		t.Errorf("NextAction = %q, which prescribes a permission change for a full disk", payload.NextAction)
+		t.Errorf("NextAction = %q, which prescribes a permission change for a size limit", payload.NextAction)
+	}
+	if payload.Metadata["available_bytes"] == "" {
+		t.Error("the payload does not carry the free-space reading the classification was decided from")
 	}
 }
 
