@@ -4,9 +4,10 @@ Every finding the MR-001 audit cycle produced, and how each was closed. Every
 one was reproduced against the compiled binary by an auditor that had not
 written the code; every one was closed against the same reproduction.
 
-**Status: all 17 closed, and the pass that closed them was itself audited** —
-see "The audit of this remediation" at the end, which found twenty-nine more.
-`make verify` is green: gofmt, `go vet`, 1595 tests, the race detector and 3
+**Status: all 17 closed; the pass that closed them was audited, and so was the
+pass that closed *those*.** Two further rounds, five reviewers, forty-five more
+findings — see the two sections at the end. One is still open and named there.
+`make verify` is green: gofmt, `go vet`, 1605 tests, the race detector and 3
 clean-binary smoke tests.
 
 **Provenance.** MR-001 went through seven adversarial audits and six remediation
@@ -118,9 +119,10 @@ assumed.
 
 **Fails if it regresses:** `TestInitNeverCallsARepositoryReadyTheNextCommandRefuses`
 (`internal/cli/agreement_hostilefs_linux_test.go`). It mounts a tmpfs in a user
-namespace and sweeps the headroom from 112 KiB to 256 KiB, asserting that init
-exiting 0 implies status exiting 0. Removing the `Flush` call fails it at 120,
-124, 128, 132 and 140 KiB and leaves the healthy ends passing.
+namespace and sweeps the headroom from 8 KiB to 256 KiB, asserting that init
+exiting 0 implies status exiting 0, and that where they do differ the reader can
+still act their way out. Removing the `Flush` call fails it at 120, 124, 128,
+132 and 140 KiB and leaves the healthy ends passing.
 
 ### F02 — an unopenable `config.toml` was remedied as a malformed one
 
@@ -389,7 +391,7 @@ three mutations are killed.
 Closing the seventeen above was itself audited, by three independent reviewers
 that had not written any of it: one on the runtime write path, one on error
 classification and remedies, one on test quality. They produced twenty-nine
-findings between them. All are closed; `make verify` is green with 1595 tests.
+findings between them. All are closed; `make verify` is green with 1605 tests.
 
 **Five were defects the fixes introduced.** This is the number worth carrying
 forward: a third of what a remediation pass produces is new.
@@ -463,3 +465,69 @@ if it regresses.
    its own correction are the same mistake twice, one in each direction: first
    asserting a full disk without asking, then asserting *not* a full disk on the
    strength of four kilobytes.
+
+---
+
+## The second audit round
+
+The remediation above was audited in turn, by two more reviewers: one on
+behaviour, one on the tests it had just added. Six and ten findings. All closed
+except one, named below. `make verify` is green with 1605 tests.
+
+This round is the one that justifies the rule at the end of the last: **the
+fixes for "nothing could fail this" were themselves things nothing could fail.**
+
+- `TestRoomSQLiteWasRefusedCountsWhatSQLiteAsksFor` asserted
+  `roomSQLiteWasRefused(path) != shmSize` — the function compared to the
+  constant it reads. Lowering `shmSize` to four kilobytes, which is the literal
+  over-fire the previous round corrected, was invisible. The floor is a spelled
+  number now, and `TestTheSharedMemoryIndexIsStillTheSizeWeBudgetFor` measures
+  the real `-shm` file so the number stays SQLite's rather than ours.
+- The checkpoint's wall-clock bound was `20 * storage.CheckpointBudget`.
+  Restoring the five-second budget raised the bound with it: the test passed in
+  5.02 seconds while reporting success. It is an absolute two seconds now.
+- `TestEveryRemedyAboutAFileNamesThatFileAbsolutely` used
+  `strings.Contains(remedy, path)`, so changing every emitter to name
+  `<path>-wal` — a file that is not the broken one — passed. Paths are extracted
+  and compared whole.
+- The hostile-filesystem marker counted loop iterations, not work: `ran++` sat
+  above `t.Run`, so a row that skipped as its first statement still reported
+  itself as having run. Deferring the count did not fix it either, because
+  `t.Skip` unwinds through Goexit and runs deferred calls. It is a plain call at
+  the end of the row body now.
+- The remedy classifier was blind to five of the sentences the binary actually
+  prints, because the agreement matrix kept a second private table of its own:
+  this side could tell a rebuild from an upgrade while the path-contradiction
+  check could tell neither from nothing. There is one table, and
+  `TestEveryRemedyThatNamesAPathIsClassified` drives every condition the matrix
+  knows, harvests the 66 path-naming remedies the binary emits, and fails on any
+  the table cannot read.
+- `makesSomethingUsable` — the precise matcher written to replace the `"make "`
+  substring — was tested only with invented strings, and did not match
+  `Make <path> readable.`, which the binary prints. The harvest covers it now.
+
+**Two more defects the fixes introduced.** Replacing cobra's help command
+silently dropped the completion function that came with it, so `mindrail help
+<TAB>` stopped offering command names and started offering filenames. And
+`boundCheckpointWait` handed pooled connections back carrying a 250 ms busy
+timeout where the database's own is five seconds, shortening the next writer's
+wait twentyfold — the exact thing its own comment said it existed to prevent.
+
+**One false claim, again in this document.** F01's entry said the invariant
+"init, status and doctor cannot report different codes for one broken
+installation" was now true. It is not: below about 100 KiB free, `init` refuses
+while `status` reports an uninitialised repository at exit 0 and offers
+`mindrail init`. That is the documented trade-off in
+`filesystem.FreeSpace.Exhausted`, not this finding returning — and what actually
+matters, that following what the commands say gets the reader out, is now
+asserted by `assertTheLoopTerminates` over a sweep that reaches down to 8 KiB.
+The entry says so precisely.
+
+### Still open
+
+**`mindrail --help` and `mindrail completion --help` gained a `[flags]` usage
+line.** Making a grouping command runnable is what lets cobra reach its argument
+check at all — without it `mindrail completion bogus` prints a page of help and
+exits 0 — and cobra's usage template prints `.UseLine` for anything runnable.
+Both lines are true and the behaviour is unchanged, so it is recorded rather
+than worked around with a custom usage template.
