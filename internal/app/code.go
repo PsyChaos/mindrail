@@ -33,6 +33,14 @@ const (
 	CodeKnowledgeUnreadable         Code = "KNOWLEDGE_UNREADABLE"
 	CodeKnowledgeSchemaUnsupported  Code = "KNOWLEDGE_SCHEMA_UNSUPPORTED"
 
+	// CodeCommandLineInvalid marks a command line this binary could not
+	// understand: an unknown subcommand, an unknown flag, a surplus argument.
+	// It is distinct from CONFIG_INVALID because the two have different
+	// remedies — one is fixed in the shell, the other in a file — and because a
+	// caller branching on "was my invocation wrong?" cannot tell them apart
+	// from the exit code alone (findings F04, F08).
+	CodeCommandLineInvalid Code = "COMMAND_LINE_INVALID"
+
 	// CodeStartupIncomplete marks a reading that was never taken because the
 	// tech-stack §87 startup sequence aborted before the step that would have
 	// populated it. It is the machine-readable spelling of "nobody looked",
@@ -62,6 +70,7 @@ var allCodes = sortedCodes([]Code{
 	CodeConfigUnknownEnvVar,
 	CodeKnowledgeUnreadable,
 	CodeKnowledgeSchemaUnsupported,
+	CodeCommandLineInvalid,
 	CodeStartupIncomplete,
 })
 

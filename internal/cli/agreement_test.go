@@ -49,6 +49,21 @@ type condition struct {
 	// clear carries out the remedy on disk. Nil where there is nothing to undo,
 	// or where the condition is a process seam rather than a state of the disk.
 	clear func(t *testing.T, repo string)
+	// remedy is the class of action the report is supposed to print, asserted
+	// against next_action before clear runs.
+	//
+	// It exists because the final phase claimed to carry out "the sentence all
+	// three printed" and never read that sentence: it ran this row's own clear
+	// closure, so a remedy that was wrong, useless or impossible passed as long
+	// as all three commands printed it identically. Replacing the config
+	// loader's remedy with "Reinstall Mindrail from your package manager" left
+	// the whole suite green (finding F05).
+	remedy remedyClass
+	// remedyNotCarryable states why clear does something other than what the
+	// report printed, for the rows where the printed remedy is real but cannot
+	// be performed by a test. Declaring it is how such a row stays honest; the
+	// alternative — silently substituting a different action — is the defect.
+	remedyNotCarryable string
 	// separately names a command whose answer legitimately differs from the ones
 	// that agree, and states why in the row.
 	//
@@ -121,7 +136,9 @@ func TestOneConditionIsNamedTheSameWayByEveryCommand(t *testing.T) {
 				return
 			}
 
-			// The sentence all three printed, carried out.
+			// The sentence all three printed, read before it is carried out.
+			assertRemedyIsWhatTheRowExpects(t, tc, answers[first].nextAction)
+
 			repo := tc.setup(t)
 			tc.clear(t, repo)
 			for _, command := range commandsUnderTest {
@@ -131,6 +148,80 @@ func TestOneConditionIsNamedTheSameWayByEveryCommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The remedy classes only this matrix asks about.
+//
+// coherence_test.go's classifier reads the sentences that name a path, because
+// that is what a path-level contradiction is made of. These four name no path —
+// they send the reader into the configuration file, back to `mindrail init`, or
+// to a newer binary — so they are invisible to it and would all read as
+// classUnknown, which asserts nothing.
+const (
+	classEditConfig remedyClass = "correct the entry the report named"
+	classRebuild    remedyClass = "move the runtime database aside and run mindrail init"
+	classUpgrade    remedyClass = "upgrade to a binary that reads these records"
+	classContain    remedyClass = "put the path back inside the repository"
+)
+
+// agreementRemedyPhrases extends coherence_test.go's table with the four above,
+// most specific first. A phrase that appears in neither table classifies as
+// nothing, which is the honest failure: an unrecognised remedy is not read as
+// agreeing with the row, it makes the row fail until somebody writes it down.
+var agreementRemedyPhrases = []struct {
+	phrase string
+	class  remedyClass
+}{
+	{"to rebuild it", classRebuild},
+	{"then run `mindrail init`", classRebuild},
+	{"fix or remove the offending entry", classEditConfig},
+	{"upgrade mindrail", classUpgrade},
+	{"use a path inside the repository", classContain},
+}
+
+// agreementRemedyClass reads a next_action list the way this matrix needs it:
+// the shared classifier first, so that a condition both tests know is named the
+// same way by both, then the four remedies only this one asks about.
+func agreementRemedyClass(actions []string) remedyClass {
+	for _, action := range actions {
+		if class := classOf(action); class != classUnknown {
+			return class
+		}
+		lowered := strings.ToLower(action)
+		for _, candidate := range agreementRemedyPhrases {
+			if strings.Contains(lowered, candidate.phrase) {
+				return candidate.class
+			}
+		}
+	}
+	return classUnknown
+}
+
+// assertRemedyIsWhatTheRowExpects holds the printed remedy to the class the row
+// declared before the row's own clear closure is allowed to run.
+//
+// A row that declares neither a class nor a reason it cannot is a row that has
+// not been reconciled with the binary, and it fails rather than passing quietly:
+// that silence is what let five mutation survivors through (finding F05).
+func assertRemedyIsWhatTheRowExpects(t *testing.T, tc condition, actions []string) {
+	t.Helper()
+
+	if tc.remedyNotCarryable != "" {
+		if tc.remedy != classUnknown {
+			t.Fatalf("%s: the row declares both a remedy class and a reason the remedy cannot be carried out", tc.name)
+		}
+		return
+	}
+
+	if tc.remedy == classUnknown {
+		t.Fatalf("%s: the row carries out a remedy but does not say which one it expects the report to print; "+
+			"set remedy, or set remedyNotCarryable and say why. The report printed %q", tc.name, actions)
+	}
+
+	if got := agreementRemedyClass(actions); got != tc.remedy {
+		t.Fatalf("%s: the report tells the reader to %q, but the row expects to %q\nnext_action: %q",
+			tc.name, got, tc.remedy, actions)
 	}
 }
 
@@ -204,6 +295,7 @@ func repositoryConfigConditions() []condition {
 		{
 			name:   "a regular file where the repository config directory belongs",
 			broken: true,
+			remedy: classObstruction,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				writeFile(t, repoConfigDir(repo), []byte("not a directory"))
@@ -217,6 +309,7 @@ func repositoryConfigConditions() []condition {
 		{
 			name:   "a worktree that will not accept the repository config directory",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				denyWrites(t, repo)
@@ -230,6 +323,7 @@ func repositoryConfigConditions() []condition {
 		{
 			name:   "a dangling symlink where the repository config directory belongs",
 			broken: true,
+			remedy: classRelink,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				if err := os.Symlink(filepath.Join(repo, "gone"), repoConfigDir(repo)); err != nil {
@@ -250,6 +344,7 @@ func repositoryConfigConditions() []condition {
 			// to say so with the same words.
 			name:   "a symlink pointing outside the worktree where the repository config directory belongs",
 			broken: true,
+			remedy: classContain,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				outside := t.TempDir()
@@ -270,6 +365,7 @@ func repositoryConfigConditions() []condition {
 			// — is in healthyConditions.
 			name:   "the repository config directory refuses writes and the scaffold is incomplete",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				removeForSetup(t, filepath.Join(repoConfigDir(repo), "knowledge"))
@@ -284,6 +380,7 @@ func repositoryConfigConditions() []condition {
 		{
 			name:   "config.toml cannot be parsed",
 			broken: true,
+			remedy: classEditConfig,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				writeFile(t, configPath(repo), []byte("output.color = \n"))
@@ -302,6 +399,7 @@ func repositoryConfigConditions() []condition {
 			// written rather than by deleting the whole file.
 			name:   "config.toml carries a key this binary does not know",
 			broken: true,
+			remedy: classEditConfig,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				writeFile(t, configPath(repo), []byte("[output]\ncolour = \"always\"\n"))
@@ -310,6 +408,47 @@ func repositoryConfigConditions() []condition {
 			clear: func(t *testing.T, repo string) {
 				t.Helper()
 				writeFile(t, configPath(repo), []byte("[output]\ncolor = \"auto\"\n"))
+			},
+		},
+		{
+			// Finding F06's first gap. The matrix had rows for a `.mindrail`
+			// that is a file, unwritable, dangling or escaping the root, and
+			// rows for config.toml's *contents* being wrong — and none for the
+			// file being unopenable, which is the shape that hid finding F02's
+			// remedy: an entry-level instruction printed for a file with no
+			// readable entry in it.
+			name:   "config.toml cannot be opened",
+			broken: true,
+			remedy: classPermission,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyAccess(t, configPath(repo))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, configPath(repo), 0o644)
+			},
+		},
+		{
+			// F06's second gap, and the one a repository can reach without
+			// anybody's permissions being unusual: a tree may legitimately
+			// commit a path named .mindrail/config.toml, and then every command
+			// in every fresh clone meets a directory where the file belongs.
+			name:   "a directory where config.toml belongs",
+			broken: true,
+			remedy: classObstruction,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				removeForSetup(t, configPath(repo))
+				if err := os.Mkdir(configPath(repo), 0o755); err != nil {
+					t.Fatalf("occupy config.toml with a directory: %v", err)
+				}
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, configPath(repo))
 			},
 		},
 	}
@@ -322,6 +461,7 @@ func knowledgeConditions() []condition {
 		{
 			name:   "the knowledge directory is unreadable",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				denyAccess(t, knowledgeDir(repo))
@@ -335,6 +475,7 @@ func knowledgeConditions() []condition {
 		{
 			name:   "a regular file where the knowledge directory belongs",
 			broken: true,
+			remedy: classObstruction,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				mkdirForSetup(t, repoConfigDir(repo))
@@ -352,6 +493,7 @@ func knowledgeConditions() []condition {
 			// it has to write inside it, and both have to name that directory.
 			name:   "a record bucket under the knowledge directory is unreadable",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				denyAccess(t, filepath.Join(knowledgeDir(repo), "decisions"))
@@ -397,6 +539,13 @@ func knowledgeConditions() []condition {
 		{
 			name:   "a knowledge record written by a newer schema than this binary reads",
 			broken: true,
+			// The report tells the reader to upgrade the binary, which is the
+			// right instruction and one no test can carry out. Deleting the
+			// record clears the condition by removing what the newer schema
+			// wrote, which is a different action, and finding F05 is that the
+			// matrix used to make that substitution silently.
+			remedyNotCarryable: "upgrading the binary is not an action a test can perform; " +
+				"clear deletes the record the newer schema wrote instead",
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				writeKnowledgeRecord(t, repo, "DEC-0001.json", futureSchemaRecord)
@@ -417,6 +566,7 @@ func runtimeRootConditions() []condition {
 		{
 			name:   "the runtime root cannot be created",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				denyWrites(t, filepath.Join(repo, ".git"))
@@ -430,6 +580,7 @@ func runtimeRootConditions() []condition {
 		{
 			name:   "the runtime root refuses writes after init",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				denyWrites(t, runtimeRoot(repo))
@@ -443,6 +594,7 @@ func runtimeRootConditions() []condition {
 		{
 			name:   "a regular file where the runtime root belongs",
 			broken: true,
+			remedy: classObstruction,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				writeFile(t, runtimeRoot(repo), []byte("not a directory"))
@@ -484,6 +636,7 @@ func runtimeDatabaseConditions() []condition {
 		{
 			name:   "the database was truncated to garbage",
 			broken: true,
+			remedy: classRebuild,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				corruptDatabase(t, repo)
@@ -508,6 +661,7 @@ func runtimeDatabaseConditions() []condition {
 		{
 			name:   "the database path is occupied by a directory",
 			broken: true,
+			remedy: classObstruction,
 			setup: func(t *testing.T) string {
 				repo := newRepo(t)
 				mkdirForSetup(t, runtimeDBPath(t, repo))
@@ -523,6 +677,7 @@ func runtimeDatabaseConditions() []condition {
 			// refuses every write.
 			name:   "the database file refuses writes",
 			broken: true,
+			remedy: classPermission,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				chmodForTest(t, runtimeDBPath(t, repo), 0o444)
@@ -536,6 +691,7 @@ func runtimeDatabaseConditions() []condition {
 		{
 			name:   "the runtime tables were dropped",
 			broken: true,
+			remedy: classRebuild,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				dropRuntimeTables(t, repo)
@@ -549,6 +705,7 @@ func runtimeDatabaseConditions() []condition {
 		{
 			name:   "the migration ledger rows were deleted",
 			broken: true,
+			remedy: classRebuild,
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				emptyMigrationLedger(t, repo)

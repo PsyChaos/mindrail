@@ -31,6 +31,7 @@ import (
 var exitForCode = map[app.Code]int{
 	app.CodeNotAGitRepository:           app.ExitUsage,
 	app.CodeBareRepository:              app.ExitUsage,
+	app.CodeCommandLineInvalid:          app.ExitUsage,
 	app.CodeConfigInvalid:               app.ExitUsage,
 	app.CodePathEscapesRoot:             app.ExitUsage,
 	app.CodePathNotRepresentable:        app.ExitUsage,

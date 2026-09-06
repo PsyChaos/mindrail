@@ -1213,6 +1213,31 @@ func TestExitCodeMatrix(t *testing.T) {
 			},
 			want: app.ExitSuccess,
 		},
+		{
+			// Findings F04 and F08. A command line this binary cannot understand
+			// is invalid usage, the same class as a malformed config.toml; it
+			// used to fall through to exit 1, the code reserved for a gate that
+			// ran and refused. The three rows below are the three shapes cobra
+			// rejects, and each took a different path to the same wrong answer:
+			// an unknown subcommand through legacyArgs, an unknown flag through
+			// the flag error func, a surplus argument through cobra.NoArgs.
+			name:    "unknown subcommand",
+			command: []string{"frobnicate"},
+			setup:   newInitializedRepo,
+			want:    app.ExitUsage,
+		},
+		{
+			name:    "unknown flag",
+			command: []string{"status", "--nope"},
+			setup:   newInitializedRepo,
+			want:    app.ExitUsage,
+		},
+		{
+			name:    "surplus argument",
+			command: []string{"init", "extraarg"},
+			setup:   newRepo,
+			want:    app.ExitUsage,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1224,6 +1249,61 @@ func TestExitCodeMatrix(t *testing.T) {
 				t.Errorf("exit code = %d, want %d (error %v)\n%s", got.code, tc.want, got.err, got.stdout)
 			}
 		})
+	}
+}
+
+// TestRejectedCommandLineStillProducesAnEnvelope holds decision D-15 to its
+// word for the one failure that never reaches a command body.
+//
+// A caller that parses stdout on a non-zero exit used to get a parse error
+// rather than an envelope, because cobra rejected the line before anything could
+// write one (finding F08). The --json position rows are the reason the decision
+// is taken from the raw command line and not from the flag set: pflag stops at
+// the first flag it does not know, so reading Changed() would emit the envelope
+// for `--json --nope` and swallow it for `--nope --json`.
+func TestRejectedCommandLineStillProducesAnEnvelope(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+	}{
+		{name: "unknown subcommand", command: []string{"frobnicate", "--json"}},
+		{name: "unknown flag after --json", command: []string{"status", "--json", "--nope"}},
+		{name: "unknown flag before --json", command: []string{"status", "--nope", "--json"}},
+		{name: "surplus argument", command: []string{"init", "extraarg", "--json"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newInitializedRepo(t)
+
+			got := run(t, repo, tc.command...)
+			got.requireExit(t, app.ExitUsage)
+
+			payload := got.errorPayload(t)
+			if payload.Code != app.CodeCommandLineInvalid {
+				t.Errorf("code = %q, want %q", payload.Code, app.CodeCommandLineInvalid)
+			}
+			if payload.Why == "" {
+				t.Error("the envelope does not say what was wrong with the command line")
+			}
+			if len(payload.NextAction) == 0 {
+				t.Error("the envelope carries no remedy")
+			}
+		})
+	}
+}
+
+// TestRejectedCommandLineStaysSilentOnStdoutWithoutJSON is the other half of the
+// rule above: a caller that did not ask for JSON gets the sentence on stderr and
+// an empty stdout, because stdout carries results and there is no result.
+func TestRejectedCommandLineStaysSilentOnStdoutWithoutJSON(t *testing.T) {
+	repo := newInitializedRepo(t)
+
+	got := run(t, repo, "frobnicate")
+	got.requireExit(t, app.ExitUsage)
+
+	if got.stdout != "" {
+		t.Errorf("stdout is not empty for a rejected command line:\n%s", got.stdout)
 	}
 }
 
@@ -1327,7 +1407,7 @@ func run(t *testing.T, dir string, args ...string) result {
 func runWith(t *testing.T, dir string, options cli.Options, args ...string) result {
 	t.Helper()
 
-	root := cli.NewRootCommandWith(options)
+	root := cli.NewRootWith(options)
 	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)

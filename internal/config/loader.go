@@ -211,7 +211,7 @@ func applyFile(path string, cfg *Config, provenance Provenance, source Source) (
 		return false, nil
 	}
 	if err != nil {
-		return false, configError(path, "cannot be read: "+err.Error(), nil)
+		return false, configOpenError(path, err)
 	}
 
 	decoder := toml.NewDecoder(bytes.NewReader(data))
@@ -297,4 +297,52 @@ func configError(path, problem string, cause error) error {
 		err = err.WithCause(cause)
 	}
 	return err
+}
+
+// configOpenError reports a configuration file that could not be opened at all.
+//
+// This is not the condition CONFIG_INVALID usually describes, and it must not
+// borrow its remedy. A file whose contents are wrong is fixed by editing an
+// entry in it; a file at mode 0000, or a directory standing where the file
+// belongs, has no entry to edit and cannot be opened to look for one. Printing
+// "Fix or remove the offending entry in <path>" for those told the reader to
+// carry out an action that fails with the very errno that produced the report,
+// and it did so on all three of init, status and doctor, so the agreement matrix
+// saw three commands agreeing on a remedy none of them could clear (finding F02).
+//
+// The code stays CONFIG_INVALID and the kind stays Usage: this is still the
+// configuration refusing to load, and decision D-03 puts that at exit 2. What
+// changes is that the sentence and the remedy come from
+// filesystem.ClassifyRefusal — the same classifier that already names the
+// condition for .mindrail itself, for .mindrail/knowledge and for the record
+// buckets under it — so the one path in the tree that still guessed now asks.
+//
+// An unrecognised cause keeps the generic sentence and the permission remedy,
+// which is the honest default: EACCES is what almost every unreadable file is,
+// and the cause string travels on the wire beside it.
+func configOpenError(path string, cause error) error {
+	why := path + " cannot be read: " + cause.Error()
+	next := []string{"Check the permissions on " + path}
+
+	switch filesystem.ClassifyRefusal(cause) {
+	case filesystem.BarrierObstruction:
+		why = path + " is not a readable file: " + cause.Error()
+		next = []string{"Remove or move aside " + path + ", so that Mindrail can write a configuration file there"}
+	case filesystem.BarrierPermission:
+		why = path + " cannot be read: " + cause.Error()
+		next = []string{"Check the permissions on " + path}
+	case filesystem.BarrierReadOnlyMedia:
+		why = path + " is on a read-only filesystem and could not be read: " + cause.Error()
+		next = []string{"Remount the filesystem holding " + path + " read-write, or move this repository to a writable location"}
+	}
+
+	return app.NewError(
+		app.CodeConfigInvalid,
+		app.KindUsage,
+		why,
+		"Mindrail refuses to run on a configuration it cannot fully interpret, because a silently dropped setting can weaken a repository safety rule.",
+		next...,
+	).WithMetadata("path", path).
+		WithMetadata("barrier", string(filesystem.ClassifyRefusal(cause))).
+		WithCause(cause)
 }
