@@ -33,6 +33,10 @@ var (
 	// for the other — and a caller that matched on ErrDiskFull would inherit the
 	// wrong one (finding F03).
 	ErrSizeLimit = errors.New("a size limit refused the runtime database its shared-memory index")
+
+	// ErrCheckpointFailed means the write-ahead log could not be written back
+	// into the database file for a reason none of the conditions above names.
+	ErrCheckpointFailed = errors.New("the write-ahead log could not be checkpointed")
 )
 
 // IsBusy reports whether err is SQLite saying another connection holds the

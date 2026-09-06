@@ -54,16 +54,16 @@ func TestAgreementOnAHostileFilesystem(t *testing.T) {
 		runHostileAgreement(t, mount)
 		return
 	}
-	spawnHostileAgreement(t)
+	spawnHostileChild(t, hostileMountEnv)
 }
 
-// spawnHostileAgreement re-runs this one test inside a user and mount namespace.
+// spawnHostileChild re-runs the calling test inside a user and mount namespace.
 //
 // It re-executes the test binary rather than doing the work here because the
 // states only exist inside a namespace this process cannot enter: unshare(2)
 // applies to the calling process, and a Go test binary is already multi-threaded
 // by the time a test runs.
-func spawnHostileAgreement(t *testing.T) {
+func spawnHostileChild(t *testing.T, mountEnv string) {
 	if testing.Short() {
 		t.Skip("mounts a filesystem in a user namespace")
 	}
@@ -89,7 +89,7 @@ func spawnHostileAgreement(t *testing.T) {
 
 	cmd := exec.Command(unshare, "--user", "--map-root-user", "--mount", "--",
 		binary, "-test.run=^"+t.Name()+"$", "-test.v")
-	cmd.Env = append(os.Environ(), hostileMountEnv+"="+mount)
+	cmd.Env = append(os.Environ(), mountEnv+"="+mount)
 	out, runErr := cmd.CombinedOutput()
 
 	var exitErr *exec.ExitError
@@ -97,7 +97,113 @@ func spawnHostileAgreement(t *testing.T) {
 		t.Fatalf("spawn: %v", runErr)
 	}
 	if cmd.ProcessState.ExitCode() != 0 {
-		t.Fatalf("the hostile-filesystem agreement rows failed:\n%s", strings.TrimSpace(string(out)))
+		t.Fatalf("the hostile-filesystem rows failed:\n%s", strings.TrimSpace(string(out)))
+	}
+}
+
+// readyBandMountEnv is the second mount handed to a namespace child, for the
+// rows below. It is a separate variable so that one child runs one test.
+const readyBandMountEnv = "MINDRAIL_TEST_CLI_READY_BAND_MOUNT"
+
+// TestInitNeverCallsARepositoryReadyTheNextCommandRefuses is finding F01.
+//
+// `mindrail init` used to take the reading its terminal line is derived from
+// while its own last write was still ahead of it: the write-ahead log was on
+// disk and the checkpoint that folds it back into the database file had not
+// happened yet. On a filesystem with room for the log and not for the
+// checkpoint, that reading was taken over a few kilobytes that were about to be
+// spent, and init printed READY FOR TARGETED WORK at exit 0 over a repository
+// `status`, run a moment later on bytes nothing had touched in between, refused
+// at exit 4. A CI step gated on `mindrail init` passed on a machine where every
+// later Mindrail command failed.
+//
+// The invariant is deliberately weaker than "init succeeds": on a filesystem
+// this close to full, init failing is a correct answer and so is init
+// succeeding. What it may not do is disagree with the command that runs next
+// over a disk neither of them changed.
+//
+// The headroom is swept rather than named. The band's edges depend on the page
+// size, on how many migrations ship in this binary and on how much log SQLite
+// decides to keep, so a single number would be a row that stops reproducing the
+// first time any of the three moves. The wide end is the over-fire guard: at a
+// quarter-megabyte free everything has to work.
+func TestInitNeverCallsARepositoryReadyTheNextCommandRefuses(t *testing.T) {
+	if mount := os.Getenv(readyBandMountEnv); mount != "" {
+		if err := os.Unsetenv(readyBandMountEnv); err != nil {
+			t.Fatalf("Unsetenv %s = %v, want no error", readyBandMountEnv, err)
+		}
+		runReadyBand(t, mount)
+		return
+	}
+	spawnHostileChild(t, readyBandMountEnv)
+}
+
+func runReadyBand(t *testing.T, mount string) {
+	if err := syscall.Mount("tmpfs", mount, "tmpfs", 0, hostileMountSize); err != nil {
+		t.Skipf("mount tmpfs on %s: %v", mount, err)
+	}
+
+	for _, headroom := range []int64{112, 120, 124, 128, 132, 140, 148, 256} {
+		t.Run(fmt.Sprintf("%d KiB free", headroom), func(t *testing.T) {
+			repo := hostileRepo(t, mount, hostileCondition{}, fmt.Sprintf("ready-band-%d", headroom))
+			leaveHostileHeadroom(t, mount, headroom<<10)
+			t.Cleanup(func() { emptyHostileMount(t, mount) })
+
+			gotInit := runWith(t, repo, cli.Options{}, "init", "--json")
+			initAnswer := answerFrom(t, repo, "init", gotInit)
+
+			gotStatus := runWith(t, repo, cli.Options{}, "status", "--json")
+			statusAnswer := answerFrom(t, repo, "status", gotStatus)
+
+			if initAnswer.exit == app.ExitSuccess && statusAnswer.exit != app.ExitSuccess {
+				t.Fatalf("with %d KiB free, `init` exited 0 and `status` exited %d (%s) on the same disk;\n"+
+					"init said: %s\nstatus said: %s",
+					headroom, statusAnswer.exit, statusAnswer.code, gotInit.stdout, gotStatus.stdout)
+			}
+			if initAnswer.exit != app.ExitSuccess && statusAnswer.exit != app.ExitSuccess {
+				assertSameAnswer(t, fmt.Sprintf("%d KiB free", headroom),
+					"init", initAnswer, "status", statusAnswer)
+			}
+
+			// The wide end is the over-fire guard: a quarter of a megabyte is
+			// room enough for everything MR-001 writes, and a change that made
+			// init pessimistic would show up here rather than in production.
+			if headroom == 256 && initAnswer.exit != app.ExitSuccess {
+				t.Fatalf("with %d KiB free, `init` exited %d (%s); there is room for everything it writes\n%s",
+					headroom, initAnswer.exit, initAnswer.code, gotInit.stdout)
+			}
+
+			// The remedy, carried out: freeing the space has to end the
+			// condition for a repository init has already been run in.
+			if initAnswer.exit != app.ExitSuccess {
+				emptyHostileMount(t, mount)
+				for _, command := range commandsUnderTest {
+					if got := run(t, repo, command); got.code != app.ExitSuccess {
+						t.Fatalf("after carrying out the remedy %v, `%s` exited %d: %v\n%s",
+							initAnswer.nextAction, command, got.code, got.err, got.stdout)
+					}
+				}
+			}
+		})
+	}
+}
+
+// leaveHostileHeadroom fills the mount and then gives exactly headroom bytes
+// back, which is how a precise amount of free space is arranged without having
+// to know the overhead of everything else already on it.
+func leaveHostileHeadroom(t *testing.T, mount string, headroom int64) {
+	t.Helper()
+	fillHostileMountTo(t, mount, 0)
+
+	info, err := os.Stat(hostileFillerPath(mount))
+	if err != nil {
+		t.Fatalf("stat the filler: %v", err)
+	}
+	if err := os.Truncate(hostileFillerPath(mount), max(info.Size()-headroom, 0)); err != nil {
+		t.Fatalf("give headroom back: %v", err)
+	}
+	if free := hostileAvailableBytes(mount); free <= 0 {
+		t.Fatalf("wanted %d bytes free, the filesystem reports %d", headroom, free)
 	}
 }
 

@@ -56,10 +56,28 @@ func runInit(cmd *cobra.Command, o Options) error {
 	defer shutdown(cmd.Context(), application, inv.logger)
 
 	return application.Run(cmd.Context(), func(ctx context.Context, a *bootstrap.App) error {
+		// init's own last write, made before the reading rather than after it.
+		//
+		// Everything below reads the disk to decide what `init` achieved, and
+		// until this call the answer was taken while a write-ahead log this
+		// command had produced was still waiting to be folded back in by the
+		// close. The reading described a filesystem the process was about to
+		// change, and on a nearly-full one it described it wrongly: READY at
+		// exit 0, and `status` on the identical bytes at exit 4 (finding F01).
+		flushErr := a.Flush(ctx)
+
 		// The verdict comes from the doctor checks rather than from the start
 		// error directly, so `init`, `status` and `doctor` can never report
 		// different codes for the same broken installation.
 		_, verdict := a.Diagnosis(ctx)
+
+		// The checks run after the flush, so a failure the flush caused is
+		// normally already in the verdict, said in the vocabulary status and
+		// doctor use. This is the case they cannot see: a write that failed for
+		// a reason no probe of the finished disk reveals.
+		if verdict == nil {
+			verdict = flushErr
+		}
 		elapsed := time.Since(started)
 
 		report := initReportOf(a, verdict, elapsed)

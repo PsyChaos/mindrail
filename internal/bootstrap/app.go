@@ -252,6 +252,40 @@ func (a *App) Diagnosis(ctx context.Context) (doctor.Report, error) {
 	return report, a.Diagnose(doctor.Verdict(a.doctorSubject, report))
 }
 
+// Flush makes this command's last write happen before its verdict is taken,
+// rather than after.
+//
+// It is here rather than folded into Shutdown because the ordering is the whole
+// point. Shutdown runs after the report has been rendered, and closing a WAL
+// database is itself a write — SQLite checkpoints the log into the main file —
+// so a command whose only remaining write was its own teardown published a
+// reading of a disk it was about to change. On a filesystem with room for the
+// log and not for the checkpoint, `mindrail init` printed READY FOR TARGETED
+// WORK and exit 0 over a repository that `status`, run a moment later on bytes
+// nothing else had touched, refused at exit 4 (finding F01).
+//
+// A command that never opened a database has nothing to flush and gets nil. A
+// checkpoint another connection is holding up is reported as a warning rather
+// than a verdict: the log stays where it is, the next writer moves it, and
+// nothing about the repository is wrong.
+func (a *App) Flush(ctx context.Context) error {
+	db := a.DB()
+	if db == nil {
+		return nil
+	}
+
+	result, err := storage.Checkpoint(ctx, db)
+	if err != nil {
+		return err
+	}
+	if result.Busy {
+		a.logger.Debug("write-ahead log left in place",
+			slog.Int("log_frames", result.LogFrames),
+			slog.Int("checkpointed_frames", result.CheckpointedFrames))
+	}
+	return nil
+}
+
 // errShutdownTimeout reports a shutdown that outlived its budget. It is a
 // distinct value so a caller can tell "the database refused to close" from "we
 // stopped waiting for it".
