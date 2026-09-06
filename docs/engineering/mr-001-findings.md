@@ -98,9 +98,23 @@ and took the last of the space with them.
 **Closed by** `bootstrap.App.Flush`, called by `runInit` before the report is
 built. It runs `PRAGMA wal_checkpoint(TRUNCATE)`, so init's last write happens
 before the reading that describes it, and a checkpoint that fails is classified
-through `storage.WriteFailure` like every other refused write. The invariant the
-comment in `internal/cli/init.go` had always asserted — that init, status and
-doctor cannot report different codes for one broken installation — is now true.
+through `storage.WriteFailure` like every other refused write.
+
+**What is closed, precisely.** The direction the finding is about — `init`
+reporting READY over a repository the next command refuses — is gone across the
+whole band. The blanket claim that "init, status and doctor cannot report
+different codes for one broken installation" was *also* written here, and it is
+false: below about 100 KiB free, `init` refuses with RUNTIME_PATH_UNWRITABLE
+while `status` exits 0 reporting an uninitialised repository and offering
+`mindrail init`. That is not this finding coming back. It is the documented
+trade-off in `filesystem.FreeSpace.Exhausted`, which calls a filesystem full
+only at zero bytes so that a nearly-full machine is not reported as broken:
+`status` observes a repository that genuinely has not been initialised, and
+decision D-03 puts that at exit 0. What matters is that the reader gets out, and
+they do — running the `mindrail init` `status` offers prints the space condition
+and the remedy that clears it. `assertTheLoopTerminates` asserts exactly that,
+and the sweep now runs down to 8 KiB so the direction is covered rather than
+assumed.
 
 **Fails if it regresses:** `TestInitNeverCallsARepositoryReadyTheNextCommandRefuses`
 (`internal/cli/agreement_hostilefs_linux_test.go`). It mounts a tmpfs in a user

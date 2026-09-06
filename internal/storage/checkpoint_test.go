@@ -2,11 +2,14 @@ package storage_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
@@ -118,10 +121,17 @@ func TestCheckpointGivesUpOnAHeldDatabaseRatherThanWaitingForIt(t *testing.T) {
 		if !result.Busy {
 			t.Error("Checkpoint reported success while another connection held a read transaction")
 		}
-		// Generous against a loaded machine, and still an order of magnitude
-		// below the five-second timeout the wait used to inherit.
-		if budget := 20 * storage.CheckpointBudget; elapsed > budget {
-			t.Errorf("Checkpoint waited %v for a held database, want well under %v", elapsed, budget)
+		// An absolute bound, not one derived from the constant under test.
+		// `20 * storage.CheckpointBudget` was an equation: raising the budget
+		// back to the five seconds it used to inherit raised the bound with it,
+		// and the test passed in 5.02 seconds while reporting success. Two
+		// seconds is generous against a loaded machine and still less than half
+		// the regression it exists to catch.
+		const bound = 2 * time.Second
+		if elapsed > bound {
+			t.Errorf("Checkpoint waited %v for a held database, want under %v; "+
+				"one held read lock must not cost `mindrail init` the database's whole busy timeout",
+				elapsed, bound)
 		}
 	})
 
@@ -138,6 +148,122 @@ func TestCheckpointGivesUpOnAHeldDatabaseRatherThanWaitingForIt(t *testing.T) {
 			t.Error("a cancelled checkpoint reported success; the log is still where it was")
 		}
 	})
+}
+
+// TestAFailedCheckpointIsReportedAsOne covers the statement's own failure,
+// which nothing reached.
+//
+// The Flush test one package up observes an error, but the error it observes is
+// the pool's: a closed database fails at `db.Conn` and never runs the pragma.
+// Making the scan's error return nil therefore passed everywhere, so the
+// diagnosis built for a checkpoint that ran and was refused — the one condition
+// this function exists to name — was unreachable.
+//
+// A write-ahead log overwritten with something that is not one is the cheapest
+// way to make the statement itself fail, and it is a real shape: a log is an
+// ordinary file beside the database and nothing stops a backup tool, an editor
+// or another program from writing to it.
+func TestAFailedCheckpointIsReportedAsOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	db, err := storage.Open(t.Context(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatalf("storage.Open = %v, want no error", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE probe (x INTEGER)`); err != nil {
+		t.Fatalf("CREATE TABLE = %v, want no error", err)
+	}
+	for range 8 {
+		if _, err := db.ExecContext(t.Context(), `INSERT INTO probe (x) VALUES (1)`); err != nil {
+			t.Fatalf("INSERT = %v, want no error", err)
+		}
+	}
+
+	if err := os.WriteFile(path+"-wal", []byte("not a write-ahead log at all"), 0o600); err != nil {
+		t.Fatalf("overwrite the log: %v", err)
+	}
+
+	result, err := storage.Checkpoint(t.Context(), db.DB)
+	if err == nil {
+		t.Fatalf("Checkpoint = nil over a log it could not read; result %+v", result)
+	}
+	if result.Busy {
+		t.Error("the failure was reported as contention, which clears on its own and this does not")
+	}
+	if !errors.Is(err, storage.ErrCheckpointFailed) {
+		t.Errorf("Checkpoint = %v, want errors.Is(err, ErrCheckpointFailed)", err)
+	}
+
+	payload, ok := app.PayloadOf(err)
+	if !ok {
+		t.Fatalf("Checkpoint = %v, which carries no domain payload for a command to render", err)
+	}
+	if len(payload.NextAction) == 0 {
+		t.Error("the failure carries no remedy")
+	}
+	if payload.Cause == "" {
+		t.Error("the failure drops the driver's own message, which is the only thing that says why")
+	}
+}
+
+// TestCheckpointHandsTheConnectionBackAsItFoundIt is the restore, which nothing
+// could fail.
+//
+// The budget is a property of a connection, and the connection goes back to a
+// pool the next writer draws from. Stubbing the restore out left every pooled
+// connection carrying 250 ms where the database's own timeout is five seconds,
+// so the next caller's wait was twenty times short — and the whole suite stayed
+// green while the comment on the restore asserted exactly this.
+func TestCheckpointHandsTheConnectionBackAsItFoundIt(t *testing.T) {
+	const connections = 4
+
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	db, err := storage.Open(t.Context(), storage.Options{
+		Path:         path,
+		BusyTimeout:  5 * time.Second,
+		MaxOpenConns: connections,
+	})
+	if err != nil {
+		t.Fatalf("storage.Open = %v, want no error", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE probe (x INTEGER)`); err != nil {
+		t.Fatalf("CREATE TABLE = %v, want no error", err)
+	}
+	if _, err := storage.Checkpoint(t.Context(), db.DB); err != nil {
+		t.Fatalf("Checkpoint = %v, want no error", err)
+	}
+
+	// Every connection in the pool, because the checkpoint borrows one of them
+	// and which one is the pool's business. Holding them all at once is what
+	// makes the answer about the pool rather than about whichever connection
+	// happened to be handed back first.
+	held := make([]*sql.Conn, 0, connections)
+	defer func() {
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+
+	for i := range connections {
+		conn, err := db.Conn(t.Context())
+		if err != nil {
+			t.Fatalf("check out connection %d: %v", i, err)
+		}
+		held = append(held, conn)
+
+		var timeout int64
+		if err := conn.QueryRowContext(t.Context(), `PRAGMA busy_timeout`).Scan(&timeout); err != nil {
+			t.Fatalf("read busy_timeout on connection %d: %v", i, err)
+		}
+		if want := (5 * time.Second).Milliseconds(); timeout != want {
+			t.Errorf("connection %d came out of the pool with busy_timeout = %d, want %d; "+
+				"the checkpoint's budget escaped onto a connection the next writer will use",
+				i, timeout, want)
+		}
+	}
 }
 
 func fileSize(t *testing.T, path string) int64 {

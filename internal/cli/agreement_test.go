@@ -59,18 +59,13 @@ type condition struct {
 	// loader's remedy with "Reinstall Mindrail from your package manager" left
 	// the whole suite green (finding F05).
 	remedy remedyClass
-	// carriedOutDifferently states why clear does something other than what the
-	// report printed, for the rows where the printed remedy is real and no test
-	// can perform it. Declaring it is how such a row stays honest; the
-	// alternative — silently substituting a different action — is the defect.
-	//
-	// It does NOT excuse the row from declaring its remedy class. It used to:
-	// the field was free text and setting it skipped the assertion entirely, so
-	// any future row could silence the check with a sentence, and applying
-	// finding F05's own mutation alongside it left the suite green. The class is
-	// asserted either way; this only explains the divergence between the printed
-	// remedy and what clear does about it.
-	carriedOutDifferently string
+	// A row whose clear does something other than what the report printed says
+	// so in a comment on the row. There was a field for it, and the field was
+	// worse than nothing: free text that skipped the class assertion entirely,
+	// so any future row could silence the check with a sentence — applying
+	// finding F05's own mutation alongside it left the suite green. Once the
+	// class is asserted unconditionally there is nothing left for it to carry
+	// that a comment does not carry better.
 	// separately names a command whose answer legitimately differs from the ones
 	// that agree, and states why in the row.
 	//
@@ -158,51 +153,86 @@ func TestOneConditionIsNamedTheSameWayByEveryCommand(t *testing.T) {
 	}
 }
 
-// The remedy classes only this matrix asks about.
+// agreementRemedyClass reads a next_action list as the class of its first
+// classifiable sentence.
 //
-// coherence_test.go's classifier reads the sentences that name a path, because
-// that is what a path-level contradiction is made of. These four name no path —
-// they send the reader into the configuration file, back to `mindrail init`, or
-// to a newer binary — so they are invisible to it and would all read as
-// classUnknown, which asserts nothing.
-const (
-	classEditConfig remedyClass = "correct the entry the report named"
-	classRebuild    remedyClass = "move the runtime database aside and run mindrail init"
-	classUpgrade    remedyClass = "upgrade to a binary that reads these records"
-	classContain    remedyClass = "put the path back inside the repository"
-)
-
-// agreementRemedyPhrases extends coherence_test.go's table with the four above,
-// most specific first. A phrase that appears in neither table classifies as
-// nothing, which is the honest failure: an unrecognised remedy is not read as
-// agreeing with the row, it makes the row fail until somebody writes it down.
-var agreementRemedyPhrases = []struct {
-	phrase string
-	class  remedyClass
-}{
-	{"to rebuild it", classRebuild},
-	{"then run `mindrail init`", classRebuild},
-	{"fix or remove the offending entry", classEditConfig},
-	{"upgrade mindrail", classUpgrade},
-	{"use a path inside the repository", classContain},
-}
-
-// agreementRemedyClass reads a next_action list the way this matrix needs it:
-// the shared classifier first, so that a condition both tests know is named the
-// same way by both, then the four remedies only this one asks about.
+// It used to consult a private table of its own, holding the four remedies the
+// shared classifier did not know. That split was the defect: this side could
+// tell a rebuild from an upgrade while coherence_test.go's path comparison could
+// tell neither from nothing, so an entire vocabulary of real remedies was
+// invisible to the invariant that compares what two documents say about one
+// path. There is one table now, in coherence_test.go, and both read it.
 func agreementRemedyClass(actions []string) remedyClass {
 	for _, action := range actions {
 		if class := classOf(action); class != classUnknown {
 			return class
 		}
-		lowered := strings.ToLower(action)
-		for _, candidate := range agreementRemedyPhrases {
-			if strings.Contains(lowered, candidate.phrase) {
-				return candidate.class
+	}
+	return classUnknown
+}
+
+// TestEveryRemedyThatNamesAPathIsClassified is the harvest that stops the
+// classifier drifting away from the binary.
+//
+// The table in coherence_test.go is only worth what its coverage of the real
+// sentences is worth, and it was tested with invented ones: rewording all three
+// `Make <path> writable.` sites passed the whole suite, and five real
+// path-naming remedies classified as nothing at all. A remedy the table does not
+// recognise is not read as disagreeing — it is read as silence — so the
+// contradiction check simply stops looking at those paths.
+//
+// This drives every condition the matrix knows, collects what the binary
+// actually printed, and requires each sentence that names a path to be one the
+// table can read. A new remedy either gets a class or fails here.
+func TestEveryRemedyThatNamesAPathIsClassified(t *testing.T) {
+	seen := 0
+
+	// Deliberately not subtests: the setups are ordinary helpers on the test
+	// they are handed, and a harvest that counted in a subtest and checked the
+	// count in the parent would be reading it before the rows had finished.
+	//
+	// The envelope is read raw rather than through answerOf, which folds the
+	// repository root out to `<REPO>` so three commands in three fresh
+	// repositories can be compared. That normalisation is right for the
+	// comparison and wrong here: the question is which remedies name an
+	// absolute path, and the answer has to be about the paths the binary
+	// actually printed.
+	for _, tc := range agreementConditions() {
+		if !tc.broken {
+			continue
+		}
+
+		repo := tc.setup(t)
+		for _, command := range commandsUnderTest {
+			got := runWith(t, repo, tc.options, command, "--json")
+
+			var envelope struct {
+				Error *app.ErrorPayload `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(got.stdout), &envelope); err != nil {
+				t.Fatalf("%s/%s: stdout is not a JSON envelope: %v\n%s", tc.name, command, err, got.stdout)
+			}
+			if envelope.Error == nil {
+				continue
+			}
+
+			for _, action := range envelope.Error.NextAction {
+				if len(absolutePathsIn(action)) == 0 {
+					continue
+				}
+				seen++
+				if classOf(action) == classUnknown {
+					t.Errorf("%s: `%s` prints %q, which names a path and classifies as nothing; "+
+						"the contradiction check cannot see this remedy at all", tc.name, command, action)
+				}
 			}
 		}
 	}
-	return classUnknown
+
+	if seen == 0 {
+		t.Fatal("no path-naming remedy was harvested, so this proves nothing")
+	}
+	t.Logf("classified %d path-naming remedies", seen)
 }
 
 // assertRemedyIsWhatTheRowExpects holds the printed remedy to the class the row
@@ -565,13 +595,12 @@ func knowledgeConditions() []condition {
 			name:   "a knowledge record written by a newer schema than this binary reads",
 			broken: true,
 			remedy: classUpgrade,
-			// The report tells the reader to upgrade the binary, which is the
-			// right instruction and one no test can carry out. Deleting the
-			// record clears the condition by removing what the newer schema
-			// wrote, which is a different action, and finding F05 is that the
-			// matrix used to make that substitution silently.
-			carriedOutDifferently: "upgrading the binary is not an action a test can perform; " +
-				"clear deletes the record the newer schema wrote instead",
+			// Carried out differently, deliberately: the report tells the reader
+			// to upgrade the binary, which is the right instruction and one no
+			// test can perform. clear deletes the record the newer schema wrote,
+			// which is a different action that clears the same condition.
+			// Finding F05 is that the matrix used to make this substitution
+			// silently, for every row; the class above is asserted either way.
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
 				writeKnowledgeRecord(t, repo, "DEC-0001.json", futureSchemaRecord)

@@ -156,9 +156,18 @@ func (inv invocation) refuseUnrepresentableRepository(ctx context.Context) error
 // discarded and leave `init` reporting a repository it could not finish writing
 // as ready.
 //
+// It is a fail-safe rather than a live branch, and saying so is the honest
+// record: no repository state MR-001 can reach produces a flush failure the
+// checks cannot also see, so passing `nil` for the second argument at the call
+// site changes no observable behaviour. That is a fact about this milestone's
+// small set of write failures, not a property to rely on — a later milestone
+// that writes more will reach it — and the cost of keeping the fold is one unit
+// test rather than a repository reporting as ready something it never finished
+// writing.
+//
 // It is a function of two errors rather than three lines inside the callback
-// because that is what makes the second case reachable at all: no test produced
-// it, so dropping the fold entirely left the suite green.
+// because that is what makes both cases reachable from a value at all: no
+// command produced the second, so dropping the fold left the suite green.
 func initVerdict(checked, flush error) error {
 	if checked != nil {
 		return checked

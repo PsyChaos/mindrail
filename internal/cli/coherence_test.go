@@ -255,6 +255,19 @@ const (
 	classPermission  remedyClass = "change the permissions on"
 	classSpace       remedyClass = "free space on"
 	classReadOnly    remedyClass = "remount"
+
+	// The five below were a second, private table owned by the agreement
+	// matrix, which is how the invariant on this side came to be blind to them:
+	// the matrix could tell a rebuild from an upgrade while
+	// contradictoryPathRemedies could not tell either from nothing. A remedy
+	// this table does not recognise is not read as agreeing — it asserts
+	// nothing — so a whole vocabulary sitting outside it is a whole vocabulary
+	// the path comparison cannot see.
+	classRebuild    remedyClass = "move the runtime database aside and run mindrail init"
+	classEditConfig remedyClass = "correct the entry the report named"
+	classContain    remedyClass = "put the path back inside the repository"
+	classUpgrade    remedyClass = "upgrade to a binary that reads these records"
+	classEnterable  remedyClass = "make sure the path exists and can be entered"
 )
 
 // remedyPhrases maps the sentences this binary actually prints onto the class
@@ -274,10 +287,16 @@ var remedyPhrases = []struct {
 	{containing("repoint the link"), classRelink},
 	{containing("remount the filesystem"), classReadOnly},
 	{containing("free space on"), classSpace},
+	// Before "move aside": "Move <db> aside and run `mindrail init` to rebuild
+	// it" is a rebuild, not an obstruction, and the two have different remedies.
+	// "Remove or move aside the directory at <db>, then run `mindrail init`."
+	// keeps the obstruction class it declares, because removing the directory is
+	// the action and the init is the consequence.
+	{containing("to rebuild it"), classRebuild},
 	{containing("move aside"), classObstruction},
 	{containing("restore write permission on"), classPermission},
 	{containing("check the permissions on"), classPermission},
-	// "Make <path> writable." and "Make <path> usable." are the doctor checks'
+	// "Make <path> writable.", "usable." and "readable." are the doctor checks'
 	// own phrasing, and they are matched as that shape rather than as the bare
 	// substring "make ".
 	//
@@ -287,6 +306,11 @@ var remedyPhrases = []struct {
 	// any sentence at all that happened to contain it — the check those rows
 	// exist to perform, defeated by an English verb.
 	{makesSomethingUsable, classPermission},
+	{containing("fix or remove the offending entry"), classEditConfig},
+	{containing("upgrade mindrail"), classUpgrade},
+	{containing("use a path inside the repository"), classContain},
+	{containing(`for a ".." segment`), classContain},
+	{containing("is a directory you can enter"), classEnterable},
 }
 
 func containing(phrase string) func(string) bool {
@@ -300,7 +324,12 @@ func makesSomethingUsable(lowered string) bool {
 	if !strings.HasPrefix(lowered, "make ") {
 		return false
 	}
-	return strings.Contains(lowered, " writable") || strings.Contains(lowered, " usable")
+	for _, state := range []string{" writable", " usable", " readable"} {
+		if strings.Contains(lowered, state) {
+			return true
+		}
+	}
+	return false
 }
 
 // classOf reads one action sentence.

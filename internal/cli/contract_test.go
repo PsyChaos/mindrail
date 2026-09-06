@@ -1411,6 +1411,88 @@ func TestTheCommandsThatWorkedStillWork(t *testing.T) {
 	}
 }
 
+// TestOneTreeCanBeExecutedTwice pins the idempotence guard on the
+// classification, which nothing executed twice.
+//
+// classifyArgs runs at execution rather than construction, so a Root used for a
+// second run would wrap every argument check a second time. Making the guard
+// always report "not yet done" — stacking a closure per execution — passed the
+// whole suite, and the stacked wrappers turn one rejection into one envelope per
+// layer.
+func TestOneTreeCanBeExecutedTwice(t *testing.T) {
+	repo := newInitializedRepo(t)
+
+	root := cli.NewRootWith(cli.Options{})
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+
+	for run := 1; run <= 2; run++ {
+		stdout.Reset()
+		stderr.Reset()
+		root.SetArgs([]string{"frobnicate", "--json", "-C", repo})
+
+		err := root.ExecuteContext(t.Context())
+		if got := app.ExitCode(err); got != app.ExitUsage {
+			t.Fatalf("run %d: exit = %d, want %d", run, got, app.ExitUsage)
+		}
+
+		decoder := json.NewDecoder(strings.NewReader(stdout.String()))
+		var envelope map[string]any
+		if err := decoder.Decode(&envelope); err != nil {
+			t.Fatalf("run %d: stdout is not a JSON object: %v\n%s", run, err, stdout.String())
+		}
+		if _, err := decoder.Token(); err != io.EOF {
+			t.Fatalf("run %d: stdout carries more than one JSON value, so the classification stacked:\n%s",
+				run, stdout.String())
+		}
+	}
+}
+
+// TestShellCompletionStillOffersCommands guards the surface a user meets before
+// they ever run a command.
+//
+// Replacing cobra's help command to make `mindrail help bogus` exit 2 silently
+// dropped the completion function that came with it, so `mindrail help <TAB>`
+// stopped offering command names and started offering filenames — a regression
+// invisible to every other test, because nothing here had ever driven the
+// completion protocol.
+func TestShellCompletionStillOffersCommands(t *testing.T) {
+	repo := newInitializedRepo(t)
+
+	tests := []struct {
+		name    string
+		command []string
+		want    string
+	}{
+		{name: "the commands themselves", command: []string{"__complete", ""}, want: "status"},
+		{name: "help topics", command: []string{"__complete", "help", ""}, want: "status"},
+		{name: "a help topic prefix", command: []string{"__complete", "help", "sta"}, want: "status"},
+		{name: "completion shells", command: []string{"__complete", "completion", ""}, want: "bash"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Not through run(): it appends `-C <dir>`, and everything after
+			// `__complete` is the line being completed, so the trailing flag
+			// would be the word under the cursor. Completion never touches the
+			// repository, so it needs no directory.
+			got := runBare(t, repo, tc.command...)
+			got.requireExit(t, app.ExitSuccess)
+
+			if !strings.Contains(got.stdout, tc.want) {
+				t.Errorf("completion output does not offer %q:\n%s", tc.want, got.stdout)
+			}
+			// ShellCompDirectiveDefault is 0, and it is what makes a shell fall
+			// back to filenames. Anything this binary completes has a fixed set
+			// of answers, so none of them may end there.
+			if strings.HasSuffix(strings.TrimSpace(got.stdout), ":0") {
+				t.Errorf("completion returned the default directive, so the shell will offer filenames:\n%s", got.stdout)
+			}
+		})
+	}
+}
+
 // TestRejectedCommandLineStaysSilentOnStdoutWithoutJSON is the other half of the
 // rule above: a caller that did not ask for JSON gets the sentence on stderr and
 // an empty stdout, because stdout carries results and there is no result.
@@ -1495,10 +1577,18 @@ func TestEveryRemedyAboutAFileNamesThatFileAbsolutely(t *testing.T) {
 				got := run(t, repo, command, "--json")
 				payload := got.errorPayload(t)
 
-				remedy := strings.Join(payload.NextAction, "\n")
-				if !strings.Contains(remedy, mustName) {
-					t.Errorf("%s: next_action = %q, which never names %q",
-						command, payload.NextAction, mustName)
+				// The paths are extracted and compared whole, not searched for
+				// as a substring. `strings.Contains(remedy, path)` is satisfied
+				// by any longer path sharing the prefix: changing every emitter
+				// to name `<path>-wal` — a file that is not the broken one —
+				// left the whole suite green.
+				var named []string
+				for _, action := range payload.NextAction {
+					named = append(named, absolutePathsIn(action)...)
+				}
+				if !slices.Contains(named, mustName) {
+					t.Errorf("%s: next_action = %q names %v, which does not include %q",
+						command, payload.NextAction, named, mustName)
 				}
 
 				// The machine-readable half of the same promise. A consumer
@@ -1678,6 +1768,34 @@ func runWith(t *testing.T, dir string, options cli.Options, args ...string) resu
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	root.SetArgs(append(slices.Clone(args), "-C", dir))
+
+	err := root.ExecuteContext(t.Context())
+
+	return result{
+		stdout: stdout.String(),
+		stderr: stderr.String(),
+		err:    err,
+		code:   app.ExitCode(err),
+	}
+}
+
+// runBare drives the command tree with exactly the arguments given, with no
+// `-C` appended. It exists for the completion protocol, where every argument
+// after `__complete` is part of the line being completed rather than a flag the
+// harness may add.
+func runBare(t *testing.T, dir string, args ...string) result {
+	t.Helper()
+
+	root := cli.NewRootWith(cli.Options{})
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs(slices.Clone(args))
+
+	// The completion protocol answers about the tree, not about a repository,
+	// but a command reached through it would still resolve one; keeping the
+	// process directory out of it is what makes the row reproducible.
+	t.Chdir(dir)
 
 	err := root.ExecuteContext(t.Context())
 

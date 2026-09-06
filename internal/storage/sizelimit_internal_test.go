@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
 
 // TestDiskFullOpenFailureAsksTheFilesystemBeforeBlamingIt is finding F03's open
@@ -31,6 +32,7 @@ func TestDiskFullOpenFailureAsksTheFilesystemBeforeBlamingIt(t *testing.T) {
 
 	t.Run("a filesystem with room names the limit and not the disk", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "mindrail.db")
+		requireRoomForTheFixture(t, filepath.Dir(path))
 
 		payload := payloadOf(t, diskFullOpenFailure(path, cause))
 
@@ -85,6 +87,37 @@ func TestDiskFullOpenFailureAsksTheFilesystemBeforeBlamingIt(t *testing.T) {
 	})
 }
 
+// wantShmFloor is the floor, spelled out rather than referred to.
+//
+// Writing `want shmSize` compares the function to the constant it reads, which
+// is an equation and not an assertion: setting shmSize to four kilobytes — the
+// literal over-fire this classification was corrected for — passed the whole
+// suite. The number here is SQLite's, and
+// TestTheSharedMemoryIndexIsStillTheSizeWeBudgetFor proves it is still SQLite's.
+const wantShmFloor = 32 * 1024
+
+// requireRoomForTheFixture keeps the rows below from reporting a defect that is
+// really a full disk under the test.
+//
+// Both of them work by putting a database on the temporary filesystem and asking
+// what the classification says about it, which presumes that filesystem has
+// room. On one with 24 KiB left the first row fails with `condition = disk_full,
+// want size_limit` — the correct answer for that machine, reported as a
+// production defect. A test that cannot arrange its own premise says so instead.
+func requireRoomForTheFixture(t *testing.T, dir string) {
+	t.Helper()
+
+	// The fixture writes a 74 KiB log and needs the shared-memory index's 32 KiB
+	// on top; the rest is headroom so the reading is unambiguous.
+	const needed = 1 << 20
+
+	free := filesystem.ProbeFreeSpace(dir)
+	if free.Known && free.AvailableBytes < needed {
+		t.Skipf("the filesystem under %s reports %d bytes free; this row needs at least %d to say anything",
+			dir, free.AvailableBytes, needed)
+	}
+}
+
 // TestRoomSQLiteWasRefusedCountsWhatSQLiteAsksFor pins the floor the exoneration
 // above is measured against.
 //
@@ -94,18 +127,52 @@ func TestDiskFullOpenFailureAsksTheFilesystemBeforeBlamingIt(t *testing.T) {
 // filesystem where freeing two megabytes cleared it at once.
 func TestRoomSQLiteWasRefusedCountsWhatSQLiteAsksFor(t *testing.T) {
 	dir := t.TempDir()
+	requireRoomForTheFixture(t, dir)
 	path := filepath.Join(dir, "mindrail.db")
 
-	if got := roomSQLiteWasRefused(path); got != shmSize {
-		t.Errorf("with no write-ahead log, roomSQLiteWasRefused = %d, want the shared-memory index's %d", got, shmSize)
+	if got := roomSQLiteWasRefused(path); got != wantShmFloor {
+		t.Errorf("with no write-ahead log, roomSQLiteWasRefused = %d, want the shared-memory index's %d",
+			got, wantShmFloor)
 	}
 
 	const logSize = 74 * 1024
 	if err := os.WriteFile(path+"-wal", make([]byte, logSize), 0o600); err != nil {
 		t.Fatalf("write a fixture log: %v", err)
 	}
-	if got := roomSQLiteWasRefused(path); got != shmSize+logSize {
-		t.Errorf("with a %d-byte log, roomSQLiteWasRefused = %d, want %d", logSize, got, shmSize+logSize)
+	if got := roomSQLiteWasRefused(path); got != wantShmFloor+logSize {
+		t.Errorf("with a %d-byte log, roomSQLiteWasRefused = %d, want %d",
+			logSize, got, wantShmFloor+logSize)
+	}
+}
+
+// TestTheSharedMemoryIndexIsStillTheSizeWeBudgetFor anchors the constant to the
+// driver rather than to a comment.
+//
+// shmSize is a fact about SQLite, not a policy of this package, and the whole
+// exoneration rests on it: a filesystem with less than this much left cannot
+// have supplied the allocation SQLITE_IOERR_SHMSIZE is the failure of. A build
+// against a SQLite whose `-shm` is a different size would make the floor wrong
+// in silence, and the file is on disk to be measured.
+func TestTheSharedMemoryIndexIsStillTheSizeWeBudgetFor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+
+	db, err := Open(t.Context(), Options{Path: path})
+	if err != nil {
+		t.Fatalf("Open = %v, want no error", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE probe (x INTEGER)`); err != nil {
+		t.Fatalf("CREATE TABLE = %v, want no error", err)
+	}
+
+	info, err := os.Stat(path + "-shm")
+	if err != nil {
+		t.Skipf("this build keeps no shared-memory file beside the database: %v", err)
+	}
+	if info.Size() != shmSize {
+		t.Errorf("the shared-memory index is %d bytes, but the classification budgets for %d; "+
+			"a filesystem is exonerated on the strength of this number", info.Size(), shmSize)
 	}
 }
 

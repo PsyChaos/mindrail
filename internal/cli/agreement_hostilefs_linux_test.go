@@ -119,13 +119,24 @@ const hostileRowsRanMarker = "MINDRAIL_HOSTILE_ROWS_RAN"
 
 // reportHostileRowsRan is called by a child once it has actually driven the
 // commands, on the far side of every skip.
-func reportHostileRowsRan(t *testing.T, rows int) {
+func reportHostileRowsRan(t *testing.T, rows *int) {
 	t.Helper()
-	if rows == 0 {
+	if *rows == 0 {
 		t.Fatal("no rows ran, so the scenario proves nothing")
 	}
-	fmt.Printf("%s %d\n", hostileRowsRanMarker, rows)
+	fmt.Printf("%s %d\n", hostileRowsRanMarker, *rows)
 }
+
+// rowRan is the LAST statement of a row body, and it is deliberately not
+// deferred.
+//
+// Counting at the top of the loop counted iterations rather than work: a row
+// that skipped as its first statement still reported itself as having run.
+// Deferring the count did not fix that — `t.Skip` unwinds through Goexit, so
+// deferred calls run — and only a plain call on the far side of the assertions
+// is reached by a row that actually made them. A row that fails aborts before it
+// too, which costs nothing: a failing row already fails the test.
+func rowRan(counter *int) { *counter++ }
 
 // readyBandMountEnv is the second mount handed to a namespace child, for the
 // rows below. It is a separate variable so that one child runs one test.
@@ -172,10 +183,9 @@ func runReadyBand(t *testing.T, mount string) {
 	}
 
 	ran := 0
-	t.Cleanup(func() { reportHostileRowsRan(t, ran) })
+	t.Cleanup(func() { reportHostileRowsRan(t, &ran) })
 
-	for _, headroom := range []int64{112, 120, 124, 128, 132, 140, 148, 256} {
-		ran++
+	for _, headroom := range []int64{8, 24, 44, 48, 80, 112, 120, 124, 128, 132, 140, 148, 256} {
 		t.Run(fmt.Sprintf("%d KiB free", headroom), func(t *testing.T) {
 			repo := hostileRepo(t, mount, hostileCondition{}, fmt.Sprintf("ready-band-%d", headroom))
 			leaveHostileHeadroom(t, mount, headroom<<10)
@@ -197,6 +207,16 @@ func runReadyBand(t *testing.T, mount string) {
 					"init", initAnswer, "status", statusAnswer)
 			}
 
+			// The other direction, which was unasserted: `init` refused and
+			// `status` content. It is allowed — `status` observes a repository
+			// that has genuinely not been initialised, and decision D-03 makes
+			// that exit 0 — but only if its remedy is one a reader can act on.
+			// "Run `mindrail init`" is the command that just failed, so the row
+			// insists the reader be told what will stop it.
+			if initAnswer.exit != app.ExitSuccess && statusAnswer.exit == app.ExitSuccess {
+				assertTheLoopTerminates(t, headroom, repo, initAnswer)
+			}
+
 			// The wide end is the over-fire guard: a quarter of a megabyte is
 			// room enough for everything MR-001 writes, and a change that made
 			// init pessimistic would show up here rather than in production.
@@ -216,7 +236,44 @@ func runReadyBand(t *testing.T, mount string) {
 					}
 				}
 			}
+
+			rowRan(&ran)
 		})
+	}
+}
+
+// assertTheLoopTerminates holds the one case where `init` and `status` are
+// allowed to disagree.
+//
+// On a filesystem too full for `init` and not full enough for the space probe to
+// see it, `status` reports an uninitialised repository at exit 0 and offers
+// `mindrail init` — the command that just failed. That is the shape of finding
+// F12, and the thing that makes it survivable rather than a dead end is that
+// running it says something the reader can act on. The claim is therefore not
+// "the three commands always agree", which is false here; it is that following
+// what they say gets the reader out, and that is what this checks: run init,
+// read what it says, do it, and require the repository to work.
+func assertTheLoopTerminates(t *testing.T, headroom int64, repo string, initAnswer answer) {
+	t.Helper()
+
+	if len(initAnswer.nextAction) == 0 {
+		t.Fatalf("with %d KiB free, `init` refused with no remedy at all while `status` "+
+			"sent the reader to `mindrail init`; there is nowhere to go from here", headroom)
+	}
+	if initAnswer.code == "" {
+		t.Fatalf("with %d KiB free, `init` refused with no code", headroom)
+	}
+
+	// The remedy `init` printed, carried out. Everything the band can produce
+	// here is a space condition, so freeing the space is the action; a remedy
+	// that named something else would be caught by the class assertion in the
+	// agreement matrix rather than here.
+	emptyHostileMount(t, filepath.Dir(repo))
+	for _, command := range commandsUnderTest {
+		if got := run(t, repo, command); got.code != app.ExitSuccess {
+			t.Fatalf("with %d KiB free, after carrying out `init`'s remedy %v, `%s` exited %d: %v\n%s",
+				headroom, initAnswer.nextAction, command, got.code, got.err, got.stdout)
+		}
 	}
 }
 
@@ -272,10 +329,9 @@ func runHostileAgreement(t *testing.T, mount string) {
 	}
 
 	ran := 0
-	t.Cleanup(func() { reportHostileRowsRan(t, ran) })
+	t.Cleanup(func() { reportHostileRowsRan(t, &ran) })
 
 	for _, tc := range hostileConditions() {
-		ran++
 		t.Run(tc.name, func(t *testing.T) {
 			answers := make(map[string]answer, len(commandsUnderTest))
 			for i, command := range commandsUnderTest {
@@ -322,6 +378,8 @@ func runHostileAgreement(t *testing.T, mount string) {
 						tc.name, answers[first].nextAction, command, got.code, got.err, got.stdout)
 				}
 			}
+
+			rowRan(&ran)
 		})
 	}
 }

@@ -110,7 +110,7 @@ func NewRootWith(o Options) *Root {
 	// command line this binary does not understand, and it takes the same
 	// answer as every other one.
 	cmd.SetHelpCommand(&cobra.Command{
-		Use:   "help [command]",
+		Use:   helpCommandName + " [command]",
 		Short: "Help about any command",
 		RunE: func(c *cobra.Command, args []string) error {
 			target, _, err := c.Root().Find(args)
@@ -120,6 +120,11 @@ func NewRootWith(o Options) *Root {
 			}
 			return target.Help()
 		},
+		// Carried over from the command this replaces. Without it, `mindrail
+		// help <TAB>` stopped offering command names and started offering
+		// filenames: cobra's own help command supplies this function, and
+		// SetHelpCommand replaces the whole command rather than part of it.
+		ValidArgsFunction: helpTopics,
 	})
 
 	root.Command = cmd
@@ -169,6 +174,38 @@ func (r *Root) classifyArgs() {
 		}
 	}
 	walk(r.Command)
+}
+
+// helpCommandName is the name cobra gives its help command, spelled once so the
+// replacement and the completion above cannot drift apart.
+const helpCommandName = "help"
+
+// helpTopics completes `mindrail help <TAB>` with the commands there is help
+// for, which is what cobra's own help command does and what replacing it lost.
+//
+// NoFileComp rather than the default directive: a shell offering filenames after
+// `mindrail help ` is offering something that can never be a help topic.
+func helpTopics(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	target, _, err := cmd.Root().Find(args)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	if target == nil {
+		target = cmd.Root()
+	}
+
+	var topics []cobra.Completion
+	for _, sub := range target.Commands() {
+		// `help` itself is a topic — `mindrail help help` is a real thing to
+		// ask for — and it does not report itself as an available command.
+		if !sub.IsAvailableCommand() && sub.Name() != helpCommandName {
+			continue
+		}
+		if strings.HasPrefix(sub.Name(), toComplete) {
+			topics = append(topics, cobra.CompletionWithDesc(sub.Name(), sub.Short))
+		}
+	}
+	return topics, cobra.ShellCompDirectiveNoFileComp
 }
 
 // unknownSubcommand refuses a positional argument to a command whose whole job
