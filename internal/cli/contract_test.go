@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -990,12 +991,37 @@ func TestLinkedWorktreeIsReportedEndToEnd(t *testing.T) {
 		if !found {
 			t.Fatalf("%s: doctor report has no git check", name)
 		}
+		// All four fields, not the two that happen to be the same in a main
+		// worktree. git_dir and is_linked_worktree are what distinguish a linked
+		// worktree from a main one, and they were the two the cross-check
+		// skipped: hardcoding either of them in internal/doctor/checks.go left
+		// the whole gate green while `doctor` printed `is_linked_worktree: false`
+		// in a directory where `status`, from the same binary, printed true
+		// (finding F07).
 		want := reports[name].Repository
-		if got := check.Details["common_dir"]; got != want.CommonDir {
-			t.Errorf("%s: doctor common_dir = %q, status said %q", name, got, want.CommonDir)
+		for field, pair := range map[string][2]string{
+			"common_dir":         {check.Details["common_dir"], want.CommonDir},
+			"worktree_root":      {check.Details["worktree_root"], want.WorktreeRoot},
+			"git_dir":            {check.Details["git_dir"], want.GitDir},
+			"is_linked_worktree": {check.Details["is_linked_worktree"], strconv.FormatBool(want.IsLinkedWorktree)},
+		} {
+			if pair[0] != pair[1] {
+				t.Errorf("%s: doctor %s = %q, status said %q", name, field, pair[0], pair[1])
+			}
 		}
-		if got := check.Details["worktree_root"]; got != want.WorktreeRoot {
-			t.Errorf("%s: doctor worktree_root = %q, status said %q", name, got, want.WorktreeRoot)
+
+		// The same two fields on the other check that publishes them. The
+		// workspace check derives the linked-worktree flag independently, so a
+		// value hardcoded there survives every assertion above.
+		workspace, found := findCheck(report, "workspace")
+		if !found {
+			t.Fatalf("%s: doctor report has no workspace check", name)
+		}
+		if got, ok := workspace.Details["is_linked_worktree"]; ok {
+			if got != strconv.FormatBool(want.IsLinkedWorktree) {
+				t.Errorf("%s: doctor workspace is_linked_worktree = %q, status said %v",
+					name, got, want.IsLinkedWorktree)
+			}
 		}
 	}
 }

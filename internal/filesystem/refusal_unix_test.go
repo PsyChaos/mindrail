@@ -45,6 +45,21 @@ func TestClassifyRefusalNamesEachConditionAndGuessesAtNoOther(t *testing.T) {
 		},
 
 		{name: "EROFS, the mount refuses writes", cause: syscall.EROFS, want: filesystem.BarrierReadOnlyMedia},
+		{
+			// The sentinel half of the row above, and the twin of the ENOSPC
+			// sentinel two rows up. Without it, changing the ErrReadOnlyMedia
+			// branch to answer BarrierPermission passed the entire suite —
+			// producing, for a read-only mount, the chmod that fails with the
+			// same EROFS, which is the exact bug the Barrier type's own doc
+			// comment says it exists to prevent (finding F09). The errno row
+			// above cannot cover it: EROFS is answered earlier, by
+			// platformBarrier, so the sentinel branch is never reached from it.
+			// On the non-unix build platformBarrier answers nothing at all, and
+			// this branch is the only classification available.
+			name:  "the package's own read-only refusal, read from the mount rather than met at a write",
+			cause: fmt.Errorf("probe %q: %w", "/mnt", filesystem.ErrReadOnlyMedia),
+			want:  filesystem.BarrierReadOnlyMedia,
+		},
 
 		{name: "ENOTDIR, something else is on the path", cause: syscall.ENOTDIR, want: filesystem.BarrierObstruction},
 		{name: "the package's own not-a-directory", cause: filesystem.ErrNotDirectory, want: filesystem.BarrierObstruction},

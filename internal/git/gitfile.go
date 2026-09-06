@@ -142,11 +142,25 @@ func inspectGitEntry(dir string) (*gitFileFault, bool) {
 	return fault, true
 }
 
+// gitTrailingSpace is the set read_gitfile_gently strips off the end of the
+// target: `while (len && isspace(buf[len - 1]))`, over C's isspace, which is
+// these six bytes in the C locale.
+//
+// Trimming only "\n " was narrower than git, and the gap is reachable rather
+// than theoretical: a `.git` file written with CRLF line endings — which is
+// what an editor on Windows produces — left the carriage return on the end of
+// the target, so this looked for a directory whose name ends in \r while git
+// looked for the real one. Trimming the whole of Unicode's space instead would
+// have been the opposite mistake, because it also eats the leading whitespace
+// git deliberately keeps (finding F17).
+const gitTrailingSpace = " \t\n\v\f\r"
+
 // readGitFile parses a `.git` file the way git's own read_gitfile_gently does:
-// the fixed prefix, then a path with trailing newlines and spaces removed. The
-// parse is mirrored rather than improved on purpose — the only thing this is
-// used for is deciding whether the path git resolved is missing, so looking at
-// a different path than git did would be the one way to get it wrong.
+// the fixed prefix, then a path with trailing whitespace removed and leading
+// whitespace kept. The parse is mirrored rather than improved on purpose — the
+// only thing this is used for is deciding whether the path git resolved is
+// missing, so looking at a different path than git did would be the one way to
+// get it wrong.
 //
 // A relative target is resolved against the directory holding the file, which
 // is what git does with it.
@@ -162,7 +176,7 @@ func readGitFile(path, dir string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	target := strings.TrimRight(line, "\n ")
+	target := strings.TrimRight(line, gitTrailingSpace)
 	if target == "" {
 		return "", false
 	}

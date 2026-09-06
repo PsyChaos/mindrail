@@ -360,6 +360,43 @@ func TestBrokenGitFileDetectionDoesNotOverFire(t *testing.T) {
 	})
 }
 
+// TestTheWalkStopsAtAGitEntryItCannotFollow pins the contract the Lstat in
+// inspectGitEntry exists for, which nothing exercised (finding F17).
+//
+// The walk's rule is "stop at the first `.git` entry of any kind", and a `.git`
+// symlink whose target has been deleted is an entry. Reading it with Stat
+// instead makes it look absent, and the walk carries on into the parent — where
+// it finds a different repository's `.git` file and blames a directory the
+// reader was never in.
+//
+// The shape is unreachable from brokenGitFileFault today, because git answers a
+// dangling `.git` symlink with the bracket phrasing and the walk is never
+// consulted. That is a fact about one caller, not about this function: its
+// contract is stated in its own comment, and a contract no test can fail is not
+// one.
+func TestTheWalkStopsAtAGitEntryItCannotFollow(t *testing.T) {
+	parent := t.TempDir()
+	// The parent holds a genuinely dangling `.git` file, so a walk that does not
+	// stop below has something wrong to find and report.
+	writeGitFile(t, parent, filepath.Join(parent, "gone"))
+
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o700); err != nil {
+		t.Fatalf("create %q: %v", child, err)
+	}
+	if err := os.Symlink(filepath.Join(parent, "deleted"), filepath.Join(child, ".git")); err != nil {
+		t.Skipf("this filesystem does not support symlinks: %v", err)
+	}
+
+	if fault := findDanglingGitFile(parent); fault == nil {
+		t.Fatal("the parent fixture is not dangling, so this proves nothing")
+	}
+	if fault := findDanglingGitFile(child); fault != nil {
+		t.Fatalf("findDanglingGitFile(%q) walked past a `.git` symlink it could not follow "+
+			"and blamed %q, which is a directory the reader is not in", child, fault.GitFile)
+	}
+}
+
 // TestReadGitFileMirrorsGit pins the parse against git's own
 // read_gitfile_gently: the prefix is fixed, trailing newlines and spaces are
 // removed, and a relative target is resolved against the file's directory.
@@ -377,6 +414,18 @@ func TestReadGitFileMirrorsGit(t *testing.T) {
 		{name: "absolute target", content: "gitdir: /srv/repo/.git\n", want: "/srv/repo/.git", wantOK: true},
 		{name: "no trailing newline", content: "gitdir: /srv/repo/.git", want: "/srv/repo/.git", wantOK: true},
 		{name: "trailing spaces are git's to strip", content: "gitdir: /srv/repo/.git  \n", want: "/srv/repo/.git", wantOK: true},
+		// The three rows that tell this parse apart from strings.TrimSpace and
+		// from the narrower "\n " it used to trim (finding F17). git strips
+		// every trailing isspace byte and keeps the leading ones, so a tab or a
+		// carriage return on the end has to go and a space after the prefix has
+		// to stay. A parse that agreed with git on none of these still passed
+		// the whole suite.
+		{name: "a trailing tab is whitespace to git", content: "gitdir: /srv/repo/.git\t\n", want: "/srv/repo/.git", wantOK: true},
+		{name: "CRLF, which an editor on Windows writes", content: "gitdir: /srv/repo/.git\r\n", want: "/srv/repo/.git", wantOK: true},
+		// git keeps the extra space, so the target is no longer absolute and is
+		// resolved against the file's directory — which is what git does with it
+		// too. TrimSpace would eat it and look at /srv/repo/.git instead.
+		{name: "leading space is part of the path git looks for", content: "gitdir:  /srv/repo/.git\n", want: filepath.Join(dir, " /srv/repo/.git"), wantOK: true},
 		{name: "relative target", content: "gitdir: ../elsewhere/.git\n", want: filepath.Join(filepath.Dir(dir), "elsewhere", ".git"), wantOK: true},
 		{name: "wrong prefix", content: "gitdirx: /srv/repo/.git\n", wantOK: false},
 		{name: "not the format at all", content: "ref: refs/heads/main\n", wantOK: false},

@@ -1012,12 +1012,22 @@ func linkedWorktreeOfAdminDir(startDir, commonDir string) string {
 // worktreeHoldingGitDir returns the directory that holds commonDir as its
 // `.git`, or the empty string when no directory does.
 //
-// The name test alone is not enough. `git init --separate-git-dir=/srv/x/.git`
-// produces a Git directory named `.git` whose parent is unrelated to the
-// worktree it was created for — but git discovering /srv/x would still call
-// /srv/x the worktree of that Git directory, so the question that decides it is
-// not "is it called .git" but "would git find this same Git directory from the
-// parent". os.SameFile answers exactly that, and it costs one stat.
+// The name test is sufficient here, and saying so is the correction finding F16
+// asks for. This function used to follow it with an os.SameFile comparison
+// documented as the real check — "the question is not 'is it called .git' but
+// 'would git find this same Git directory from the parent'" — and that
+// comparison could not fail: once the base name is `.git`,
+// filepath.Join(filepath.Dir(commonDir), ".git") rebuilds commonDir byte for
+// byte, and both stats were of the same path. It shipped exactly the name-only
+// test its own comment said was insufficient.
+//
+// The shape it claimed to reject is `git init --separate-git-dir=/srv/x/.git
+// /realwt`, which makes a Git directory named `.git` whose parent is not the
+// working tree it was created for. Rejecting it would be wrong: git discovering
+// /srv/x finds that same Git directory and calls /srv/x its worktree, so
+// agreeing is agreeing with the oracle. TestWorktreeHoldingGitDirAcceptsA-
+// SeparateGitDirectoryNamedGit pins that, which is what the deleted guard never
+// did.
 func worktreeHoldingGitDir(commonDir string) string {
 	if commonDir == "" || filepath.Base(commonDir) != ".git" {
 		return ""
@@ -1027,14 +1037,6 @@ func worktreeHoldingGitDir(commonDir string) string {
 		return ""
 	}
 
-	candidate, err := os.Stat(filepath.Join(parent, ".git"))
-	if err != nil {
-		return ""
-	}
-	actual, err := os.Stat(commonDir)
-	if err != nil || !os.SameFile(candidate, actual) {
-		return ""
-	}
 	// A worktree the reader cannot enter is not somewhere they can be told to
 	// go; the caller's generic remedy is less wrong than a path that refuses.
 	if directoryEntryFault(parent) != nil {
