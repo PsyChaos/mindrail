@@ -377,8 +377,12 @@ func canonicalizeHop(abs string, hops int) (string, error) {
 // escapeError pairs the sentinel with the structured payload the CLI renders,
 // so errors.Is and app.PayloadOf both work on the same value (tech-stack §72).
 //
-// inspect is the absolute path the reader has to look at, and quoting it is the
-// whole of finding F15. "Replace any symbolic link on the path that points
+// inspect is what the reader has to change, and quoting it is the whole of
+// finding F15. For a path resolved against the root it is the absolute
+// component that leaves it; for a configured override it is the value as
+// configured, because that is the thing the reader edits and an absolute
+// rendering of `../outside` would name a directory nobody wrote down.
+// "Replace any symbolic link on the path that points
 // outside the repository" named no path at all, so in a repository with more
 // than one link the reader had to hunt for the one meant — while every
 // neighbouring condition, obstruction and permission and space and read-only

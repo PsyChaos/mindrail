@@ -505,6 +505,31 @@ func knowledgeConditions() []condition {
 			},
 		},
 		{
+			// The containment boundary met one directory deeper than the
+			// `.mindrail` row, and the gap that hid a second D5: the loader
+			// walks `.mindrail/knowledge` and reported a link out of the
+			// repository as KNOWLEDGE_UNREADABLE at exit 1 with "check that it
+			// is a readable directory" — an instruction already satisfied,
+			// because the link resolves to a directory that reads perfectly —
+			// while `init` resolved the same path through the boundary and said
+			// PATH_ESCAPES_ROOT at exit 2.
+			name:   "the knowledge directory points outside the worktree",
+			broken: true,
+			remedy: classContain,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				removeForSetup(t, knowledgeDir(repo))
+				if err := os.Symlink(t.TempDir(), knowledgeDir(repo)); err != nil {
+					t.Fatalf("point .mindrail/knowledge out of the worktree: %v", err)
+				}
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, knowledgeDir(repo))
+			},
+		},
+		{
 			// The over-fire guard for both rows above: one record file nobody
 			// can read is a problem with that record, not with the directory
 			// holding it, and the path remedy must not fire on it.

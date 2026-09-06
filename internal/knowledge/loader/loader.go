@@ -327,6 +327,19 @@ func unreadableRecord(rel, message string) *Problem {
 // leaks internal package names and repeats the absolute path the reader already
 // knows, and it says nothing the three fields below do not say better.
 func unreadableStore(rel string, cause error) error {
+	// A directory that resolves outside the repository is not unreadable. It
+	// reads perfectly — which is why "check that .mindrail/knowledge is a
+	// readable directory" cleared nothing and the reader was left carrying out
+	// an instruction that was already satisfied — and the containment layer has
+	// already named the condition in the words `init` prints for the same disk.
+	// Returning that error unchanged is what makes one condition one diagnosis
+	// whichever command met it: before this, `status` and `doctor` said
+	// KNOWLEDGE_UNREADABLE at exit 1 while `init` said PATH_ESCAPES_ROOT at
+	// exit 2.
+	if errors.Is(cause, filesystem.ErrEscapesRoot) {
+		return cause
+	}
+
 	why := fmt.Sprintf("the knowledge store directory %q could not be read", rel)
 	switch {
 	case errors.Is(cause, filesystem.ErrNotDirectory):

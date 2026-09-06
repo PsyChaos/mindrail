@@ -423,12 +423,45 @@ func diskFullOpenFailure(path string, cause error) error {
 //
 // An unknown reading corroborates. statfs is the only thing that could say
 // otherwise, and a probe that could not look is not evidence of room.
+//
+// "More than zero bytes" is not enough to refute it either, and reading it that
+// way was this fix over-firing into a new wrong claim: with four kilobytes left,
+// statfs answers 4096, and the report said a size limit was refusing the write
+// and that freeing space would not change it — on a filesystem where freeing two
+// megabytes cleared the condition immediately, and where none of the three
+// limits the remedy named was in force. The filesystem has to be shown to have
+// room for what SQLite was actually refused before it can be ruled out.
 func spaceCorroboratesFullDisk(path string) (filesystem.FreeSpace, bool) {
 	free := filesystem.ProbeFreeSpace(filepath.Dir(path))
 	if !free.Known {
 		return free, true
 	}
-	return free, free.AvailableBytes <= 0
+	return free, free.AvailableBytes < roomSQLiteWasRefused(path)
+}
+
+// shmSize is the fixed length of the shared-memory index a WAL database keeps
+// beside it. SQLITE_IOERR_SHMSIZE is the ftruncate of exactly this failing.
+const shmSize = 32 << 10
+
+// roomSQLiteWasRefused is the smallest amount of space that could have satisfied
+// the allocation the driver refused, and so the least the filesystem has to be
+// able to show before "this is a limit and not a full disk" is a safe thing to
+// say.
+//
+// Two allocations reach this branch and both are measurable. The shared-memory
+// index is a fixed 32 KiB. A checkpoint has to write the write-ahead log into
+// the database file, and the log is on disk to be stat'ed. Below their sum the
+// filesystem cannot be exonerated, so the disk-full sentence stands — and it is
+// the right one, because freeing space is what clears it.
+//
+// A log that cannot be stat'ed contributes nothing rather than a guess, which
+// leaves the floor at the one allocation this branch is always about.
+func roomSQLiteWasRefused(path string) int64 {
+	required := int64(shmSize)
+	if info, err := os.Stat(path + "-wal"); err == nil {
+		required += info.Size()
+	}
+	return required
 }
 
 // sizeLimitOpenFailure reports SQLite being refused room on a filesystem that

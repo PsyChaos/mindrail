@@ -1296,6 +1296,13 @@ func TestRejectedCommandLineStillProducesAnEnvelope(t *testing.T) {
 		{name: "unknown flag after --json", command: []string{"status", "--json", "--nope"}},
 		{name: "unknown flag before --json", command: []string{"status", "--nope", "--json"}},
 		{name: "surplus argument", command: []string{"init", "extraarg", "--json"}},
+		// pflag accepts every spelling of true a Go bool flag does, so the scan
+		// of the raw line has to as well. Matching only `--json=true` meant
+		// whether a rejected line got its envelope depended on which word for
+		// "yes" the caller happened to type.
+		{name: "--json=true", command: []string{"frobnicate", "--json=true"}},
+		{name: "--json=1", command: []string{"frobnicate", "--json=1"}},
+		{name: "--json=T", command: []string{"frobnicate", "--json=T"}},
 	}
 
 	for _, tc := range tests {
@@ -1319,17 +1326,158 @@ func TestRejectedCommandLineStillProducesAnEnvelope(t *testing.T) {
 	}
 }
 
+// TestEveryCommandInTheTreeRejectsABadLineTheSameWay covers the commands cobra
+// supplies rather than the four this package registers.
+//
+// `help`, `completion` and one command per shell are added inside cobra's
+// ExecuteC, after any loop over Commands() in the constructor has finished, so
+// they kept their own unclassified checks: `mindrail completion bash extra
+// --json` exited 1 with an empty stdout — the exact symptom findings F04 and F08
+// describe — while `mindrail init extra` exited 2 with an envelope. A command
+// that only groups others never reached its check at all, because cobra answers
+// ErrHelp for anything with nothing to run before it validates arguments.
+func TestEveryCommandInTheTreeRejectsABadLineTheSameWay(t *testing.T) {
+	rejected := [][]string{
+		{"completion", "bash", "extra"},
+		{"completion", "bogus"},
+		{"help", "bogus"},
+		{"bogus"},
+		{"init", "extra"},
+		{"status", "extra"},
+	}
+
+	for _, command := range rejected {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
+			repo := newInitializedRepo(t)
+
+			got := run(t, repo, append(slices.Clone(command), "--json")...)
+			got.requireExit(t, app.ExitUsage)
+			if payload := got.errorPayload(t); payload.Code != app.CodeCommandLineInvalid {
+				t.Errorf("code = %q, want %q", payload.Code, app.CodeCommandLineInvalid)
+			}
+		})
+	}
+}
+
+// TestTheCommandsThatWorkedStillWork is the over-fire guard for the rule above.
+// Making every command in the tree reject harder is worth nothing if it also
+// starts rejecting the lines that were always valid, and two of these — `help
+// <topic>` and a grouping command run bare — are exactly what the classification
+// had to be careful not to break.
+func TestTheCommandsThatWorkedStillWork(t *testing.T) {
+	accepted := [][]string{
+		{},
+		{"--help"},
+		{"help"},
+		{"help", "status"},
+		{"status", "--help"},
+		{"completion"},
+		{"completion", "bash"},
+		{"version"},
+		{"status"},
+		{"doctor"},
+	}
+
+	for _, command := range accepted {
+		name := strings.Join(command, " ")
+		if name == "" {
+			name = "no arguments"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo := newInitializedRepo(t)
+
+			got := run(t, repo, command...)
+			got.requireExit(t, app.ExitSuccess)
+			if got.stdout == "" {
+				t.Errorf("`mindrail %s` wrote nothing to stdout", name)
+			}
+		})
+	}
+}
+
 // TestRejectedCommandLineStaysSilentOnStdoutWithoutJSON is the other half of the
 // rule above: a caller that did not ask for JSON gets the sentence on stderr and
 // an empty stdout, because stdout carries results and there is no result.
 func TestRejectedCommandLineStaysSilentOnStdoutWithoutJSON(t *testing.T) {
 	repo := newInitializedRepo(t)
 
-	got := run(t, repo, "frobnicate")
-	got.requireExit(t, app.ExitUsage)
+	for _, command := range [][]string{{"frobnicate"}, {"frobnicate", "--json=false"}, {"frobnicate", "--json=0"}} {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
+			got := run(t, repo, command...)
+			got.requireExit(t, app.ExitUsage)
 
-	if got.stdout != "" {
-		t.Errorf("stdout is not empty for a rejected command line:\n%s", got.stdout)
+			if got.stdout != "" {
+				t.Errorf("stdout is not empty for a rejected command line:\n%s", got.stdout)
+			}
+		})
+	}
+}
+
+// TestEveryRemedyAboutAFileNamesThatFileAbsolutely is the assertion the two
+// path-naming fixes were missing.
+//
+// Findings F13 and F15 are both "the remedy describes a filesystem object and
+// does not say which one", and both were declared closed while nothing could
+// fail: the agreement matrix classifies a remedy on a phrase, and both
+// `Move the runtime database aside…` and `Move /path/to/mindrail.db aside…`
+// carry the phrase. Reverting either fix left the whole suite green. What the
+// findings are actually about is the absolute path, so that is what is asserted
+// here — and it is the same property coherence_test.go needs in order to be able
+// to compare what two documents say about one path at all.
+func TestEveryRemedyAboutAFileNamesThatFileAbsolutely(t *testing.T) {
+	tests := []struct {
+		name string
+		// setup breaks the repository and returns the absolute path the remedy
+		// has to name.
+		setup func(t *testing.T) (repo string, mustName string)
+	}{
+		{
+			name: "the runtime tables were dropped",
+			setup: func(t *testing.T) (string, string) {
+				repo := newInitializedRepo(t)
+				dropRuntimeTables(t, repo)
+				return repo, runtimeDBPath(t, repo)
+			},
+		},
+		{
+			name: "the migration ledger rows were deleted",
+			setup: func(t *testing.T) (string, string) {
+				repo := newInitializedRepo(t)
+				emptyMigrationLedger(t, repo)
+				return repo, runtimeDBPath(t, repo)
+			},
+		},
+		{
+			name: "the repository config directory points outside the worktree",
+			setup: func(t *testing.T) (string, string) {
+				repo := newRepo(t)
+				if err := os.Symlink(t.TempDir(), repoConfigDir(repo)); err != nil {
+					t.Fatalf("point .mindrail out of the worktree: %v", err)
+				}
+				return repo, repoConfigDir(repo)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, mustName := tc.setup(t)
+
+			// Every command that meets the condition has to name it, and name
+			// the same one: a remedy that identifies the file differently
+			// depending on which command was run is the disagreement the
+			// agreement matrix exists for.
+			for _, command := range commandsUnderTest {
+				got := run(t, repo, command, "--json")
+				payload := got.errorPayload(t)
+
+				remedy := strings.Join(payload.NextAction, "\n")
+				if !strings.Contains(remedy, mustName) {
+					t.Errorf("%s: next_action = %q, which never names %q",
+						command, payload.NextAction, mustName)
+				}
+			}
+		})
 	}
 }
 
