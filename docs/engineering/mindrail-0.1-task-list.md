@@ -2,9 +2,9 @@
 
 Bu liste aşağıdaki belgelerden türetilmiştir:
 
-- `.docs/mindrail-0.1-kernel-scope.md`
-- `.docs/mindrail-technical-specification-1.0.md`
-- `.docs/mindrail-tech-stack.md`
+- `docs/specification/mindrail-0.1-kernel-scope.md`
+- `docs/specification/mindrail-technical-specification-1.0.md`
+- `docs/specification/mindrail-tech-stack.md`
 
 Liste, **0.1 Kernel** kapsamını esas alır. Her görev tek başına alınabilir, uçtan uca doğrulanabilir bir tracer-bullet dilimidir. Teknik Şartname 1.0'daki fakat 0.1 dışında kalan özellikler listenin sonunda açıkça ertelenmiştir.
 
@@ -44,11 +44,24 @@ Tek bir Go binary içinde `mindrail init`, `mindrail status` ve `mindrail doctor
 
 #### Kabul kriterleri
 
-- [ ] `mindrail init` bir Git deposunda ağ veya bulut bağımlılığı olmadan başarılı olur.
-- [ ] İlk çalıştırma SQLite veritabanını ve gömülü migration'ları idempotent biçimde oluşturur.
-- [ ] Git common-dir ile aktif worktree doğru ve açıklanabilir biçimde raporlanır.
+- [x] `mindrail init` bir Git deposunda ağ veya bulut bağımlılığı olmadan başarılı olur.
+- [x] İlk çalıştırma SQLite veritabanını ve gömülü migration'ları idempotent biçimde oluşturur.
+- [x] Git common-dir ile aktif worktree doğru ve açıklanabilir biçimde raporlanır.
 - [ ] `status` ve `doctor` eksik/bozuk kurulumları yapılandırılmış hata ve önerilen `next_action` ile bildirir.
-- [ ] CLI sözleşme testleri ve temiz binary smoke testi bulunur.
+- [x] CLI sözleşme testleri ve temiz binary smoke testi bulunur.
+
+#### Durum
+
+Uygulama `b04b1bc`'de; `make verify` yeşil (gofmt, `go vet`, 1479 test, race detector,
+3 temiz-binary smoke testi). Tasarım [mr-001-design.md](mr-001-design.md).
+
+Dördüncü kriter açık bırakıldı. Yedi bağımsız denetim turundan sonra üç HIGH bulgu
+ayakta: dolu disk `SQLITE_IOERR_SHMSIZE` üzerinden kota/dosya-boyutu sınırıyla
+karıştırılıyor; `init` kendi yazdıklarından *önce* alınan sondaja dayanarak
+`READY` diyebiliyorken aynı durumu `status` ve `doctor` `BLOCKED` sayıyor; ve
+okunamayan bir `config.toml` uygulanamayacak bir çare basıyor. Üçü de yapay ortam
+gerektiriyor (dolu dosya sistemi, disk kotası, mode 0000). Tamamı
+reprodüksiyonlarıyla [mr-001-findings.md](mr-001-findings.md) içinde.
 
 ---
 

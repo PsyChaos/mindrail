@@ -15,10 +15,10 @@ specification is not complete yet; see the task list for what has landed.
 
 | Document | Role |
 |---|---|
-| [`.docs/mindrail-technical-specification-1.0.md`](.docs/mindrail-technical-specification-1.0.md) | Target architecture and acceptance criteria |
-| [`.docs/mindrail-0.1-kernel-scope.md`](.docs/mindrail-0.1-kernel-scope.md) | First deliverable scope, AC-01…AC-22 |
-| [`.docs/mindrail-tech-stack.md`](.docs/mindrail-tech-stack.md) | Go implementation strategy, subordinate to the specification |
-| [`.tasks/mindrail-0.1-task-list.md`](.tasks/mindrail-0.1-task-list.md) | Implementation tasks and dependency waves |
+| [`docs/specification/mindrail-technical-specification-1.0.md`](docs/specification/mindrail-technical-specification-1.0.md) | Target architecture and acceptance criteria |
+| [`docs/specification/mindrail-0.1-kernel-scope.md`](docs/specification/mindrail-0.1-kernel-scope.md) | First deliverable scope, AC-01…AC-22 |
+| [`docs/specification/mindrail-tech-stack.md`](docs/specification/mindrail-tech-stack.md) | Go implementation strategy, subordinate to the specification |
+| [`docs/engineering/mindrail-0.1-task-list.md`](docs/engineering/mindrail-0.1-task-list.md) | Implementation tasks and dependency waves |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 
 ## Requirements

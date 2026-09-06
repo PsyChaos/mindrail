@@ -7,7 +7,7 @@
 ## Context
 
 Mindrail ships as a local-first engineering gate that agents and CI invoke on
-the interactive path. The technology strategy in `.docs/mindrail-tech-stack.md`
+the interactive path. The technology strategy in `docs/specification/mindrail-tech-stack.md`
 already fixes the language and the CLI framework; this record captures that
 decision in the repository so later changes have something to supersede.
 
