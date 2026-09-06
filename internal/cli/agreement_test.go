@@ -59,11 +59,18 @@ type condition struct {
 	// loader's remedy with "Reinstall Mindrail from your package manager" left
 	// the whole suite green (finding F05).
 	remedy remedyClass
-	// remedyNotCarryable states why clear does something other than what the
-	// report printed, for the rows where the printed remedy is real but cannot
-	// be performed by a test. Declaring it is how such a row stays honest; the
+	// carriedOutDifferently states why clear does something other than what the
+	// report printed, for the rows where the printed remedy is real and no test
+	// can perform it. Declaring it is how such a row stays honest; the
 	// alternative — silently substituting a different action — is the defect.
-	remedyNotCarryable string
+	//
+	// It does NOT excuse the row from declaring its remedy class. It used to:
+	// the field was free text and setting it skipped the assertion entirely, so
+	// any future row could silence the check with a sentence, and applying
+	// finding F05's own mutation alongside it left the suite green. The class is
+	// asserted either way; this only explains the divergence between the printed
+	// remedy and what clear does about it.
+	carriedOutDifferently string
 	// separately names a command whose answer legitimately differs from the ones
 	// that agree, and states why in the row.
 	//
@@ -207,16 +214,9 @@ func agreementRemedyClass(actions []string) remedyClass {
 func assertRemedyIsWhatTheRowExpects(t *testing.T, tc condition, actions []string) {
 	t.Helper()
 
-	if tc.remedyNotCarryable != "" {
-		if tc.remedy != classUnknown {
-			t.Fatalf("%s: the row declares both a remedy class and a reason the remedy cannot be carried out", tc.name)
-		}
-		return
-	}
-
 	if tc.remedy == classUnknown {
 		t.Fatalf("%s: the row carries out a remedy but does not say which one it expects the report to print; "+
-			"set remedy, or set remedyNotCarryable and say why. The report printed %q", tc.name, actions)
+			"set remedy. The report printed %q", tc.name, actions)
 	}
 
 	if got := agreementRemedyClass(actions); got != tc.remedy {
@@ -564,12 +564,13 @@ func knowledgeConditions() []condition {
 		{
 			name:   "a knowledge record written by a newer schema than this binary reads",
 			broken: true,
+			remedy: classUpgrade,
 			// The report tells the reader to upgrade the binary, which is the
 			// right instruction and one no test can carry out. Deleting the
 			// record clears the condition by removing what the newer schema
 			// wrote, which is a different action, and finding F05 is that the
 			// matrix used to make that substitution silently.
-			remedyNotCarryable: "upgrading the binary is not an action a test can perform; " +
+			carriedOutDifferently: "upgrading the binary is not an action a test can perform; " +
 				"clear deletes the record the newer schema wrote instead",
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)

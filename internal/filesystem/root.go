@@ -149,16 +149,22 @@ func (r Root) Resolve(rel string) (string, error) {
 // remedy that named what each command happened to ask for described the link as
 // being in two places (finding F15).
 //
-// A prefix that cannot be canonicalized at all is the answer too: it is as far
-// as the walk got, and the reader has to look there either way.
+// A prefix that cannot be canonicalized at all is the answer too — it is as far
+// as the walk got, and the reader has to look there either way — and it needs no
+// clause of its own to be. canonicalize returns the empty string with its error,
+// no root holds the empty string, so the containment test below answers both
+// cases. An `err != nil ||` in front of it read as a second condition and was a
+// restatement of the first: it could not change an outcome, which is the shape
+// finding F16 is about, so it is written down here instead of left in the code
+// looking load-bearing.
 func (r Root) escapingComponent(rel string) string {
 	cleaned := filepath.Clean(filepath.FromSlash(rel))
 	parts := strings.Split(filepath.ToSlash(cleaned), "/")
 
 	for i := range parts {
 		prefix := filepath.Join(r.canonical, filepath.FromSlash(strings.Join(parts[:i+1], "/")))
-		canonical, err := canonicalize(prefix)
-		if err != nil || !r.holds(canonical) {
+		canonical, _ := canonicalize(prefix)
+		if !r.holds(canonical) {
 			return prefix
 		}
 	}

@@ -214,3 +214,40 @@ func TestWorktreeHoldingGitDirAcceptsASeparateGitDirectoryNamedGit(t *testing.T)
 		t.Errorf("worktreeHoldingGitDir(\"\") = %q, want no worktree", got)
 	}
 }
+
+// TestWorktreeHoldingGitDirRefusesAWorktreeNobodyCanEnter is the guard that
+// survived finding F16.
+//
+// F16 removed one unfalsifiable check from this function and left its neighbour
+// standing beside it, equally unreached: disabling the directoryEntryFault call
+// passed the whole suite. Its comment makes a real promise — "a worktree the
+// reader cannot enter is not somewhere they can be told to go" — and a promise
+// no test can fail is the shape both findings are about.
+func TestWorktreeHoldingGitDirRefusesAWorktreeNobodyCanEnter(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root enters directories regardless of their mode bits")
+	}
+
+	root := t.TempDir()
+	parent := filepath.Join(root, "sealed")
+	gitDir := filepath.Join(parent, ".git")
+	if err := os.MkdirAll(gitDir, 0o700); err != nil {
+		t.Fatalf("create %q: %v", gitDir, err)
+	}
+
+	// Readable while it is being built, unenterable once it is.
+	if got := worktreeHoldingGitDir(gitDir); !sameFile(t, got, parent) {
+		t.Fatalf("worktreeHoldingGitDir(%q) = %q before the mode change, want %q; "+
+			"the fixture proves nothing if it never worked", gitDir, got, parent)
+	}
+
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatalf("seal %q: %v", parent, err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+
+	if got := worktreeHoldingGitDir(gitDir); got != "" {
+		t.Errorf("worktreeHoldingGitDir(%q) = %q, want no worktree; %q cannot be entered",
+			gitDir, got, parent)
+	}
+}

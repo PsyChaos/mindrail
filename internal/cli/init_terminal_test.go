@@ -66,6 +66,52 @@ func TestTerminalStateNeedsEitherAnswerAlone(t *testing.T) {
 	}
 }
 
+// TestInitVerdictPrefersTheChecksAndKeepsWhatTheyCannotSee covers the fold no
+// running command produced.
+//
+// The flush is init's own last write, and its failure has to reach the report or
+// init calls a repository it could not finish writing ready. But the checks run
+// after it and usually describe the same condition in the vocabulary `status`
+// and `doctor` use, so theirs is the sentence a reader gets. Neither half was
+// reachable through a command: dropping the fold left the whole suite green.
+func TestInitVerdictPrefersTheChecksAndKeepsWhatTheyCannotSee(t *testing.T) {
+	checked := errors.New("the runtime path is not writable")
+	flush := errors.New("the log could not be written back")
+
+	tests := []struct {
+		name    string
+		checked error
+		flush   error
+		want    error
+	}{
+		{name: "nothing wrong"},
+		{
+			name:  "only the flush failed",
+			flush: flush,
+			want:  flush,
+		},
+		{
+			name:    "the checks saw it too",
+			checked: checked,
+			flush:   flush,
+			want:    checked,
+		},
+		{
+			name:    "only the checks failed",
+			checked: checked,
+			want:    checked,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := initVerdict(tc.checked, tc.flush); !errors.Is(got, tc.want) && got != tc.want {
+				t.Errorf("initVerdict(%v, %v) = %v, want %v", tc.checked, tc.flush, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestSchemaIsCurrentNeedsAllThreeAnswers is finding F14's third survivor.
 //
 // `schema_current` in the init report is a claim that the runtime schema was

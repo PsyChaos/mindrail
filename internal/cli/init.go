@@ -69,15 +69,9 @@ func runInit(cmd *cobra.Command, o Options) error {
 		// The verdict comes from the doctor checks rather than from the start
 		// error directly, so `init`, `status` and `doctor` can never report
 		// different codes for the same broken installation.
-		_, verdict := a.Diagnosis(ctx)
+		_, checked := a.Diagnosis(ctx)
 
-		// The checks run after the flush, so a failure the flush caused is
-		// normally already in the verdict, said in the vocabulary status and
-		// doctor use. This is the case they cannot see: a write that failed for
-		// a reason no probe of the finished disk reveals.
-		if verdict == nil {
-			verdict = flushErr
-		}
+		verdict := initVerdict(checked, flushErr)
 		elapsed := time.Since(started)
 
 		report := initReportOf(a, verdict, elapsed)
@@ -150,6 +144,26 @@ func (inv invocation) refuseUnrepresentableRepository(ctx context.Context) error
 		Paths:  subject.Paths,
 		Config: subject.Config.Config,
 	}, nil)
+}
+
+// initVerdict folds the flush's outcome into the checks'.
+//
+// The checks run after the flush, so a failure the flush caused is normally
+// already in their verdict, said in the vocabulary `status` and `doctor` use —
+// and that one wins, because a reader who runs all three has to hear one
+// sentence. What is left is the case the checks cannot see: a write that failed
+// for a reason no probe of the finished disk reveals, which would otherwise be
+// discarded and leave `init` reporting a repository it could not finish writing
+// as ready.
+//
+// It is a function of two errors rather than three lines inside the callback
+// because that is what makes the second case reachable at all: no test produced
+// it, so dropping the fold entirely left the suite green.
+func initVerdict(checked, flush error) error {
+	if checked != nil {
+		return checked
+	}
+	return flush
 }
 
 // terminalStateOf decides spec §82's terminal line from the two answers that

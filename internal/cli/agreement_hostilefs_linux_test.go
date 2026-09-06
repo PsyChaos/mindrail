@@ -99,6 +99,32 @@ func spawnHostileChild(t *testing.T, mountEnv string) {
 	if cmd.ProcessState.ExitCode() != 0 {
 		t.Fatalf("the hostile-filesystem rows failed:\n%s", strings.TrimSpace(string(out)))
 	}
+
+	// A child that never ran the rows also exits 0, and three separate ways of
+	// not running them — a mount the kernel refused, a -test.run that matches
+	// nothing, a `go test -short` — all reported success. That is the worst
+	// failure a test can have: this is the only place the F01 condition is
+	// reproduced at all, and it was reporting that it had reproduced it while
+	// doing nothing. The child says out loud how many rows it ran, and the
+	// parent refuses an answer that does not include the sentence.
+	if !strings.Contains(string(out), hostileRowsRanMarker) {
+		t.Fatalf("the child exited 0 without running any rows; it never reported %q:\n%s",
+			hostileRowsRanMarker, strings.TrimSpace(string(out)))
+	}
+}
+
+// hostileRowsRanMarker is the child's proof of work. It is a fixed string rather
+// than a count so the parent's check cannot drift as rows are added.
+const hostileRowsRanMarker = "MINDRAIL_HOSTILE_ROWS_RAN"
+
+// reportHostileRowsRan is called by a child once it has actually driven the
+// commands, on the far side of every skip.
+func reportHostileRowsRan(t *testing.T, rows int) {
+	t.Helper()
+	if rows == 0 {
+		t.Fatal("no rows ran, so the scenario proves nothing")
+	}
+	fmt.Printf("%s %d\n", hostileRowsRanMarker, rows)
 }
 
 // readyBandMountEnv is the second mount handed to a namespace child, for the
@@ -140,10 +166,16 @@ func TestInitNeverCallsARepositoryReadyTheNextCommandRefuses(t *testing.T) {
 
 func runReadyBand(t *testing.T, mount string) {
 	if err := syscall.Mount("tmpfs", mount, "tmpfs", 0, hostileMountSize); err != nil {
-		t.Skipf("mount tmpfs on %s: %v", mount, err)
+		// Fatal rather than Skip: the parent cannot tell a skip from a pass, and
+		// a child that could not mount has not answered the question.
+		t.Fatalf("mount tmpfs on %s: %v", mount, err)
 	}
 
+	ran := 0
+	t.Cleanup(func() { reportHostileRowsRan(t, ran) })
+
 	for _, headroom := range []int64{112, 120, 124, 128, 132, 140, 148, 256} {
+		ran++
 		t.Run(fmt.Sprintf("%d KiB free", headroom), func(t *testing.T) {
 			repo := hostileRepo(t, mount, hostileCondition{}, fmt.Sprintf("ready-band-%d", headroom))
 			leaveHostileHeadroom(t, mount, headroom<<10)
@@ -235,10 +267,15 @@ type hostileCondition struct {
 
 func runHostileAgreement(t *testing.T, mount string) {
 	if err := syscall.Mount("tmpfs", mount, "tmpfs", 0, hostileMountSize); err != nil {
-		t.Skipf("mount tmpfs on %s: %v", mount, err)
+		// Fatal rather than Skip, for the reason in runReadyBand.
+		t.Fatalf("mount tmpfs on %s: %v", mount, err)
 	}
 
+	ran := 0
+	t.Cleanup(func() { reportHostileRowsRan(t, ran) })
+
 	for _, tc := range hostileConditions() {
+		ran++
 		t.Run(tc.name, func(t *testing.T) {
 			answers := make(map[string]answer, len(commandsUnderTest))
 			for i, command := range commandsUnderTest {

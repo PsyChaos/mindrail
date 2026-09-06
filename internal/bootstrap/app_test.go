@@ -589,3 +589,85 @@ func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// TestFlushReportsAFailedCheckpointRatherThanSwallowingIt is the propagation
+// nothing asserted.
+//
+// Flush exists so that init's last write happens before the reading its verdict
+// is taken from, which is only worth anything if a write that failed reaches the
+// caller. Making Flush return nil on a checkpoint error passed the entire suite:
+// the storage-level tests cover the checkpoint, and the command-level tests
+// never produce a failing one, so the error's whole journey was unobserved.
+//
+// A closed database is the cheapest way to make the checkpoint fail for a reason
+// that is neither contention nor cancellation, which are the two outcomes Flush
+// is supposed to stay quiet about.
+func TestFlushReportsAFailedCheckpointRatherThanSwallowingIt(t *testing.T) {
+	repo := newGitRepo(t)
+
+	application := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+	if err := application.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// The healthy case first: a repository nothing is wrong with flushes clean,
+	// or the assertion below would pass for a Flush that always failed.
+	if err := application.Flush(t.Context()); err != nil {
+		t.Fatalf("Flush on a healthy repository = %v, want no error", err)
+	}
+
+	db := application.DB()
+	if db == nil {
+		t.Fatal("DB() is nil after a successful init")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close the database under the application: %v", err)
+	}
+
+	err := application.Flush(t.Context())
+	if err == nil {
+		t.Fatal("Flush = nil over a database it could not reach; init would report a repository it never finished writing as ready")
+	}
+	if _, ok := app.PayloadOf(err); !ok {
+		t.Errorf("Flush = %v, which carries no domain payload for a command to render", err)
+	}
+}
+
+// TestFlushIsQuietWhenThereIsNothingToWrite is the over-fire guard: the two
+// outcomes that are not failures have to stay silent, or every read-only command
+// and every interrupted one would start reporting a fault.
+func TestFlushIsQuietWhenThereIsNothingToWrite(t *testing.T) {
+	repo := newGitRepo(t)
+
+	t.Run("a command that never opened a database", func(t *testing.T) {
+		application := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+		t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+		if err := application.Start(t.Context()); err != nil {
+			t.Fatalf("Start in read-only mode: %v", err)
+		}
+		if application.DB() != nil {
+			t.Fatal("the fixture opened a database, so it proves nothing")
+		}
+		if err := application.Flush(t.Context()); err != nil {
+			t.Errorf("Flush with no database = %v, want no error", err)
+		}
+	})
+
+	t.Run("a caller that was interrupted", func(t *testing.T) {
+		application := bootstrap.New(options(t, newGitRepo(t), bootstrap.ModeInit, nil))
+		t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+		if err := application.Start(t.Context()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := application.Flush(ctx); err != nil {
+			t.Errorf("Flush on a cancelled context = %v, want no error; nothing was found wrong", err)
+		}
+	})
+}

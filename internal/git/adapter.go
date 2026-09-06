@@ -989,11 +989,21 @@ func linkedWorktreeOfAdminDir(startDir, commonDir string) string {
 	}
 
 	// git records the linked worktree's `.git` file here, as an absolute path.
+	// Trimmed with git's own set, not the narrower "\n " this used to use:
+	// finding F17 is that the two differ for a carriage return, and a second
+	// copy of the wrong trim one package file over is the same defect waiting
+	// for the shape that reaches it.
+	//
+	// No test can fail if this regresses, and that is stated rather than
+	// implied: the value is only ever handed to filepath.Dir, which discards the
+	// last segment and with it any trailing byte, so the two spellings cannot
+	// produce different behaviour today. It is corrected for consistency with
+	// readGitFile, and the moment anything uses the value whole it will matter.
 	recorded, err := readSmallFile(filepath.Join(adminDir, "gitdir"), maxGitFileSize)
 	if err != nil {
 		return ""
 	}
-	target := strings.TrimRight(string(recorded), "\n ")
+	target := strings.TrimRight(string(recorded), gitTrailingSpace)
 	if target == "" || !filepath.IsAbs(target) {
 		return ""
 	}

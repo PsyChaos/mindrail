@@ -1326,6 +1326,22 @@ func TestRejectedCommandLineStillProducesAnEnvelope(t *testing.T) {
 	}
 }
 
+// TestANearMissIsOfferedTheCommandItAlmostSpelled pins the suggestion arm, which
+// no test reached: returning nil from suggestionRemedies unconditionally left
+// the suite green, so the most useful thing a rejected command line can say was
+// not a promise anything held it to.
+func TestANearMissIsOfferedTheCommandItAlmostSpelled(t *testing.T) {
+	repo := newInitializedRepo(t)
+
+	got := run(t, repo, "stat", "--json")
+	got.requireExit(t, app.ExitUsage)
+
+	remedy := strings.Join(got.errorPayload(t).NextAction, "\n")
+	if !strings.Contains(remedy, "mindrail status") {
+		t.Errorf("next_action = %q, which never offers `status` for the typo `stat`", remedy)
+	}
+}
+
 // TestEveryCommandInTheTreeRejectsABadLineTheSameWay covers the commands cobra
 // supplies rather than the four this package registers.
 //
@@ -1401,7 +1417,15 @@ func TestTheCommandsThatWorkedStillWork(t *testing.T) {
 func TestRejectedCommandLineStaysSilentOnStdoutWithoutJSON(t *testing.T) {
 	repo := newInitializedRepo(t)
 
-	for _, command := range [][]string{{"frobnicate"}, {"frobnicate", "--json=false"}, {"frobnicate", "--json=0"}} {
+	// The `--` row is the terminator sentinel: everything after it is an
+	// argument rather than a flag, so a `--json` there was never a request for
+	// JSON. Deleting the sentinel passed the whole suite.
+	for _, command := range [][]string{
+		{"frobnicate"},
+		{"frobnicate", "--json=false"},
+		{"frobnicate", "--json=0"},
+		{"frobnicate", "--", "--json"},
+	} {
 		t.Run(strings.Join(command, " "), func(t *testing.T) {
 			got := run(t, repo, command...)
 			got.requireExit(t, app.ExitUsage)
@@ -1475,6 +1499,16 @@ func TestEveryRemedyAboutAFileNamesThatFileAbsolutely(t *testing.T) {
 				if !strings.Contains(remedy, mustName) {
 					t.Errorf("%s: next_action = %q, which never names %q",
 						command, payload.NextAction, mustName)
+				}
+
+				// The machine-readable half of the same promise. A consumer
+				// that has to parse the path back out of an English sentence
+				// has not been given it, and this key could be deleted without
+				// anything noticing.
+				if payload.Code == app.CodePathEscapesRoot {
+					if got := payload.Metadata["inspect_path"]; got != mustName {
+						t.Errorf("%s: inspect_path metadata = %q, want %q", command, got, mustName)
+					}
 				}
 			}
 		})

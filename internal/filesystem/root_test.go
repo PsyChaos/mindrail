@@ -369,3 +369,63 @@ func requireSymlinks(t *testing.T) {
 		t.Skip("symbolic links require elevated privileges on Windows")
 	}
 }
+
+// TestEscapingComponentNamesTheEntryThatLeaves pins both arms of the walk that
+// chooses the path a containment remedy quotes.
+//
+// The shallowest-prefix rule is what makes `status` and `init` name one link
+// rather than two paths, and the "cannot be canonicalized at all" arm the
+// function documents was reached by nothing: dropping it from the condition
+// passed the whole suite. A symlink cycle is what reaches it — the walk gives up
+// after maxSymlinkHops — and it is a shape an untrusted repository can contain.
+func TestEscapingComponentNamesTheEntryThatLeaves(t *testing.T) {
+	worktree := t.TempDir()
+	root, err := NewRoot(worktree)
+	if err != nil {
+		t.Fatalf("NewRoot = %v, want no error", err)
+	}
+
+	t.Run("the shallowest prefix that leaves, not the path that was asked for", func(t *testing.T) {
+		outside := t.TempDir()
+		link := filepath.Join(worktree, "escapes")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Skipf("this filesystem does not support symlinks: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(link) })
+
+		// Two callers asking about two depths below one link have to be sent to
+		// the same place, because there is one thing to change.
+		for _, rel := range []string{"escapes", "escapes/config.toml", "escapes/a/b/c"} {
+			if got := root.escapingComponent(rel); got != link {
+				t.Errorf("escapingComponent(%q) = %q, want the link itself %q", rel, got, link)
+			}
+		}
+	})
+
+	t.Run("no root holds the empty path", func(t *testing.T) {
+		// The reasoning the unresolvable case rests on, stated as an assertion:
+		// canonicalize hands back the empty string with its error, and the
+		// containment test is what turns that into "look here". If a root ever
+		// held it, an unresolvable prefix would be walked past in silence.
+		if root.holds("") {
+			t.Error("the root holds the empty path, so an unresolvable prefix would be treated as contained")
+		}
+	})
+
+	t.Run("a prefix that cannot be resolved at all is the answer too", func(t *testing.T) {
+		cycle := filepath.Join(worktree, "loop")
+		other := filepath.Join(worktree, "loop2")
+		if err := os.Symlink(other, cycle); err != nil {
+			t.Skipf("this filesystem does not support symlinks: %v", err)
+		}
+		if err := os.Symlink(cycle, other); err != nil {
+			t.Fatalf("close the cycle: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(cycle); _ = os.Remove(other) })
+
+		if got := root.escapingComponent("loop/inside"); got != cycle {
+			t.Errorf("escapingComponent(%q) = %q, want the component the walk stopped at %q",
+				"loop/inside", got, cycle)
+		}
+	})
+}

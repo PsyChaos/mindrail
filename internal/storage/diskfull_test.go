@@ -3,6 +3,7 @@ package storage_test
 import (
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -116,8 +117,28 @@ func TestWriteFailureNamesALimitWhenTheFilesystemStillHasRoom(t *testing.T) {
 	if strings.Contains(remedy, "permission") || strings.Contains(remedy, "chmod") {
 		t.Errorf("NextAction = %q, which prescribes a permission change for a size limit", payload.NextAction)
 	}
-	if payload.Metadata["available_bytes"] == "" {
-		t.Error("the payload does not carry the free-space reading the classification was decided from")
+
+	// Positively, not just by what it avoids. Asserting only the absences left
+	// `Run mindrail doctor on <path> and hope.` passing: it says nothing the
+	// reader can act on, contains no forbidden word, and names the path. These
+	// are the three limits that produce this shape, and a remedy that names none
+	// of them hands over a condition with nowhere to look for its cause.
+	for _, limit := range []string{"ulimit -f", "quota", "max_page_count"} {
+		if !strings.Contains(remedy, limit) {
+			t.Errorf("NextAction = %q, which never mentions %s", payload.NextAction, limit)
+		}
+	}
+
+	available, err := strconv.ParseInt(payload.Metadata["available_bytes"], 10, 64)
+	if err != nil {
+		t.Fatalf("available_bytes = %q, which is not a number", payload.Metadata["available_bytes"])
+	}
+	if available <= 0 {
+		t.Errorf("available_bytes = %d, but this database's filesystem has room; "+
+			"the whole classification is decided from this reading", available)
+	}
+	if !strings.Contains(payload.Why, payload.Metadata["available_bytes"]) {
+		t.Errorf("why = %q, which does not quote the reading it was decided from", payload.Why)
 	}
 }
 

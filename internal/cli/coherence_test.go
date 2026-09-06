@@ -268,27 +268,91 @@ const (
 // read as unclassified — and it is why a new sentence has to be added here
 // rather than silently passing.
 var remedyPhrases = []struct {
-	phrase string
-	class  remedyClass
+	match func(lowered string) bool
+	class remedyClass
 }{
-	{"repoint the link", classRelink},
-	{"remount the filesystem", classReadOnly},
-	{"free space on", classSpace},
-	{"move aside", classObstruction},
-	{"restore write permission on", classPermission},
-	{"check the permissions on", classPermission},
-	{"make ", classPermission},
+	{containing("repoint the link"), classRelink},
+	{containing("remount the filesystem"), classReadOnly},
+	{containing("free space on"), classSpace},
+	{containing("move aside"), classObstruction},
+	{containing("restore write permission on"), classPermission},
+	{containing("check the permissions on"), classPermission},
+	// "Make <path> writable." and "Make <path> usable." are the doctor checks'
+	// own phrasing, and they are matched as that shape rather than as the bare
+	// substring "make ".
+	//
+	// "make " on its own is a word, not a sentence. It classified "Delete the
+	// whole repository to make it stop" as a permission remedy, which meant the
+	// seven agreement-matrix rows declaring classPermission were satisfied by
+	// any sentence at all that happened to contain it — the check those rows
+	// exist to perform, defeated by an English verb.
+	{makesSomethingUsable, classPermission},
+}
+
+func containing(phrase string) func(string) bool {
+	return func(lowered string) bool { return strings.Contains(lowered, phrase) }
+}
+
+// makesSomethingUsable recognises the doctor checks' "Make <path> writable."
+// and "Make <path> usable." — an instruction that opens with the verb and says
+// what state the path has to end in.
+func makesSomethingUsable(lowered string) bool {
+	if !strings.HasPrefix(lowered, "make ") {
+		return false
+	}
+	return strings.Contains(lowered, " writable") || strings.Contains(lowered, " usable")
 }
 
 // classOf reads one action sentence.
 func classOf(action string) remedyClass {
 	lowered := strings.ToLower(action)
 	for _, candidate := range remedyPhrases {
-		if strings.Contains(lowered, candidate.phrase) {
+		if candidate.match(lowered) {
 			return candidate.class
 		}
 	}
 	return classUnknown
+}
+
+// TestTheRemedyClassifierRefusesASentenceThatMerelyContainsAVerb is the
+// classifier's own guard.
+//
+// Every assertion built on classOf — the coherence invariant's path comparison
+// and the agreement matrix's per-row remedy class — is worth exactly what this
+// function's precision is worth, and it was worth very little: seven matrix rows
+// asserting classPermission were satisfied by any sentence containing "make ".
+// The rows here are the real phrasings, and the ones beside them are what a
+// wrong remedy looks like.
+func TestTheRemedyClassifierRefusesASentenceThatMerelyContainsAVerb(t *testing.T) {
+	tests := []struct {
+		action string
+		want   remedyClass
+	}{
+		{`Make "/repo/.git/mindrail" writable.`, classPermission},
+		{`Make "/repo/.mindrail/knowledge" usable.`, classPermission},
+		{`check the permissions on "/repo/.mindrail"`, classPermission},
+		{`restore write permission on /repo/.git/mindrail/mindrail.db`, classPermission},
+		{`free space on the filesystem holding "/repo/.git"`, classSpace},
+		{`remove or move aside "/repo/.mindrail"`, classObstruction},
+		{`remove or repoint the link at "/repo/.mindrail"`, classRelink},
+		{`remount the filesystem holding /repo read-write`, classReadOnly},
+
+		// None of these tells the reader to change a permission, and none of
+		// them may be read as if it did.
+		{"Delete the whole repository to make it stop", classUnknown},
+		{"Reinstall Mindrail from your package manager", classUnknown},
+		{"Ask your administrator to make a decision", classUnknown},
+		{"Run `mindrail init` to make progress", classUnknown},
+		{"", classUnknown},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.action, func(t *testing.T) {
+			if got := classOf(tc.action); got != tc.want {
+				t.Errorf("classOf(%q) = %q, want %q", tc.action, got, tc.want)
+			}
+		})
+	}
 }
 
 // pathRemedyClasses maps every absolute path a remedy names onto what that
