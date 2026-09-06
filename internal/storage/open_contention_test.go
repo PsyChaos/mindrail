@@ -31,16 +31,19 @@ const (
 
 // TestMain dispatches the re-execs before it runs anything.
 //
-// Two of the conditions this package classifies exist only between processes or
-// only inside a namespace this one cannot enter: contention for a write lock,
-// and a filesystem with nothing left on it. Both are reproduced by starting this
-// same binary in the state that has them, so both have to be recognised here
-// before the suite starts.
+// Three of the conditions this package classifies exist only between processes
+// or only inside a namespace this one cannot enter: contention for a write lock,
+// a filesystem with nothing left on it, and a filesystem mounted read-only. All
+// three are reproduced by starting this same binary in the state that has them,
+// so all three have to be recognised here before the suite starts.
 func TestMain(m *testing.M) {
 	if path := os.Getenv(contenderEnv); path != "" {
 		os.Exit(runContender(path))
 	}
 	if code, isChild := fullDiskChild(); isChild {
+		os.Exit(code)
+	}
+	if code, isChild := readOnlyChild(); isChild {
 		os.Exit(code)
 	}
 	os.Exit(m.Run())

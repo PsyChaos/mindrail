@@ -526,8 +526,17 @@ func TestBrokenSetupMatrix(t *testing.T) {
 				denyAccess(t, filepath.Join(repo, ".mindrail", "knowledge"))
 				return repo
 			},
-			wantExit:         app.ExitFailed,
-			wantCode:         app.CodeKnowledgeUnreadable,
+			// Finding E10. This row asserted KNOWLEDGE_UNREADABLE at exit 1 for
+			// five audits, and that is one of the two answers the same disk used
+			// to produce: `mindrail init` met the identical directory while
+			// creating the scaffold under it and called it
+			// RUNTIME_PATH_UNWRITABLE at exit 4, with the chmod that actually
+			// ends the condition instead of "check that it is readable, or
+			// delete it". The path condition is the cause and the unreadable
+			// records are its consequence, so the cause is what every command
+			// names now.
+			wantExit:         app.ExitUnavailable,
+			wantCode:         app.CodeRuntimePathUnwritable,
 			wantState:        doctor.StateError,
 			wantError:        true,
 			wantComponent:    status.ComponentKnowledge,

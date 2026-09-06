@@ -105,6 +105,17 @@ func busyFailure(what string, cause error) *app.DomainError {
 func readOnlyWriteFailure(ctx context.Context, q Querier, what string, cause error) *app.DomainError {
 	path := mainDatabaseFile(ctx, q)
 
+	// SQLITE_READONLY is the same primary code whether the mode bits refuse the
+	// write or the mount does, and the two remedies have nothing in common. The
+	// probe is what can tell them apart, so it is asked before the sentence is
+	// written: `doctor` inspecting this database and this failure describing it
+	// must not name one condition two ways.
+	if path != "" {
+		if refusal := ProbeWriteAccess(path); refusal.Blocker == BlockerReadOnlyMedia {
+			return readOnlyMediaWriteFailure(path, refusal.Blocked, what, cause)
+		}
+	}
+
 	return app.NewError(
 		app.CodeRuntimePathUnwritable,
 		app.KindUnavailable,
@@ -112,6 +123,26 @@ func readOnlyWriteFailure(ctx context.Context, q Querier, what string, cause err
 		"Mindrail can read the state already recorded here but cannot record anything new, so every command that writes will fail the same way.",
 		"restore write permission on "+describeRefusedPaths(path),
 	).WithMetadata("condition", "read_only").
+		WithMetadata("path", path).
+		WithCause(fmt.Errorf("%w: %w", ErrReadOnly, cause))
+}
+
+// readOnlyMediaWriteFailure is the read-only case whose remedy is not a chmod.
+//
+// It is kept apart from readOnlyWriteFailure for the same reason diskFullFailure
+// is: the sentence has to change, because a mount that refuses writes cannot be
+// argued with by changing a mode. Its wording matches
+// readOnlyMediaDatabaseError, so the `mindrail init` that fails on a read-only
+// checkout and the `mindrail doctor` that inspects the same checkout without
+// opening anything print one sentence rather than two.
+func readOnlyMediaWriteFailure(path, blocked, what string, cause error) *app.DomainError {
+	return app.NewError(
+		app.CodeRuntimePathUnwritable,
+		app.KindUnavailable,
+		"the runtime database is on a read-only filesystem, so Mindrail could not "+what,
+		"Mindrail can read the state already recorded here but cannot record anything new, and no permission change or free space will alter that while the mount refuses writes.",
+		"remount the filesystem holding "+describeDatabaseFile(blocked)+" read-write, or point MINDRAIL_RUNTIME_DIR at a writable location",
+	).WithMetadata("condition", "read_only_filesystem").
 		WithMetadata("path", path).
 		WithCause(fmt.Errorf("%w: %w", ErrReadOnly, cause))
 }

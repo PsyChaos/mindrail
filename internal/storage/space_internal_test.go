@@ -2,48 +2,38 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
 
-// TestFreeSpaceExhaustedOnlyWhenTheAnswerIsKnownAndZero pins the detection rule
-// itself, on values a test can state exactly rather than on a filesystem it has
-// to arrange.
+// TestNoSpaceRefusalUnwrapsToThePackagesOwnSentinel is what the delegation owes
+// this package.
 //
-// The two directions cost different things and both are here. Firing on an
-// unknown answer would report every repository on a platform without a
-// free-space call as unwritable; not firing on a known zero is the finding this
-// exists to close. The middle rows are the adjacent condition: a filesystem that
-// is nearly full is not a filesystem that is full, and `doctor` is read by
-// people whose disks are usually fairly full.
-func TestFreeSpaceExhaustedOnlyWhenTheAnswerIsKnownAndZero(t *testing.T) {
-	cases := []struct {
-		name  string
-		space freeSpace
-		want  bool
-	}{
-		{name: "no answer at all", space: freeSpace{}, want: false},
-		{name: "unknown answer carrying a zero", space: freeSpace{Known: false, AvailableBytes: 0}, want: false},
-		{name: "known and empty", space: freeSpace{Known: true, AvailableBytes: 0}, want: true},
-		{name: "known and one byte left", space: freeSpace{Known: true, AvailableBytes: 1}, want: false},
-		{name: "known and nearly full", space: freeSpace{Known: true, AvailableBytes: 4096}, want: false},
-		{name: "known and a terabyte free", space: freeSpace{Known: true, AvailableBytes: 1 << 40}, want: false},
-		{
-			// Only reachable through a broken statfs answer, and the direction
-			// matters: a negative byte count must not read as "plenty".
-			name: "known and nonsensical", space: freeSpace{Known: true, AvailableBytes: -1}, want: true,
-		},
-	}
+// The statfs reading moved to internal/filesystem so that every root consults
+// one answer, and the rule it applies is pinned there by
+// TestFreeSpaceExhaustedOnlyWhenTheAnswerIsKnownAndZero. What must not be lost
+// in the move is the sentinel: every classifier, command and test here asks
+// errors.Is(err, ErrDiskFull), and a refusal the filesystem layer discovered has
+// to keep answering yes.
+func TestNoSpaceRefusalUnwrapsToThePackagesOwnSentinel(t *testing.T) {
+	err := fmt.Errorf("%w: %w", ErrDiskFull,
+		fmt.Errorf("statfs %q: %w", "/full", filesystem.ErrNoSpace))
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.space.exhausted(); got != tc.want {
-				t.Errorf("freeSpace%+v.exhausted() = %v, want %v", tc.space, got, tc.want)
-			}
-		})
+	if !errors.Is(err, ErrDiskFull) {
+		t.Errorf("a no-space refusal = %v, want errors.Is(err, ErrDiskFull)", err)
+	}
+	if !errors.Is(err, filesystem.ErrNoSpace) {
+		t.Errorf("a no-space refusal = %v, want it to keep naming the filesystem condition", err)
+	}
+	if filesystem.ClassifyRefusal(err) != filesystem.BarrierNoSpace {
+		t.Errorf("ClassifyRefusal(%v) = %q, want %q; the one classifier has to recognise "+
+			"the shape this package wraps it in", err,
+			filesystem.ClassifyRefusal(err), filesystem.BarrierNoSpace)
 	}
 }
 

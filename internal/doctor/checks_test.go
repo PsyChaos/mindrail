@@ -1136,3 +1136,92 @@ func TestRuntimePathSummarySaysWhereTheStateActuallyIs(t *testing.T) {
 		})
 	}
 }
+
+// TestAnUnusableKnowledgeDirectoryIsReportedAsAPathCondition is finding E10 at
+// the layer that decides it.
+//
+// The loader answers "could these records be read?" and answers it correctly.
+// What it cannot answer is why not, so an unreadable `.mindrail/knowledge` and a
+// regular file standing where it belongs both arrived as KNOWLEDGE_UNREADABLE
+// with "check that it is a readable directory, or delete it" — an inspection and
+// an offer to remove a subtree that in both cases wants keeping. `mindrail init`
+// met the same bytes while creating the scaffold under them, classified them
+// through the filesystem layer and printed the chmod or the move that ends the
+// condition, at a different code and a different exit class.
+//
+// The three rows here are the discrimination itself, at the layer that owns it:
+// a probe that found a path condition speaks, a probe that found the directory
+// usable does not, and a probe that was never taken never speaks. The end-to-end
+// halves — the two commands agreeing, and the remedy being carried out — are in
+// the CLI agreement matrix.
+func TestAnUnusableKnowledgeDirectoryIsReportedAsAPathCondition(t *testing.T) {
+	refusal := filesystem.UnwritablePath(filesystem.RootRepository, "repository knowledge directory",
+		"/repo/.mindrail/knowledge", errors.New("access denied"))
+
+	tests := []struct {
+		name     string
+		probes   func(p *Probes)
+		wantCode app.Code
+	}{
+		{
+			name: "the directory refused the probe",
+			probes: func(p *Probes) {
+				p.KnowledgeDirKnown = true
+				p.KnowledgeDir = filesystem.Writability{
+					Dir:    "/repo/.mindrail/knowledge",
+					Kind:   filesystem.RootRepository,
+					Probed: "/repo/.mindrail/knowledge",
+					Exists: true,
+					Err:    refusal,
+				}
+			},
+			wantCode: app.CodeRuntimePathUnwritable,
+		},
+		{
+			// The over-fire guard. One record nobody can read leaves the
+			// directory holding it perfectly usable, and the reading that belongs
+			// to that condition is the loader's own.
+			name: "the directory is usable and the records are not",
+			probes: func(p *Probes) {
+				p.KnowledgeDirKnown = true
+				p.KnowledgeDir = filesystem.Writability{
+					Dir:    "/repo/.mindrail/knowledge",
+					Kind:   filesystem.RootRepository,
+					Probed: "/repo/.mindrail/knowledge",
+					Exists: true,
+					Usable: true,
+				}
+			},
+			wantCode: app.CodeKnowledgeUnreadable,
+		},
+		{
+			// The zero value must never read as "unwritable": a probe nobody
+			// took has established nothing.
+			name:     "the probe was never taken",
+			probes:   func(*Probes) {},
+			wantCode: app.CodeKnowledgeUnreadable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := healthySubject()
+			s.KnowledgeErr = app.NewError(
+				app.CodeKnowledgeUnreadable,
+				app.KindUnavailable,
+				`the knowledge store directory ".mindrail/knowledge" is not readable`,
+				"Mindrail cannot tell which decisions and invariants apply.",
+				"Check that .mindrail/knowledge is a readable directory",
+			).WithMetadata("path", ".mindrail/knowledge")
+			tt.probes(&s.Probes)
+
+			result := KnowledgeCheck(s).Run(t.Context())
+			if result.State != StateError {
+				t.Fatalf("state = %q, want %q", result.State, StateError)
+			}
+			if result.Code != tt.wantCode {
+				t.Errorf("code = %q, want %q\n  remedy: %v", result.Code, tt.wantCode, result.NextAction)
+			}
+		})
+	}
+}

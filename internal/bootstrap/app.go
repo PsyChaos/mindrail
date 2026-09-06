@@ -349,17 +349,22 @@ func (a *App) Diagnose(verdict error) error {
 // listing it handed an unrelated RUNTIME_PATH_UNWRITABLE verdict a cause about a
 // database path that was perfectly fine. Where that probe's answer *is* claimed,
 // the check carries its payload directly.
+//
+// The knowledge-subtree probe is on the list for the same reason the repository
+// config directory is: its answer became the one the report publishes for an
+// unusable `.mindrail/knowledge` (finding E10), and a claimed verdict with no
+// cause chain is one nobody can tell apart from any other unwritable path.
 func (a *App) diagnosedFailures() []error {
 	probes := a.doctorSubject.Probes
 
-	failures := make([]error, 0, 4)
+	failures := make([]error, 0, 5)
 	if a.startErr != nil {
 		failures = append(failures, a.startErr)
 	}
 	if probes.DBPathErr != nil {
 		failures = append(failures, probes.DBPathErr)
 	}
-	for _, err := range []error{probes.RuntimeDir.Err, probes.RepoConfigDir.Err} {
+	for _, err := range []error{probes.RuntimeDir.Err, probes.RepoConfigDir.Err, probes.KnowledgeDir.Err} {
 		if err != nil {
 			failures = append(failures, err)
 		}

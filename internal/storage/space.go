@@ -5,49 +5,30 @@ import (
 	"fmt"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
-
-// freeSpace is what the filesystem under a path will still hand out, as far as
-// this process is allowed to see.
-//
-// Known is not a formality. Every other question ProbeWriteAccess asks has a
-// definite answer on every platform this builds for; this one does not, and an
-// unknown answer must read as "no verdict" rather than as "no space". A
-// zero-valued freeSpace is therefore the safe value: it says nothing, and
-// nothing is what a probe that could not look owes the report.
-type freeSpace struct {
-	Known bool
-
-	// AvailableBytes is what an unprivileged write could still consume,
-	// saturated at the top rather than allowed to wrap. It excludes any reserve
-	// the filesystem keeps for the superuser, which is the number that decides
-	// whether an ordinary `mindrail init` succeeds.
-	AvailableBytes int64
-}
-
-// exhausted is the whole detection rule, and it is deliberately the narrowest
-// one that can be true: the filesystem was asked, it answered, and the answer
-// was that there is nothing left at all.
-//
-// A threshold above zero was considered and rejected. "Fewer than N bytes free"
-// would report a working repository as unwritable for every N a real filesystem
-// can dip below during a large checkout, and this verdict is read by `doctor`,
-// whose entire value is that it is believed. The cost of the narrow rule is an
-// under-fire: a filesystem with one block left cannot really give SQLite the
-// 32 KiB of shared-memory index it wants, and this still calls it writable. That
-// failure mode ends in the driver's own SQLITE_FULL, which is classified
-// (see diskFullCode) and carries the same remedy -- so the narrow rule costs a
-// user a slightly later diagnosis, where a wide one would cost them a false one.
-func (s freeSpace) exhausted() bool { return s.Known && s.AvailableBytes <= 0 }
 
 // noSpaceRefusal reports the filesystem holding dir having nothing left to give,
 // and nil for every other state including "could not be determined".
+//
+// The reading itself lives in internal/filesystem, and this is a translation
+// rather than a second implementation. The same statfs answer decides whether
+// the runtime root can be created, whether `<worktree>/.mindrail` can take a
+// config file, and whether this database can take a write; when the reading
+// lived here only the last of those could see a full disk, and `doctor` reported
+// `runtime_root_usable: true` over a machine where `mindrail init` could not
+// create the directory at all (finding E1).
+//
+// What is added here is the sentinel a storage caller unwraps for. ErrDiskFull
+// is what every command, test and classifier in this package asks errors.Is
+// about, and it has to keep answering yes for a condition the filesystem layer
+// discovered.
 func noSpaceRefusal(dir string) error {
-	space := statFreeSpace(dir)
-	if !space.exhausted() {
+	err := filesystem.NoSpaceRefusal(dir)
+	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("statfs %q: %w: the filesystem reports 0 bytes available", dir, ErrDiskFull)
+	return fmt.Errorf("%w: %w", ErrDiskFull, err)
 }
 
 // noSpaceDatabaseError reports a runtime database that no permission change can
@@ -78,4 +59,32 @@ func noSpaceDatabaseError(path, blocked string, cause error) error {
 		WithMetadata("condition", "disk_full").
 		WithMetadata("detail", cause.Error()).
 		WithCause(errors.Join(ErrDiskFull, cause))
+}
+
+// readOnlyMediaDatabaseError reports a runtime database on a filesystem mounted
+// read-only, which is the third condition in this family and the one that had no
+// remedy of its own.
+//
+// It is separate from unwritableDatabaseError for the reason that one is
+// separate from noSpaceDatabaseError: the sentence has to change, because the
+// remedy has nothing in common. "Restore write permission on mindrail.db,
+// mindrail.db-wal, mindrail.db-shm" was printed for files whose owner-write bit
+// was already set, on which `chmod` itself fails with the same EROFS that
+// refused the write (finding E4). Freeing space does not help either. The only
+// thing a user can do is make the mount writable or put the runtime state
+// somewhere that already is, so those are the two things this says.
+func readOnlyMediaDatabaseError(path, blocked string, cause error) error {
+	return app.NewError(
+		app.CodeRuntimePathUnwritable,
+		app.KindUnavailable,
+		"the runtime database at "+path+" is on a read-only filesystem",
+		"Mindrail can read the state already recorded here but cannot record anything new, and no permission change or free space will alter that while the mount refuses writes.",
+		"remount the filesystem holding "+blocked+" read-write, or point MINDRAIL_RUNTIME_DIR at a writable location",
+	).
+		WithMetadata("path", path).
+		WithMetadata("blocked_path", blocked).
+		WithMetadata("blocker", string(BlockerReadOnlyMedia)).
+		WithMetadata("condition", "read_only_filesystem").
+		WithMetadata("detail", cause.Error()).
+		WithCause(errors.Join(ErrReadOnly, filesystem.ErrReadOnlyMedia, cause))
 }

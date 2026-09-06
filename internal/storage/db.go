@@ -215,7 +215,16 @@ func verifyPragmas(ctx context.Context, sqlDB *sql.DB, opts Options, maxConns in
 	for range maxConns {
 		conn, err := sqlDB.Conn(ctx)
 		if err != nil {
-			return openFailure(opts.Path, err)
+			// classifyOpenError, not openFailure: this *is* an open. The pool
+			// creates a real connection here, and it fails for the same reasons
+			// the first one does -- the file is not a database, the filesystem
+			// cannot size the shared-memory index. Reaching for the generic
+			// constructor gave those conditions RUNTIME_DB_UNAVAILABLE and the
+			// dead-end remedy "check that the Git common directory exists and is
+			// writable", while the read-back three lines below named them
+			// correctly: one condition, two diagnoses, from two lines in one
+			// function (finding E3).
+			return classifyOpenError(opts.Path, err)
 		}
 		held = append(held, conn)
 
@@ -336,9 +345,34 @@ func classifyOpenError(path string, cause error) error {
 		return corruptFailure(path, cause)
 	case isDiskFullError(cause):
 		return diskFullOpenFailure(path, cause)
-	default:
+	case isBusyError(cause):
+		// Left alone deliberately, and this is the guard rather than an
+		// optimisation. openWithinBusyBudget decides whether to wait by asking
+		// isBusyError of what this returns, so a diagnosis that replaced the
+		// driver's error here would turn a lock another `mindrail init` releases
+		// a millisecond later into a permanent failure. It also keeps the probe
+		// below off the retry loop, which runs this every 20ms for up to five
+		// seconds.
 		return openFailure(path, cause)
 	}
+
+	// One condition the driver's result code cannot name, so the filesystem is
+	// asked instead. A read-only mount refuses the `-shm` a WAL database needs
+	// and comes back as SQLITE_CANTOPEN (14), which is also what a missing path
+	// and a refused permission produce -- so it cannot be classified from the
+	// code. It falls to the generic diagnosis below, whose first line ("check
+	// that the Git common directory exists and is writable") is a dead end over a
+	// directory that exists and whose mode bits are correct, and whose second
+	// sends the user to `mindrail init`, which fails identically (finding E4).
+	//
+	// Only the read-only mount is taken from the probe. Widening this to every
+	// refusal the probe can name would let a permission problem elsewhere in the
+	// footprint relabel an unrelated open failure, and the generic diagnosis is
+	// at least honest about not knowing.
+	if refusal := ProbeWriteAccess(path); refusal.Blocker == BlockerReadOnlyMedia {
+		return refusal.Err
+	}
+	return openFailure(path, cause)
 }
 
 // diskFullOpenFailure reports a database that could not be opened because the

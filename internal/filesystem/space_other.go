@@ -1,6 +1,6 @@
 //go:build !(linux || darwin)
 
-package storage
+package filesystem
 
 // statFreeSpace has no answer on a platform whose free-space call this package
 // does not speak, and says so.
@@ -13,5 +13,6 @@ package storage
 //
 // The two platforms with a real implementation are the ones the project builds
 // and tests on. Anything else is welcome to grow one; until it does, a full disk
-// there is diagnosed at the driver, by diskFullCode, which is portable.
-func statFreeSpace(string) freeSpace { return freeSpace{} }
+// there is diagnosed at the driver, by storage's own result-code classification,
+// which is portable.
+func statFreeSpace(string) FreeSpace { return FreeSpace{} }

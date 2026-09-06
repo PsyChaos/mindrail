@@ -1,7 +1,10 @@
 package cli_test
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +12,9 @@ import (
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/cli"
+	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
 // commandsUnderTest is every MR-001 command that reports on the repository it
@@ -32,11 +38,27 @@ type condition struct {
 	// command, because `init` writes and the next command must not inherit what
 	// it did.
 	setup func(t *testing.T) string
+	// options is the process seam the row needs. The zero value is the real git;
+	// the rows about a git that is missing, hanging or failing for a reason of
+	// its own cannot be arranged any other way, because PATH is process state
+	// and this suite runs every row in one process.
+	options cli.Options
 	// broken says whether every command should report a failure. The over-fire
 	// rows set it false and then assert that none of them reports one.
 	broken bool
-	// clear carries out the remedy on disk. Nil where there is nothing to undo.
+	// clear carries out the remedy on disk. Nil where there is nothing to undo,
+	// or where the condition is a process seam rather than a state of the disk.
 	clear func(t *testing.T, repo string)
+	// separately names a command whose answer legitimately differs from the ones
+	// that agree, and states why in the row.
+	//
+	// It exists because `init` acts where `status` and `doctor` only observe, so
+	// a handful of conditions really do end differently depending on which
+	// command met them — and loosening the whole assertion to accommodate them
+	// would give back exactly the coverage this test was written for. An
+	// exemption is checked in both directions: the row must still differ, or the
+	// exemption is stale and has to be deleted rather than left standing.
+	separately map[string]string
 }
 
 // TestOneConditionIsNamedTheSameWayByEveryCommand is finding D5, generalised.
@@ -59,19 +81,29 @@ type condition struct {
 // The remedy is then carried out, because a set of three identical sentences
 // that do not clear the condition is three commands agreeing on the wrong
 // answer.
+//
+// The matrix is the whole broken-setup matrix and not a sample of it. For five
+// audits it held three rows, and finding E10 was found by adding a fourth — an
+// unreadable `.mindrail/knowledge`, which `status` and `doctor` called
+// KNOWLEDGE_UNREADABLE at exit 1 with an inspection-only remedy while `init`
+// called it RUNTIME_PATH_UNWRITABLE at exit 4 with the chmod that actually
+// clears it — and watching all three assertions fail at once. A matrix with a
+// gap in it is a matrix that reports on the rows somebody happened to think of.
 func TestOneConditionIsNamedTheSameWayByEveryCommand(t *testing.T) {
 	for _, tc := range agreementConditions() {
 		t.Run(tc.name, func(t *testing.T) {
 			answers := make(map[string]answer, len(commandsUnderTest))
 			for _, command := range commandsUnderTest {
 				repo := tc.setup(t)
-				answers[command] = answerOf(t, repo, command)
+				answers[command] = answerOf(t, repo, tc.options, command)
 			}
 
-			first := commandsUnderTest[0]
-			for _, command := range commandsUnderTest[1:] {
+			agreeing := agreeingCommands(tc)
+			first := agreeing[0]
+			for _, command := range agreeing[1:] {
 				assertSameAnswer(t, tc.name, first, answers[first], command, answers[command])
 			}
+			assertExemptionsAreStillEarned(t, tc.name, answers[first], answers, tc.separately)
 
 			if tc.broken && answers[first].code == "" {
 				t.Fatalf("%s: no command reported a failure, so the condition did not reproduce", tc.name)
@@ -93,7 +125,7 @@ func TestOneConditionIsNamedTheSameWayByEveryCommand(t *testing.T) {
 			repo := tc.setup(t)
 			tc.clear(t, repo)
 			for _, command := range commandsUnderTest {
-				if got := run(t, repo, command); got.code != app.ExitSuccess {
+				if got := runWith(t, repo, tc.options, command); got.code != app.ExitSuccess {
 					t.Fatalf("%s: after carrying out the remedy %v, `%s` exited %d: %v\n%s",
 						tc.name, answers[first].nextAction, command, got.code, got.err, got.stdout)
 				}
@@ -102,18 +134,72 @@ func TestOneConditionIsNamedTheSameWayByEveryCommand(t *testing.T) {
 	}
 }
 
-// agreementConditions is the matrix.
-//
-// The first three are conditions in the working tree, which is where the two
-// disagreeing answers came from: the config loader reads that directory and
-// `init` writes it, and until pass 6 they described it differently. The last
-// three are the over-fire guards — a healthy repository, one that has simply not
-// been initialised, and the adjacent condition that must not be read as an
-// obstruction: a repository config directory that refuses writes but has nothing
-// left to receive, where `mindrail init` exits 0.
+// agreementConditions is the matrix: every condition six audits have produced,
+// grouped by the subsystem whose failure it is.
 func agreementConditions() []condition {
-	repoConfigDir := func(repo string) string { return filepath.Join(repo, ".mindrail") }
+	return slices.Concat(
+		discoveryConditions(),
+		repositoryConfigConditions(),
+		knowledgeConditions(),
+		runtimeRootConditions(),
+		runtimeDatabaseConditions(),
+		healthyConditions(),
+	)
+}
 
+// discoveryConditions are the §87 step-1 failures: no repository, no git, or a
+// git that will not answer. None of them is a state of a repository, so none of
+// them has a remedy this test can carry out on disk.
+func discoveryConditions() []condition {
+	return []condition{
+		{
+			name:    "git is not installed",
+			broken:  true,
+			setup:   newRepo,
+			options: cli.Options{Runner: unavailableGit()},
+		},
+		{
+			name:    "git does not answer in time",
+			broken:  true,
+			setup:   newRepo,
+			options: cli.Options{Runner: hangingGit()},
+		},
+		{
+			// Finding F1's condition, kept in the matrix because the remedy for
+			// it is the one that must never be `git init`: git ran, found a
+			// repository, and refused to read it.
+			name:    "git exits 128 for a reason other than a missing repository",
+			broken:  true,
+			setup:   newRepo,
+			options: cli.Options{Runner: unreadableRepositoryGit()},
+		},
+		{
+			name:   "the directory is not inside a Git repository",
+			broken: true,
+			setup:  newNonRepositoryDir,
+		},
+		{
+			name:   "a bare repository",
+			broken: true,
+			setup:  newBareRepo,
+		},
+		{
+			name:   "-C names a directory that does not exist",
+			broken: true,
+			setup: func(t *testing.T) string {
+				t.Helper()
+				requireGit(t)
+				isolateEnvironment(t)
+				return filepath.Join(t.TempDir(), "gone")
+			},
+		},
+	}
+}
+
+// repositoryConfigConditions are the states of <worktree>/.mindrail, which is
+// where the two disagreeing answers of finding D5 came from: the config loader
+// reads that directory and `init` writes it.
+func repositoryConfigConditions() []condition {
 	return []condition{
 		{
 			name:   "a regular file where the repository config directory belongs",
@@ -125,9 +211,7 @@ func agreementConditions() []condition {
 			},
 			clear: func(t *testing.T, repo string) {
 				t.Helper()
-				if err := os.Remove(repoConfigDir(repo)); err != nil {
-					t.Fatalf("carry out the remedy: %v", err)
-				}
+				removeForRemedy(t, repoConfigDir(repo))
 			},
 		},
 		{
@@ -140,9 +224,7 @@ func agreementConditions() []condition {
 			},
 			clear: func(t *testing.T, repo string) {
 				t.Helper()
-				if err := os.Chmod(repo, 0o700); err != nil {
-					t.Fatalf("carry out the remedy: %v", err)
-				}
+				chmodForRemedy(t, repo, 0o700)
 			},
 		},
 		{
@@ -157,14 +239,339 @@ func agreementConditions() []condition {
 			},
 			clear: func(t *testing.T, repo string) {
 				t.Helper()
-				if err := os.Remove(repoConfigDir(repo)); err != nil {
-					t.Fatalf("carry out the remedy: %v", err)
-				}
+				removeForRemedy(t, repoConfigDir(repo))
 			},
 		},
+		{
+			// The containment boundary of decision D-32 and spec §113, met from
+			// the one direction that is not an obstruction: the link resolves
+			// perfectly, to a directory outside the repository. It is a usage
+			// error rather than an environment one, and all three commands have
+			// to say so with the same words.
+			name:   "a symlink pointing outside the worktree where the repository config directory belongs",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				outside := t.TempDir()
+				if err := os.Symlink(outside, repoConfigDir(repo)); err != nil {
+					t.Fatalf("point .mindrail out of the worktree: %v", err)
+				}
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, repoConfigDir(repo))
+			},
+		},
+		{
+			// The other half of finding D4: a `.mindrail` that refuses writes and
+			// still has an entry `mindrail init` has to create in it. The
+			// over-fire guard for it — the same mode with nothing left to create
+			// — is in healthyConditions.
+			name:   "the repository config directory refuses writes and the scaffold is incomplete",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				removeForSetup(t, filepath.Join(repoConfigDir(repo), "knowledge"))
+				denyWrites(t, repoConfigDir(repo))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, repoConfigDir(repo), 0o755)
+			},
+		},
+		{
+			name:   "config.toml cannot be parsed",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeFile(t, configPath(repo), []byte("output.color = \n"))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, configPath(repo))
+			},
+		},
+		{
+			// A key this binary does not know is fatal rather than ignored: §37
+			// makes the effective configuration answerable, and a setting that
+			// was silently dropped is one nobody can answer for. The remedy is
+			// "correct or remove the reported key", and it is carried out as
+			// written rather than by deleting the whole file.
+			name:   "config.toml carries a key this binary does not know",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeFile(t, configPath(repo), []byte("[output]\ncolour = \"always\"\n"))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				writeFile(t, configPath(repo), []byte("[output]\ncolor = \"auto\"\n"))
+			},
+		},
+	}
+}
+
+// knowledgeConditions are the states of <worktree>/.mindrail/knowledge, which
+// finding E10 is about.
+func knowledgeConditions() []condition {
+	return []condition{
+		{
+			name:   "the knowledge directory is unreadable",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyAccess(t, knowledgeDir(repo))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, knowledgeDir(repo), 0o755)
+			},
+		},
+		{
+			name:   "a regular file where the knowledge directory belongs",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				mkdirForSetup(t, repoConfigDir(repo))
+				writeFile(t, knowledgeDir(repo), []byte("not a directory"))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, knowledgeDir(repo))
+			},
+		},
+		{
+			// One directory further down than the row above. The loader names
+			// the record bucket it could not walk, `init` fails on the .gitkeep
+			// it has to write inside it, and both have to name that directory.
+			name:   "a record bucket under the knowledge directory is unreadable",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyAccess(t, filepath.Join(knowledgeDir(repo), "decisions"))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, filepath.Join(knowledgeDir(repo), "decisions"), 0o755)
+			},
+		},
+		{
+			// The over-fire guard for both rows above: one record file nobody
+			// can read is a problem with that record, not with the directory
+			// holding it, and the path remedy must not fire on it.
+			name: "a single knowledge record that cannot be read",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", "{}")
+				denyAccess(t, filepath.Join(knowledgeDir(repo), "decisions", "DEC-0001.json"))
+				return repo
+			},
+		},
+		{
+			// Decision D-06: a clone with no records is healthy, and `init`
+			// re-creates the scaffold it laid down. Every command has to say so.
+			name: "the knowledge directory was removed after init",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				removeForSetup(t, knowledgeDir(repo))
+				return repo
+			},
+		},
+		{
+			// One record this binary cannot parse costs the repository that
+			// record and nothing else, so no command may fail on it.
+			name: "a knowledge record that is not valid JSON",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", "{not json")
+				return repo
+			},
+		},
+		{
+			name:   "a knowledge record written by a newer schema than this binary reads",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", futureSchemaRecord)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, filepath.Join(knowledgeDir(repo), "decisions", "DEC-0001.json"))
+			},
+		},
+	}
+}
+
+// runtimeRootConditions are the states of the machine-local runtime tree under
+// the Git common directory.
+func runtimeRootConditions() []condition {
+	return []condition{
+		{
+			name:   "the runtime root cannot be created",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				denyWrites(t, filepath.Join(repo, ".git"))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, filepath.Join(repo, ".git"), 0o755)
+			},
+		},
+		{
+			name:   "the runtime root refuses writes after init",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyWrites(t, runtimeRoot(repo))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, runtimeRoot(repo), 0o700)
+			},
+		},
+		{
+			name:   "a regular file where the runtime root belongs",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				writeFile(t, runtimeRoot(repo), []byte("not a directory"))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, runtimeRoot(repo))
+			},
+		},
+		{
+			// Decision D-01's one zero-exit row, reached from the other side: the
+			// repository was initialised and the runtime tree was then deleted.
+			// It is the same state as never having run init, and every command
+			// has to grade it that way.
+			name: "the runtime directory was deleted after init",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				removeForSetup(t, runtimeRoot(repo))
+				return repo
+			},
+		},
+		{
+			// Finding F13: MR-001 stores nothing in the cache, so an unusable
+			// cache directory is reported and stops nothing.
+			name: "the cache directory refuses writes",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyWrites(t, filepath.Join(runtimeRoot(repo), "cache"))
+				return repo
+			},
+		},
+	}
+}
+
+// runtimeDatabaseConditions are the states of the runtime database itself.
+func runtimeDatabaseConditions() []condition {
+	return []condition{
+		{
+			name:   "the database was truncated to garbage",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				corruptDatabase(t, repo)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, runtimeDBPath(t, repo))
+			},
+		},
+		{
+			// Finding H14: an interrupted first run leaves a zero-length file at
+			// the database path. It is the uninitialised state, not a corrupt
+			// database, and it exits 0.
+			name: "a zero-length database file",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				truncateForSetup(t, runtimeDBPath(t, repo))
+				return repo
+			},
+		},
+		{
+			name:   "the database path is occupied by a directory",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newRepo(t)
+				mkdirForSetup(t, runtimeDBPath(t, repo))
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, runtimeDBPath(t, repo))
+			},
+		},
+		{
+			// Finding W5: the file opens, reports WAL and foreign keys, and
+			// refuses every write.
+			name:   "the database file refuses writes",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				chmodForTest(t, runtimeDBPath(t, repo), 0o444)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				chmodForRemedy(t, runtimeDBPath(t, repo), 0o600)
+			},
+		},
+		{
+			name:   "the runtime tables were dropped",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				dropRuntimeTables(t, repo)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, runtimeDBPath(t, repo))
+			},
+		},
+		{
+			name:   "the migration ledger rows were deleted",
+			broken: true,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				emptyMigrationLedger(t, repo)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				removeForRemedy(t, runtimeDBPath(t, repo))
+			},
+		},
+	}
+}
+
+// healthyConditions are the over-fire guards. Every new detection has to leave
+// them alone, and every one of them is the adjacent state of a row above.
+func healthyConditions() []condition {
+	return []condition{
 		{name: "a healthy initialised repository", setup: newInitializedRepo},
 		{name: "a repository that has never been initialised", setup: newRepo},
 		{
+			// The adjacent condition to "the repository config directory refuses
+			// writes and the scaffold is incomplete": the same mode with nothing
+			// left to create, where `mindrail init` exits 0.
 			name: "a repository config directory with nothing left to receive",
 			setup: func(t *testing.T) string {
 				repo := newInitializedRepo(t)
@@ -172,14 +579,37 @@ func agreementConditions() []condition {
 				return repo
 			},
 		},
+		{
+			// The adjacent condition to "the knowledge directory is unreadable":
+			// a knowledge tree that can be read and not added to, which stops
+			// nothing MR-001 does.
+			name: "a knowledge directory that refuses writes with nothing left to receive",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				denyWrites(t, knowledgeDir(repo))
+				return repo
+			},
+		},
 	}
 }
 
-// answerOf runs one command in JSON mode and reduces its envelope.
-func answerOf(t *testing.T, repo, command string) answer {
-	t.Helper()
+// futureSchemaRecord is a decision stamped with a schema version outside this
+// binary's reader window (kernel-scope §3), which is the one knowledge problem
+// that is fatal rather than costing a single record.
+const futureSchemaRecord = `{"schema_version": 99, "id": "DEC-0001", "title": "from the future", "status": "accepted"}`
 
-	got := run(t, repo, command, "--json")
+// answerOf runs one command in JSON mode and reduces its envelope.
+func answerOf(t *testing.T, repo string, options cli.Options, command string) answer {
+	t.Helper()
+	return answerFrom(t, repo, command, runWith(t, repo, options, command, "--json"))
+}
+
+// answerFrom reduces an envelope that has already been rendered, for a caller
+// that needs the raw document as well — the coherence invariant reads the same
+// run rather than provoking a second one, because a condition that is a state of
+// the *filesystem* cannot be arranged twice cheaply.
+func answerFrom(t *testing.T, repo, command string, got result) answer {
+	t.Helper()
 
 	var envelope struct {
 		Error *app.ErrorPayload `json:"error"`
@@ -204,6 +634,52 @@ func answerOf(t *testing.T, repo, command string) answer {
 	return reduced
 }
 
+// agreeingCommands is the commands a row expects to answer identically.
+func agreeingCommands(tc condition) []string {
+	agreeing := make([]string, 0, len(commandsUnderTest))
+	for _, command := range commandsUnderTest {
+		if _, exempt := tc.separately[command]; !exempt {
+			agreeing = append(agreeing, command)
+		}
+	}
+	if len(agreeing) == 0 {
+		return commandsUnderTest
+	}
+	return agreeing
+}
+
+// assertExemptionsAreStillEarned checks an exemption in both directions.
+//
+// An exemption is narrow by construction: it excuses the *remedy* and nothing
+// else. A command that names a different condition or exits in a different class
+// is the disagreement this whole test exists to catch, and no row may write that
+// off as "init acts where status observes" — that sentence explains a remedy
+// naming a directory init created, not two different diagnoses.
+//
+// And it has to still be earned. When the divergence goes away — because the
+// code was fixed, or because the condition changed — the exemption stops
+// describing anything and starts hiding the assertion it was carved out of, so
+// an exempted command that now agrees is an error too.
+func assertExemptionsAreStillEarned(t *testing.T, name string, agreed answer, answers map[string]answer, separately map[string]string) {
+	t.Helper()
+
+	for command, why := range separately {
+		got := answers[command]
+		if got.code != agreed.code {
+			t.Errorf("%s: `%s` is exempted from the remedy because %q, and it also calls the condition %q where the rest call it %q; an exemption does not cover the code",
+				name, command, why, got.code, agreed.code)
+		}
+		if got.exit != agreed.exit {
+			t.Errorf("%s: `%s` is exempted from the remedy because %q, and it also exits %d where the rest exit %d; an exemption does not cover the exit class",
+				name, command, why, got.exit, agreed.exit)
+		}
+		if slices.Equal(got.nextAction, agreed.nextAction) {
+			t.Errorf("%s: `%s` is exempted from the agreement because %q, and it now prints the same remedy as the rest; delete the exemption",
+				name, command, why)
+		}
+	}
+}
+
 // assertSameAnswer compares two commands' answers about one condition.
 //
 // The exit code is compared rather than only its class, because decision D-03
@@ -223,5 +699,119 @@ func assertSameAnswer(t *testing.T, condition, leftName string, left answer, rig
 	if !slices.Equal(left.nextAction, right.nextAction) {
 		t.Errorf("%s: the two commands print different remedies for one condition\n  %s: %v\n  %s: %v",
 			condition, leftName, left.nextAction, rightName, right.nextAction)
+	}
+}
+
+// --- matrix fixtures ---------------------------------------------------------
+
+func repoConfigDir(repo string) string { return filepath.Join(repo, ".mindrail") }
+
+func knowledgeDir(repo string) string { return filepath.Join(repoConfigDir(repo), "knowledge") }
+
+func runtimeRoot(repo string) string { return filepath.Join(repo, ".git", "mindrail") }
+
+// newNonRepositoryDir is an ordinary directory with no repository above it.
+func newNonRepositoryDir(t *testing.T) string {
+	t.Helper()
+	requireGit(t)
+	isolateEnvironment(t)
+	return t.TempDir()
+}
+
+// unreadableRepositoryGit is a git that found a repository and refused to read
+// it, which is the one exit-128 shape whose remedy must never be `git init`
+// (finding F1). The stderr is git 2.55's own, under the LC_ALL=C the runner
+// forces.
+func unreadableRepositoryGit() *git.FakeRunner {
+	return &git.FakeRunner{Default: git.FakeResponse{
+		Stderr: "fatal: detected dubious ownership in repository at '/srv/repo'\n" +
+			"To add an exception for this directory, call:\n\n" +
+			"\tgit config --global --add safe.directory /srv/repo\n",
+		Err: errors.New("exit status 128"),
+	}}
+}
+
+// dropRuntimeTables removes the tables the migrations created and leaves the
+// ledger claiming they are there, which is what a hand-edited database looks
+// like from the next run's side.
+func dropRuntimeTables(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_workspaces_project`,
+		`DROP TABLE IF EXISTS workspaces`,
+		`DROP TABLE IF EXISTS projects`)
+}
+
+// emptyMigrationLedger deletes every applied-migration row without touching the
+// tables those migrations created, which is the other half of the same hazard:
+// the schema is there and the record of it is gone.
+func emptyMigrationLedger(t *testing.T, repo string) {
+	t.Helper()
+	execOnRuntimeDB(t, repo, `DELETE FROM schema_migrations`)
+}
+
+func execOnRuntimeDB(t *testing.T, repo string, statements ...string) {
+	t.Helper()
+
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatalf("open runtime database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	err = storage.InTx(t.Context(), db.DB, func(ctx context.Context, tx *sql.Tx) error {
+		for _, statement := range statements {
+			if _, execErr := tx.ExecContext(ctx, statement); execErr != nil {
+				return execErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("rewrite the runtime database: %v", err)
+	}
+}
+
+// mkdirForSetup, removeForSetup and truncateForSetup arrange a condition;
+// chmodForRemedy and removeForRemedy carry a printed one out. They are spelled
+// apart so a failure says which half of the row failed.
+func mkdirForSetup(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("arrange %s: %v", dir, err)
+	}
+}
+
+func removeForSetup(t *testing.T, path string) {
+	t.Helper()
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatalf("arrange %s: %v", path, err)
+	}
+}
+
+func truncateForSetup(t *testing.T, path string) {
+	t.Helper()
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("arrange %s%s: %v", path, suffix, err)
+		}
+	}
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatalf("arrange %s: %v", path, err)
+	}
+}
+
+func removeForRemedy(t *testing.T, path string) {
+	t.Helper()
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatalf("carry out the remedy on %s: %v", path, err)
+	}
+}
+
+func chmodForRemedy(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatalf("carry out the remedy on %s: %v", path, err)
 	}
 }

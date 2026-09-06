@@ -3,6 +3,7 @@ package cli_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -21,103 +22,6 @@ import (
 // each other or from doctor's own constant.
 const initRemedy = "mindrail init"
 
-// coherenceSetup is one repository state, rendered by every command that
-// reports on it.
-type coherenceSetup struct {
-	name  string
-	setup func(t *testing.T) string
-}
-
-// coherenceSetups is the matrix the invariant runs over.
-//
-// The first four are conditions `mindrail init` cannot clear, which is the half
-// where a contradiction costs the reader a wasted command and their trust in the
-// report. The last three are the over-fire guards: a healthy repository, a
-// repository whose only problem is that init has not run yet, and the adjacent
-// condition — an unusable *cache* directory — that must never be read as an
-// obstruction, because grading it like the runtime root is what bricked a
-// working repository once already (finding F13).
-func coherenceSetups() []coherenceSetup {
-	return []coherenceSetup{
-		{
-			name: "runtime directory unwritable after init",
-			setup: func(t *testing.T) string {
-				repo := newInitializedRepo(t)
-				denyWrites(t, filepath.Join(repo, ".git", "mindrail"))
-				return repo
-			},
-		},
-		{
-			name: "runtime directory unwritable before init",
-			setup: func(t *testing.T) string {
-				repo := newRepo(t)
-				denyWrites(t, filepath.Join(repo, ".git"))
-				return repo
-			},
-		},
-		{
-			name: "database path occupied by a directory",
-			setup: func(t *testing.T) string {
-				repo := newRepo(t)
-				if err := os.MkdirAll(runtimeDBPath(t, repo), 0o755); err != nil {
-					t.Fatalf("occupy the database path: %v", err)
-				}
-				return repo
-			},
-		},
-		{
-			name: "runtime database corrupt",
-			setup: func(t *testing.T) string {
-				repo := newInitializedRepo(t)
-				corruptDatabase(t, repo)
-				return repo
-			},
-		},
-		{
-			// Finding W6. The matrix reached the runtime root through its mode
-			// bits and through the database path's contents, and never through a
-			// regular file standing where the root itself should be — so the
-			// disagreement this invariant exists to catch went on being produced
-			// by a condition it simply never ran over. Every row here is a
-			// condition, and a condition nobody set up is a condition nobody
-			// checked.
-			name: "regular file occupying the runtime root",
-			setup: func(t *testing.T) string {
-				repo := newRepo(t)
-				writeFile(t, filepath.Join(repo, ".git", "mindrail"), []byte("not a directory"))
-				return repo
-			},
-		},
-		{
-			// Finding W5's condition, added here as well as to its own test: the
-			// document it produces has an error object and four readings of the
-			// runtime store, and they have to agree about whether `mindrail init`
-			// is worth running. It is not — the write it makes is the one that
-			// fails.
-			name: "runtime database file unwritable",
-			setup: func(t *testing.T) string {
-				repo := newInitializedRepo(t)
-				chmodForTest(t, runtimeDBPath(t, repo), 0o444)
-				return repo
-			},
-		},
-		{name: "healthy initialised repository", setup: newInitializedRepo},
-		{name: "repository that was never initialised", setup: newRepo},
-		{
-			name: "uninitialised repository with an occupied cache directory",
-			setup: func(t *testing.T) string {
-				repo := newRepo(t)
-				runtimeRoot := filepath.Join(repo, ".git", "mindrail")
-				if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
-					t.Fatalf("create %s: %v", runtimeRoot, err)
-				}
-				writeFile(t, filepath.Join(runtimeRoot, "cache"), []byte("not a directory"))
-				return repo
-			},
-		},
-	}
-}
-
 // TestNoDocumentContradictsItsOwnErrorObject is the invariant that stops finding
 // H11's class from coming back.
 //
@@ -134,20 +38,37 @@ func coherenceSetups() []coherenceSetup {
 // `mindrail init`, the one command that cannot succeed there. The reader who
 // follows the component gets exit 4 and the same advice again.
 //
-// The contradiction this asserts on is the sharpest one MR-001 can express:
-// whether `mindrail init` is worth running. The error object is the authority,
-// because it is the value `ok`, the exit code and the remedy are all derived
-// from (finding F11); if it does not offer init, nothing else in the document
-// may. It deliberately says nothing about documents with no error object — a
+// The error object is the authority, because it is the value `ok`, the exit code
+// and the remedy are all derived from (finding F11). Two things it says are
+// asserted, and neither is a spelling of one hard-coded string:
+//
+//   - Which Mindrail commands are worth running. If the error object does not
+//     send the reader to `mindrail <sub>`, nothing else in the document may.
+//     Written against `mindrail init` because that is the only command MR-001
+//     has a remedy for, and stated over whatever commands the remedies actually
+//     mention so that a later one is covered the day it is added.
+//   - What to do about each path it names. "Move this aside", "change these
+//     permissions", "free space here" and "remount this read-write" are four
+//     mutually exclusive answers about one directory, and three of the four
+//     cannot be carried out when the fourth is the true one. A document that
+//     prints two of them about the same path has sent the reader to do something
+//     that will not work.
+//
+// It deliberately says nothing about documents with no error object — a
 // repository that merely has not been initialised has no authority to contradict,
 // and its components are supposed to recommend init.
+//
+// It runs over the whole broken-setup matrix rather than a list of its own. The
+// two lists were maintained separately for three audits and drifted, which is how
+// finding E10's condition came to be absent from both; one matrix means a
+// condition added for either invariant is checked by both.
 func TestNoDocumentContradictsItsOwnErrorObject(t *testing.T) {
-	for _, tc := range coherenceSetups() {
+	for _, tc := range agreementConditions() {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, command := range []string{"status", "doctor", "init"} {
+			for _, command := range commandsUnderTest {
 				t.Run(command, func(t *testing.T) {
 					repo := tc.setup(t)
-					assertDocumentIsCoherent(t, command, run(t, repo, command, "--json").stdout)
+					assertDocumentIsCoherent(t, command, runWith(t, repo, tc.options, command, "--json").stdout)
 				})
 			}
 		})
@@ -166,22 +87,281 @@ func assertDocumentIsCoherent(t *testing.T, command, stdout string) {
 		t.Fatalf("%s: stdout is not a JSON envelope: %v\n%s", command, err, stdout)
 	}
 
-	if envelope.Error == nil || offersInitRemedy(envelope.Error.NextAction) {
+	if envelope.Error == nil {
 		return
 	}
 
-	for _, remedy := range remediesIn(t, command, envelope.Data) {
-		if offersInitRemedy(remedy.actions) {
-			t.Errorf(""+
-				"%s: %s recommends `%s`, which the error object in the same document contradicts.\n"+
-				"  error object: %s => %v\n"+
-				"  %s: %v",
-				command, remedy.where, initRemedy,
-				envelope.Error.Code, envelope.Error.NextAction,
-				remedy.where, remedy.actions)
+	authority := remedy{where: "error.next_action", actions: envelope.Error.NextAction}
+	for _, found := range remediesIn(t, command, envelope.Data) {
+		for _, contradiction := range contradictionsBetween(authority, found) {
+			t.Errorf("%s: %s\n  error object: %s => %v\n  %s: %v",
+				command, contradiction,
+				envelope.Error.Code, authority.actions,
+				found.where, found.actions)
 		}
 	}
 }
+
+// contradictionsBetween is the invariant itself, as a function of two remedy
+// lists so that it can be exercised against the documents that produced the
+// findings it exists for rather than only against whatever the matrix happens
+// to render today.
+func contradictionsBetween(authority, found remedy) []string {
+	return slices.Concat(
+		unauthorisedCommands(authority, found),
+		contradictoryPathRemedies(authority, found),
+	)
+}
+
+// unauthorisedCommands is the first half: a component may not send the reader to
+// a Mindrail command the error object does not.
+func unauthorisedCommands(authority, found remedy) []string {
+	authorised := mindrailCommandsIn(authority.actions)
+
+	var contradictions []string
+	for _, recommended := range mindrailCommandsIn(found.actions) {
+		if slices.Contains(authorised, recommended) {
+			continue
+		}
+		contradictions = append(contradictions, fmt.Sprintf(
+			"%s recommends `%s`, which the error object in the same document contradicts.",
+			found.where, recommended))
+	}
+	return contradictions
+}
+
+// contradictoryPathRemedies is the second half, and it is the one that
+// generalises past `mindrail init`.
+//
+// Every remedy this binary prints about a path belongs to one of five classes,
+// and the classes are exclusive by construction: a filesystem with no room left
+// has correct mode bits, a read-only mount refuses the chmod with the same errno
+// it refused the write with, and an entry standing in the way is cleared by
+// neither. So two remedies naming one path in two classes cannot both be right,
+// and the reader who picks the wrong one is sent to do something that fails.
+func contradictoryPathRemedies(authority, found remedy) []string {
+	settled := pathRemedyClasses(authority.actions)
+
+	var contradictions []string
+	for _, path := range slices.Sorted(maps.Keys(pathRemedyClasses(found.actions))) {
+		class := pathRemedyClasses(found.actions)[path]
+		want, named := settled[path]
+		if !named || want == class {
+			continue
+		}
+		contradictions = append(contradictions, fmt.Sprintf(
+			"%s says to %s %q while the error object in the same document says to %s it.",
+			found.where, class, path, want))
+	}
+	return contradictions
+}
+
+// TestTheCoherenceInvariantReportsTheDocumentsItWasWrittenFor is the invariant's
+// own over-fire and under-fire guard.
+//
+// An invariant that passes because it recognises nothing is worse than no
+// invariant: it reports a green suite over exactly the documents it was written
+// to reject. So it is run against the two rendered documents that produced
+// findings H11 and E2 — reconstructed from the reports themselves — and against
+// the coherent shapes it must leave alone.
+func TestTheCoherenceInvariantReportsTheDocumentsItWasWrittenFor(t *testing.T) {
+	tests := []struct {
+		name      string
+		authority remedy
+		found     remedy
+		wantFlag  bool
+	}{
+		{
+			// Finding H11 as it was rendered: the error object said to fix the
+			// permissions and the component beside it said to run the one
+			// command that cannot succeed there.
+			name:      "a component offers an init the error object does not",
+			authority: remedy{where: "error.next_action", actions: []string{`check the permissions on "/repo/.git/mindrail"`}},
+			found:     remedy{where: "data.components.runtime_db.next_action", actions: []string{"mindrail init"}},
+			wantFlag:  true,
+		},
+		{
+			// Finding E2: a chmod prescribed for a filesystem with zero bytes
+			// free, beside the sentence that names the real condition.
+			name:      "a check prescribes a chmod for a path the error object says is full",
+			authority: remedy{where: "error.next_action", actions: []string{`free space on the filesystem holding "/repo/.git"`}},
+			found:     remedy{where: "data.checks[].next_action", actions: []string{`check the permissions on "/repo/.git"`}},
+			wantFlag:  true,
+		},
+		{
+			// Finding E4: a read-only mount answered with a chmod that fails
+			// with the same EROFS that refused the write.
+			name:      "a check prescribes a chmod for a read-only mount",
+			authority: remedy{where: "error.next_action", actions: []string{`remount the filesystem holding "/repo/.git" read-write, or move this repository to a writable location`}},
+			found:     remedy{where: "data.checks[].next_action", actions: []string{`Make /repo/.git writable.`}},
+			wantFlag:  true,
+		},
+		{
+			name:      "an obstruction answered with a chmod",
+			authority: remedy{where: "error.next_action", actions: []string{`remove or move aside "/repo/.mindrail"`}},
+			found:     remedy{where: "data.checks[].next_action", actions: []string{`check the permissions on "/repo/.mindrail"`}},
+			wantFlag:  true,
+		},
+		{
+			// The over-fire guards. A component that repeats the error object's
+			// own remedy, one that names a different path, one that offers the
+			// same init the error object already offers, and one whose sentence
+			// this table does not recognise are all coherent.
+			name:      "a component repeating the error object's remedy",
+			authority: remedy{where: "error.next_action", actions: []string{`check the permissions on "/repo/.git"`}},
+			found:     remedy{where: "data.checks[].next_action", actions: []string{`check the permissions on "/repo/.git"`}},
+		},
+		{
+			name:      "a component naming a different path",
+			authority: remedy{where: "error.next_action", actions: []string{`check the permissions on "/repo/.git"`}},
+			found:     remedy{where: "data.checks[].next_action", actions: []string{`remove or move aside "/repo/.mindrail"`}},
+		},
+		{
+			name:      "a component offering the init the error object also offers",
+			authority: remedy{where: "error.next_action", actions: []string{`remove or move aside "/repo/.git/mindrail", then run ` + "`mindrail init`" + `.`}},
+			found:     remedy{where: "data.components.runtime_db.next_action", actions: []string{"mindrail init"}},
+		},
+		{
+			name:      "a sentence that prescribes nothing about a path",
+			authority: remedy{where: "error.next_action", actions: []string{`check the permissions on "/repo/.git"`}},
+			found:     remedy{where: "data.checks[].next_action", actions: []string{"Resolve the failure reported by the git check, then read this report again."}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := contradictionsBetween(tc.authority, tc.found)
+			if tc.wantFlag && len(got) == 0 {
+				t.Fatalf("the invariant reported nothing about a document it exists to reject:\n  %v\n  %v",
+					tc.authority.actions, tc.found.actions)
+			}
+			if !tc.wantFlag && len(got) != 0 {
+				t.Fatalf("the invariant reported %v about a coherent document:\n  %v\n  %v",
+					got, tc.authority.actions, tc.found.actions)
+			}
+		})
+	}
+}
+
+// remedyClass names what a remedy sentence tells the reader to do about a path.
+// The strings are the phrasing a failure message uses, so a report of a
+// contradiction reads as one sentence.
+type remedyClass string
+
+const (
+	classUnknown     remedyClass = ""
+	classObstruction remedyClass = "move aside what is in the way of"
+	classRelink      remedyClass = "repoint the link at"
+	classPermission  remedyClass = "change the permissions on"
+	classSpace       remedyClass = "free space on"
+	classReadOnly    remedyClass = "remount"
+)
+
+// remedyPhrases maps the sentences this binary actually prints onto the class
+// each one belongs to, most specific first.
+//
+// It is a table of the real phrasings rather than a parser: every one of them is
+// written in this repository, by filesystem.unwritableSubjectError,
+// storage.Presence, storage.WriteAccess or a doctor check, and a phrase nobody
+// prints classifies as nothing and asserts nothing. That is the honest failure
+// mode — a remedy this table does not recognise is not read as agreeing, it is
+// read as unclassified — and it is why a new sentence has to be added here
+// rather than silently passing.
+var remedyPhrases = []struct {
+	phrase string
+	class  remedyClass
+}{
+	{"repoint the link", classRelink},
+	{"remount the filesystem", classReadOnly},
+	{"free space on", classSpace},
+	{"move aside", classObstruction},
+	{"restore write permission on", classPermission},
+	{"check the permissions on", classPermission},
+	{"make ", classPermission},
+}
+
+// classOf reads one action sentence.
+func classOf(action string) remedyClass {
+	lowered := strings.ToLower(action)
+	for _, candidate := range remedyPhrases {
+		if strings.Contains(lowered, candidate.phrase) {
+			return candidate.class
+		}
+	}
+	return classUnknown
+}
+
+// pathRemedyClasses maps every absolute path a remedy names onto what that
+// remedy says to do about it.
+//
+// A sentence that names two paths files the same class under both, which is
+// correct: "remount the filesystem holding X read-write, or move this repository
+// to a writable location" is one instruction about one filesystem however many
+// paths it spells.
+func pathRemedyClasses(actions []string) map[string]remedyClass {
+	classes := make(map[string]remedyClass)
+	for _, action := range actions {
+		class := classOf(action)
+		if class == classUnknown {
+			continue
+		}
+		for _, path := range absolutePathsIn(action) {
+			// The first class named for a path wins, so a document is reported
+			// against the remedy its error object printed first rather than
+			// against whichever happened to be scanned last.
+			if _, seen := classes[path]; !seen {
+				classes[path] = class
+			}
+		}
+	}
+	return classes
+}
+
+// absolutePathsIn pulls the absolute paths out of one remedy sentence.
+//
+// Paths are printed quoted by the filesystem layer and bare by the storage and
+// doctor layers, so both spellings are read, and the trailing punctuation a
+// sentence ends with is trimmed off: "/x/y." and "/x/y" are one path.
+func absolutePathsIn(action string) []string {
+	found := make([]string, 0, 2)
+	for _, field := range strings.Fields(action) {
+		trimmed := strings.Trim(field, `"'`+"`.,;:")
+		if strings.HasPrefix(trimmed, "/") && len(trimmed) > 1 {
+			found = append(found, filepath.Clean(trimmed))
+		}
+	}
+	return found
+}
+
+// mindrailCommandsIn lists the `mindrail <sub>` commands a remedy sends the
+// reader to, deduplicated and sorted so a failure message is stable.
+func mindrailCommandsIn(actions []string) []string {
+	found := make([]string, 0, 2)
+	for _, action := range actions {
+		rest := action
+		for {
+			index := strings.Index(rest, mindrailBinary+" ")
+			if index < 0 {
+				break
+			}
+			rest = rest[index+len(mindrailBinary)+1:]
+			sub := strings.Trim(strings.Fields(rest + " ")[0], "`.,;:'\"")
+			if sub == "" {
+				continue
+			}
+			command := mindrailBinary + " " + sub
+			if !slices.Contains(found, command) {
+				found = append(found, command)
+			}
+		}
+	}
+	slices.Sort(found)
+	return found
+}
+
+// mindrailBinary is the name a remedy spells when it sends the reader back to
+// this program.
+const mindrailBinary = "mindrail"
 
 // remedy is one next_action list found in a rendered document, with the JSON
 // path it was found at so a failure names the field rather than the value.
@@ -233,25 +413,6 @@ func remediesIn(t *testing.T, command string, data json.RawMessage) []remedy {
 
 	sort.Slice(found, func(i, j int) bool { return found[i].where < found[j].where })
 	return found
-}
-
-// offersInitRemedy reports whether any of these actions sends the reader to
-// `mindrail init`.
-//
-// The match is on a mention, not on the whole action, and that is the point. A
-// document whose error object says "Move the file aside and run `mindrail init`"
-// has told the reader init is worth running once the obstruction is gone, so a
-// component saying the same thing agrees with it. A document whose error object
-// says "make this directory writable" has said the opposite, and a component
-// that mentions init at all is contradicting it — moving something aside first
-// does not make init succeed against a directory nothing can write.
-func offersInitRemedy(actions []string) bool {
-	for _, action := range actions {
-		if strings.Contains(action, initRemedy) {
-			return true
-		}
-	}
-	return false
 }
 
 // TestEveryUninitialisedSpellingExitsZero is finding H14.

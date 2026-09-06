@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -213,6 +214,30 @@ type Probes struct {
 	// the first as the second would fail every Subject a test builds by hand.
 	DBWrite      storage.WriteAccess
 	DBWriteKnown bool
+
+	// KnowledgeDir answers whether the directory the knowledge loader could not
+	// walk can be used at all, and is finding E10.
+	//
+	// The loader answers a read question and only a read question: an
+	// unreadable or obstructed subtree under `.mindrail/knowledge` comes back as
+	// KNOWLEDGE_UNREADABLE with "check that <dir> is a readable directory",
+	// which inspects and clears nothing. `mindrail init` meets the same bytes
+	// while creating that subtree, classifies them through the filesystem layer,
+	// and prints the chmod — or the move — that actually clears it, at a
+	// different code and a different exit class. One condition, two diagnoses,
+	// decided by which command the reader happened to run.
+	//
+	// The directory probed is the one the loader itself named, not one derived
+	// from the store layout here: the loader walks `.mindrail/knowledge` and
+	// then each record bucket under it, so which of them refused is something
+	// only it knows, and re-deriving the layout in this package would put a
+	// second copy of it where it does not belong.
+	//
+	// KnowledgeDirKnown is the discriminator a zero value cannot supply, with
+	// the same meaning it has on every probe above: an unasked question and an
+	// unusable directory both leave Usable false.
+	KnowledgeDir      filesystem.Writability
+	KnowledgeDirKnown bool
 }
 
 // Probe answers the read-only questions doctor is allowed to ask the disk and
@@ -230,7 +255,19 @@ func Probe(s Subject) Subject {
 
 	// Nothing to probe until the locations exist as answers. Leaving the fields
 	// zero here is the point: a zero Writability must never read as "unwritable".
-	if !s.reached(stepResolveRuntimePaths) || s.PathsErr != nil || s.Paths.RuntimeRoot == "" {
+	//
+	// A derived-but-unusable runtime tree is not that case, and skipping it on
+	// PathsErr alone was the half of finding E6 nothing else could see. PathsErr
+	// carries two conditions: a derivation that produced nothing, which the
+	// RuntimeRoot test below already covers, and — in ModeInit only — an
+	// EnsureDirs that could not create a location bootstrap had already derived
+	// and recorded. Refusing to probe in the second case left `mindrail init`
+	// reporting a regular file at the runtime root with a remedy that stops at
+	// "move it aside", while `status` and `doctor`, which never call EnsureDirs
+	// and so never set PathsErr, probed the same disk and completed the same
+	// sentence with the `mindrail init` the reader still has to run. One
+	// condition, two remedies, decided by which command met it.
+	if !s.reached(stepResolveRuntimePaths) || s.Paths.RuntimeRoot == "" {
 		return s
 	}
 
@@ -263,7 +300,12 @@ func Probe(s Subject) Subject {
 	// was "no database": RuntimePaths.Exists() is a stat that cannot tell an
 	// empty path from an occupied one, and the occupied case is precisely the
 	// one `mindrail init` cannot fix.
-	if s.reached(stepOpenSQLite) && !s.DBPresent && s.DBErr == nil && s.Paths.DBPath != "" {
+	//
+	// It is asked of a startup that stopped at the runtime-path step too, and
+	// for the same reason the roots above are: the step stopped *because* that
+	// path is unusable, so the question "what is standing at the database path?"
+	// is exactly the one the report has to answer, and it is one stat.
+	if (s.reached(stepOpenSQLite) || s.PathsErr != nil) && !s.DBPresent && s.DBErr == nil && s.Paths.DBPath != "" {
 		s.Probes.DBPath, s.Probes.DBPathErr = storage.Probe(s.Paths.DBPath)
 		s.Probes.DBFileUnwritten = s.Probes.DBPath == storage.PresenceFile &&
 			storage.IsUnwritten(s.Paths.DBPath)
@@ -279,7 +321,55 @@ func Probe(s Subject) Subject {
 		s.Probes.DBWriteKnown = true
 	}
 
+	// The knowledge subtree is asked about only where the loader already failed
+	// on it, which is what keeps this from over-firing. A `.mindrail/knowledge`
+	// that can be read and not written is a directory `mindrail init` has
+	// nothing left to create in — the store loads, every command runs — and
+	// probing it unconditionally would grade that working repository as broken,
+	// which is finding F13 two directories over.
+	if dir, ok := s.unreadableKnowledgeDir(); ok {
+		s.Probes.KnowledgeDir = probeRepositoryDir(dir)
+		s.Probes.KnowledgeDirKnown = true
+	}
+
 	return s
+}
+
+// unreadableKnowledgeDir names the directory the knowledge loader could not
+// walk, as an absolute path.
+//
+// The path is read back out of the loader's own payload rather than derived
+// here. The loader walks the store root and then each record bucket beneath it,
+// so which of those three directories refused it is something only it observed,
+// and a path this package built from a layout constant would name the wrong one
+// as often as the right one.
+func (s Subject) unreadableKnowledgeDir() (string, bool) {
+	if s.KnowledgeErr == nil || !s.reached(stepValidateKnowledge) || s.Repo.WorktreeRoot == "" {
+		return "", false
+	}
+	payload, ok := app.PayloadOf(s.KnowledgeErr)
+	if !ok {
+		return "", false
+	}
+	rel := payload.Metadata["path"]
+	if rel == "" {
+		return "", false
+	}
+	return filepath.Join(s.Repo.WorktreeRoot, filepath.FromSlash(rel)), true
+}
+
+// probeRepositoryDir asks the filesystem layer whether a directory inside the
+// repository scaffolding can be used, creating nothing.
+//
+// It goes through ProbeRepoConfig because that is the one entry point that asks
+// this question about a directory in the working tree — the same four questions
+// EnsureDirs' probe half asks of the machine-local roots, graded as repository
+// content rather than as machine-local state. Asking it any other way would put
+// a second implementation of "can Mindrail write here?" in the package whose
+// whole job is to stop two answers existing.
+func probeRepositoryDir(dir string) filesystem.Writability {
+	probe, _ := filesystem.RuntimePaths{RepoConfigDir: dir}.ProbeRepoConfig()
+	return probe
 }
 
 // obstruction is a runtime-store blockage that `mindrail init` cannot clear.
@@ -367,6 +457,59 @@ func (s Subject) repoConfigObstruction() (diagnosis, bool) {
 		impact: filesystem.RootRepository.Impact() + ".",
 		next:   []string{"Make " + s.Probes.RepoConfigDir.Probed + " writable."},
 	}), true
+}
+
+// knowledgeDirSubject is the noun phrase a knowledge-subtree failure is reported
+// with. It is the spelling `mindrail init` already uses for the same directory,
+// and it has to stay that spelling: the two sentences describe one condition,
+// and the whole point of naming it here is that a reader gets the same one
+// whichever command they ran.
+const knowledgeDirSubject = "repository knowledge directory"
+
+// knowledgeDirObstruction is the knowledge subtree as a path condition rather
+// than as a reading of its contents, and it is finding E10.
+//
+// The loader answers "could these records be read?" and answers it correctly. It
+// cannot answer "why not, and what clears it": a directory at mode 0000, a
+// regular file standing where the subtree belongs and a read-only mount all
+// arrive at it as one unreadable path, and the remedy it prints — check that the
+// directory is readable, remove it if this repository carries no records — both
+// inspects rather than acts and offers to delete a subtree in the two cases where
+// nothing needs deleting. `mindrail init` meets the same bytes one step earlier,
+// classifies them through the filesystem layer and prints the chmod or the move
+// that ends the condition, at RUNTIME_PATH_UNWRITABLE and exit 4.
+//
+// So the filesystem layer's answer is the one all three commands publish. It is
+// re-labelled with the noun phrase init uses rather than with the root's own
+// name, because RootKind names the root and the thing that failed is a directory
+// inside it: "the repository config directory .mindrail/knowledge" would be a
+// sentence that is wrong about which directory it is talking about.
+func (s Subject) knowledgeDirObstruction() (diagnosis, bool) {
+	if !s.Probes.KnowledgeDirKnown || s.Probes.KnowledgeDir.Usable {
+		return diagnosis{}, false
+	}
+
+	return explain(knowledgeDirRefusal(s.Probes.KnowledgeDir), diagnosis{
+		code:   app.CodeRuntimePathUnwritable,
+		impact: filesystem.RootRepository.Impact() + ".",
+		next:   []string{"Make " + s.Probes.KnowledgeDir.Probed + " usable."},
+	}), true
+}
+
+// knowledgeDirRefusal re-labels a probe answer about the knowledge subtree.
+//
+// The classification, the path it names and the remedy all come from the probe;
+// only the noun phrase changes, and it changes to the one `init` prints for the
+// identical condition. A refusal that arrived without a cause is passed through
+// unchanged rather than rebuilt from nothing, because UnwritablePath chooses its
+// sentence from the cause and would answer a missing one with the generic
+// "check the permissions" this whole mechanism exists to stop printing.
+func knowledgeDirRefusal(w filesystem.Writability) error {
+	cause := app.CauseOf(w.Err)
+	if cause == nil {
+		return w.Err
+	}
+	return filesystem.UnwritablePath(filesystem.RootRepository, knowledgeDirSubject, w.Dir, cause)
 }
 
 // unwritableDatabase reports a runtime database that can be read and not
@@ -510,6 +653,12 @@ func (s Subject) supersede(result Result) Result {
 		// before this the whole document — every check OK, exit 0 — recommended
 		// the command that could not succeed (finding D4).
 		obstruction, blocked = s.repoConfigObstruction()
+	}
+	if !blocked {
+		// And one directory further down: a `.mindrail/knowledge` subtree that
+		// cannot be walked stops the same init, for the same reason, and is
+		// invisible to every reading of the runtime store (finding E10).
+		obstruction, blocked = s.knowledgeDirObstruction()
 	}
 	if !blocked {
 		return result

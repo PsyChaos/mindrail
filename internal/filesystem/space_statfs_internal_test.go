@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package storage
+package filesystem
 
 import (
 	"path/filepath"
@@ -8,7 +8,7 @@ import (
 )
 
 // TestStatFreeSpaceAnswersForARealDirectory is the wiring test the decision
-// tests cannot be: freeSpace.exhausted() is exact arithmetic, and it is worth
+// tests cannot be: FreeSpace.Exhausted() is exact arithmetic, and it is worth
 // nothing if the field it reads is always zero.
 //
 // A syscall that came back wrong -- a field read at the wrong width, a block
@@ -25,8 +25,8 @@ func TestStatFreeSpaceAnswersForARealDirectory(t *testing.T) {
 		t.Fatalf("statFreeSpace(a temp dir).AvailableBytes = %d, want a positive count; "+
 			"the filesystem the tests run on is not full", space.AvailableBytes)
 	}
-	if space.exhausted() {
-		t.Fatal("statFreeSpace(a temp dir).exhausted() = true on a working filesystem")
+	if space.Exhausted() {
+		t.Fatal("statFreeSpace(a temp dir).Exhausted() = true on a working filesystem")
 	}
 }
 
@@ -40,7 +40,7 @@ func TestStatFreeSpaceLeavesAnUnstattableDirectoryUnknown(t *testing.T) {
 	if space.Known {
 		t.Errorf("statFreeSpace(absent) = %+v, want an unknown answer", space)
 	}
-	if space.exhausted() {
-		t.Error("statFreeSpace(absent).exhausted() = true; a failed syscall is not a full disk")
+	if space.Exhausted() {
+		t.Error("statFreeSpace(absent).Exhausted() = true; a failed syscall is not a full disk")
 	}
 }

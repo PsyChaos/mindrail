@@ -150,11 +150,30 @@ func fullDiskScenario(mount string) []string {
 	}
 	path := filepath.Join(runtimeDir, "mindrail.db")
 
+	// A second repository, checked out but never initialised: its Git common-dir
+	// exists and its runtime directory does not. That is the shape of every first
+	// `mindrail init`, and the shape finding E1 is about -- the probe reached
+	// access(2) on a directory that is not there, called the ENOENT a refusal of
+	// the write-ahead log files, and never got as far as reading the free space.
+	freshCommonDir := filepath.Join(mount, "fresh", ".git")
+	if err := os.MkdirAll(freshCommonDir, 0o700); err != nil {
+		return []string{fmt.Sprintf("MkdirAll %s: %v", freshCommonDir, err)}
+	}
+	freshPath := filepath.Join(freshCommonDir, "mindrail", "mindrail.db")
+
 	// A repository that has not been initialised, on a small filesystem with
 	// room. This is the first over-fire guard: a probe that answered "no space"
 	// here would stop `mindrail init` from ever running.
 	if got := storage.ProbeWriteAccess(path); !got.Writable {
 		report("before anything was written, ProbeWriteAccess = %+v, want Writable", got)
+	}
+	// The same, for the repository whose runtime directory does not exist yet.
+	// This is the over-fire guard for the absent-directory reading below: a probe
+	// that refused here would stop `mindrail init` from ever running on a fresh
+	// checkout.
+	if got := storage.ProbeWriteAccess(freshPath); !got.Writable {
+		report("with room on the disk and the runtime directory not yet created, "+
+			"ProbeWriteAccess = %+v, want Writable", got)
 	}
 
 	if err := initialiseOnDisk(ctx, path); err != nil {
@@ -183,6 +202,9 @@ func fullDiskScenario(mount string) []string {
 	} else if got := storage.ProbeWriteAccess(path); !got.Writable {
 		report("with %d bytes still free, ProbeWriteAccess = %+v, want Writable; "+
 			"nearly full is not full", free, got)
+	} else if got := storage.ProbeWriteAccess(freshPath); !got.Writable {
+		report("with %d bytes still free and the runtime directory not yet created, "+
+			"ProbeWriteAccess = %+v, want Writable; nearly full is not full", free, got)
 	}
 
 	if err := fillToZero(filler); err != nil {
@@ -194,6 +216,7 @@ func fullDiskScenario(mount string) []string {
 	}
 
 	problems = append(problems, probeOnAFullFilesystem(path, runtimeDir)...)
+	problems = append(problems, probeBeforeTheRuntimeDirectoryExists(freshPath)...)
 	problems = append(problems, openOnAFullFilesystem(ctx, path)...)
 
 	// The remedy, carried out. "Free space on the filesystem holding X" is the
@@ -203,6 +226,24 @@ func fullDiskScenario(mount string) []string {
 		return append(problems, fmt.Sprintf("Remove %s: %v", filler, err))
 	}
 	problems = append(problems, afterTheRemedy(ctx, path)...)
+
+	// The remedy has to end the loop for the fresh repository too, which is the
+	// case where "free space" replaced a remedy that could not be carried out at
+	// all. `mindrail init` creates the directory; if the probe still refuses
+	// after the space is back, the sentence the user was given was wrong.
+	if got := storage.ProbeWriteAccess(freshPath); !got.Writable {
+		problems = append(problems, fmt.Sprintf(
+			"after freeing space, ProbeWriteAccess on a repository with no runtime directory = %+v, "+
+				"want Writable; the remedy has to end the loop", got))
+	} else if err := os.MkdirAll(filepath.Dir(freshPath), 0o700); err != nil {
+		problems = append(problems, fmt.Sprintf(
+			"after freeing space, creating the runtime directory the probe said was creatable = %v", err))
+	} else if db, err := storage.Open(ctx, storage.Options{Path: freshPath}); err != nil {
+		problems = append(problems, fmt.Sprintf(
+			"after freeing space, storage.Open on the fresh repository = %v, want no error", err))
+	} else {
+		_ = db.Close()
+	}
 
 	return problems
 }
@@ -240,6 +281,46 @@ func probeOnAFullFilesystem(path, runtimeDir string) []string {
 	// filesystem it could not even do that.
 	if after := directoryContents(runtimeDir); !slices.Equal(before, after) {
 		report("the probe changed %s from %v to %v; decision D-01 forbids it", runtimeDir, before, after)
+	}
+	return problems
+}
+
+// probeBeforeTheRuntimeDirectoryExists is finding E1: the reading `doctor`
+// publishes as db_writable for a repository `mindrail init` has never run in,
+// taken over a filesystem that cannot accept a byte.
+//
+// It is a separate step from probeOnAFullFilesystem because it is a separate
+// code path, and the path it took was the one that never reached the space
+// reading at all: access(2) on a directory that does not exist returns ENOENT,
+// which was reported as "the directory will not accept the write-ahead log
+// files" and remedied with "restore write and search permission on" a path that
+// is not there. The reading that closed the previous full-disk finding sat three
+// lines below and was unreachable in this shape.
+func probeBeforeTheRuntimeDirectoryExists(path string) []string {
+	var problems []string
+	report := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	got := storage.ProbeWriteAccess(path)
+	if got.Writable {
+		report("on a filesystem with 0 bytes available and the runtime directory not yet created, "+
+			"ProbeWriteAccess = %+v, want it refused; this is the `db_writable: true` doctor "+
+			"published while prescribing the `mindrail init` that exits 4", got)
+		return problems
+	}
+	if got.Blocker != storage.BlockerNoSpace {
+		report("Blocker = %q, want %q; the directory is absent because there is no room to create it, "+
+			"not because its permissions are wrong", got.Blocker, storage.BlockerNoSpace)
+	}
+	if !errors.Is(got.Err, storage.ErrDiskFull) {
+		report("Err = %v, want errors.Is(err, ErrDiskFull)", got.Err)
+	}
+
+	checkRemedy(report, got.Err, path)
+
+	if _, err := os.Stat(filepath.Dir(path)); err == nil {
+		report("the probe created %s; decision D-01 forbids it", filepath.Dir(path))
 	}
 	return problems
 }

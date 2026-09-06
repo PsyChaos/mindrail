@@ -175,14 +175,22 @@ func runtimePathResult(s Subject) Result {
 	}
 
 	if s.PathsErr != nil {
-		return failure(StateError, "Runtime paths unusable", explain(s.PathsErr, diagnosis{
+		// completeRootRemedy for the same reason the probe branch below gets it
+		// (finding W6): the reader who moves the obstruction aside still has an
+		// uninitialised repository, and the sentence that stops at the move is a
+		// step short of a working install. It applies here as well because
+		// `mindrail init` is the one command that reaches this branch — it is the
+		// only mode that creates the roots — and until it did, the same file at
+		// the same path produced a complete remedy from `status` and a truncated
+		// one from `init`.
+		return failure(StateError, "Runtime paths unusable", s.completeRootRemedy(explain(s.PathsErr, diagnosis{
 			code:   app.CodeRuntimePathUnwritable,
 			impact: "Mindrail cannot store runtime state for this repository.",
 			next: []string{
 				"Make the Git common directory writable.",
 				"Set MINDRAIL_RUNTIME_DIR to a writable directory.",
 			},
-		}))
+		})))
 	}
 
 	if s.Paths.RuntimeRoot == "" {
@@ -635,13 +643,25 @@ func knowledgeResult(s Subject) Result {
 	// The schema window is reported on every branch, healthy or not: it is what
 	// this binary can read, and a store that failed to load does not change it.
 	if s.KnowledgeErr != nil {
-		result := failure(StateError, "Knowledge store unreadable", explain(s.KnowledgeErr, diagnosis{
+		// The loader says the subtree could not be read. Whether that is a mode
+		// bit, an entry standing in the way or a read-only mount is a question it
+		// never asks, and its answer — inspect the directory, or delete it — is
+		// the one `mindrail init` contradicts one step earlier with the remedy
+		// that actually clears the condition (finding E10). Where the probe found
+		// a path condition, the probe's answer is the one every command prints.
+		reading := explain(s.KnowledgeErr, diagnosis{
 			code:   app.CodeKnowledgeUnreadable,
 			impact: "No decision or invariant is visible to any command.",
 			next: []string{
 				"Make " + loader.StoreRoot + " readable.",
 			},
-		}))
+		})
+		summary := "Knowledge store unreadable"
+		if obstruction, blocked := s.knowledgeDirObstruction(); blocked {
+			reading, summary = obstruction, "Knowledge directory unusable"
+		}
+
+		result := failure(StateError, summary, reading)
 		result.Details = map[string]string{
 			"root":                     storeRootOf(s.Knowledge),
 			"write_schema_version":     strconv.Itoa(KnowledgeWriteSchemaVersion(s.Knowledge)),

@@ -244,6 +244,24 @@ func (p RuntimePaths) ProbeRoots() []Writability {
 }
 
 // probeDir answers for one directory.
+//
+// Four questions, and all four have to be asked of the same directory: the one
+// the write would actually land in, which for a directory that does not exist
+// yet is its nearest existing ancestor. Is something standing in the way? Is
+// there a directory there at all? Do the mode bits allow a create? And is there
+// room for what the create would write?
+//
+// The fourth was the gap. access(2) answers from mode bits, and mode bits are
+// perfectly correct on a filesystem with zero bytes free: on a full disk with
+// the runtime directory not yet created, this reported `runtime_root_usable:
+// true`, `doctor` exited 0, and the remedy both doctor and status printed was
+// the `mindrail init` that exits 4 every time (finding E1). A CI health gate
+// built on that answer passed on a machine where Mindrail could not be
+// installed at all.
+//
+// Space is asked last because permission is the more specific answer: a
+// directory that refuses entries on a full disk has two things wrong with it,
+// and the chmod is the one a user can act on first.
 func probeDir(kind RootKind, dir string) Writability {
 	clean := filepath.Clean(dir)
 	result := Writability{Dir: dir, Kind: kind, Purpose: kind.Purpose()}
@@ -268,6 +286,10 @@ func probeDir(kind RootKind, dir string) Writability {
 	default:
 		if accessErr := accessWritable(existing); accessErr != nil {
 			result.Err = unwritablePathError(kind, dir, existing, accessErr)
+			break
+		}
+		if spaceErr := NoSpaceRefusal(existing); spaceErr != nil {
+			result.Err = unwritablePathError(kind, dir, existing, spaceErr)
 			break
 		}
 		result.Usable = true
@@ -393,6 +415,16 @@ func unwritablePathError(kind RootKind, dir, probed string, cause error) error {
 // rather than as the root. The kind still decides the impact, the metadata and
 // the relocation escape hatch, because those are properties of the root and not
 // of the individual entry that failed.
+//
+// The sentence and the remedy are chosen from ClassifyRefusal and from nothing
+// else, so that every path into this function -- the probe, EnsureDirs, and the
+// repository scaffolding writing its own files through UnwritablePath -- names
+// one condition one way. Before that, everything the classifier did not spell
+// out fell into a default that said "check the permissions", which is how a
+// first `mindrail init` on a full disk was told to check the permissions on a
+// directory that was mode 0755 and owned by the caller (finding E2), and how a
+// read-only mount was reported as a permission problem on a path where `chmod`
+// fails with the same EROFS (finding E4).
 func unwritableSubjectError(kind RootKind, subject, dir, probed string, cause error) error {
 	label := subject
 	if label == "" {
@@ -401,17 +433,40 @@ func unwritableSubjectError(kind RootKind, subject, dir, probed string, cause er
 	why := fmt.Sprintf("the %s %q could not be created", label, dir)
 	next := []string{fmt.Sprintf("check the permissions on %q", probed)}
 
-	switch {
-	case errors.Is(cause, ErrDanglingSymlink):
-		why = fmt.Sprintf("the %s %q is a symlink that points at nothing", label, dir)
-		next = []string{fmt.Sprintf("remove or repoint the link at %q", dir)}
-	case errors.Is(cause, ErrNotDirectory):
+	switch ClassifyRefusal(cause) {
+	case BarrierObstruction:
+		// Two obstructions, two sentences: a link to nowhere is repointed at the
+		// path that is missing, an entry in the way is moved off the path that
+		// exists.
+		if errors.Is(cause, ErrDanglingSymlink) {
+			why = fmt.Sprintf("the %s %q is a symlink that points at nothing", label, dir)
+			next = []string{fmt.Sprintf("remove or repoint the link at %q", dir)}
+			break
+		}
 		why = fmt.Sprintf("%q is in the way of the %s and is not a directory", probed, label)
 		next = []string{fmt.Sprintf("remove or move aside %q", probed)}
-	case errors.Is(cause, fs.ErrPermission) && probed == filepath.Clean(dir):
-		why = fmt.Sprintf("the %s %q is not writable", label, dir)
-	case errors.Is(cause, fs.ErrPermission):
+	case BarrierNoSpace:
+		why = fmt.Sprintf("the filesystem holding the %s %q is full", label, dir)
+		next = []string{fmt.Sprintf("free space on the filesystem holding %q", probed)}
+	case BarrierReadOnlyMedia:
+		why = fmt.Sprintf("the %s %q is on a read-only filesystem", label, dir)
+		next = []string{fmt.Sprintf("remount the filesystem holding %q read-write, "+
+			"or move this repository to a writable location", probed)}
+	case BarrierPermission:
+		if probed == filepath.Clean(dir) {
+			why = fmt.Sprintf("the %s %q is not writable", label, dir)
+			break
+		}
 		why = fmt.Sprintf("the %s %q cannot be created because %q is not writable", label, dir, probed)
+	case BarrierMissingParent:
+		// The nearest directory that exists is named rather than the one that
+		// does not, because the walk cannot say which component of the path the
+		// kernel stopped at -- only which one it will still answer for. That is
+		// the directory the missing ones have to be created under, and it is a
+		// path the remedy can be carried out on.
+		why = fmt.Sprintf("the %s %q cannot be created because a directory above it is missing; "+
+			"the nearest one that exists is %q", label, dir, probed)
+		next = []string{fmt.Sprintf("create the missing directories under %q", probed)}
 	}
 
 	if override := kind.override(); override != "" {

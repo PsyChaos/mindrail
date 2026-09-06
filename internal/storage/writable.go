@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 )
 
 // The two files SQLite keeps beside a WAL database.
@@ -58,6 +59,13 @@ const (
 	// Every mode bit in the footprint is correct and every write fails anyway,
 	// which is the one blocker here that no chmod can clear.
 	BlockerNoSpace WriteBlocker = "no_space"
+
+	// BlockerReadOnlyMedia means the filesystem under the database is mounted
+	// read-only. Like BlockerNoSpace it names a condition rather than a part of
+	// the footprint, and for the same reason: no part is at fault. Every mode bit
+	// is already correct, `chmod` on any of them fails with the same EROFS that
+	// refused the write, and freeing space changes nothing either.
+	BlockerReadOnlyMedia WriteBlocker = "read_only_filesystem"
 
 	// BlockerObstruction means the path is occupied by something that is not a
 	// database file, which Probe describes in full.
@@ -156,8 +164,32 @@ func ProbeWriteAccess(path string) WriteAccess {
 	}
 
 	dir := filepath.Dir(path)
+
+	// The directory the write would actually land in. It is dir itself once the
+	// repository has been initialised, and the nearest existing ancestor before
+	// that -- because on a repository `mindrail init` has never run in, dir does
+	// not exist, and every question left has to be asked of the directory init
+	// would have to create it in.
+	//
+	// Asking them of dir instead is finding E1. access(2) on an absent directory
+	// is ENOENT, which was reported as "the directory will not accept the
+	// write-ahead log files" with a remedy naming a path that is not there; and
+	// statfs on an absent directory answers nothing, so the space reading below
+	// -- the one that closed the previous full-disk finding -- was unreachable in
+	// the one shape where it decides whether Mindrail can be installed at all.
+	host := hostDirectory(dir)
+
 	if dirErr := accessWritableDir(dir); dirErr != nil {
-		if refused := result.withoutADirectoryToWriteIn(dir, dirErr); !refused.Writable {
+		if filesystem.ClassifyRefusal(dirErr) == filesystem.BarrierMissingParent {
+			// dir is not there yet, which is not a refusal. The refusal, if there
+			// is one, belongs to the directory it would be created in. Routing on
+			// the classification rather than on "host != dir" keeps a regular file
+			// standing where the directory has to be -- ENOTDIR, not ENOENT -- in
+			// the branch below, where it is already described.
+			if hostErr := accessWritableDir(host); hostErr != nil {
+				return result.blockedBy(BlockerDirectory, host, hostErr)
+			}
+		} else if refused := result.withoutADirectoryToWriteIn(dir, dirErr); !refused.Writable {
 			return refused
 		}
 	}
@@ -170,12 +202,34 @@ func ProbeWriteAccess(path string) WriteAccess {
 	// database file on a full disk has two things wrong with it, and the chmod is
 	// the one the user can act on first; reporting the disk instead would leave
 	// them to discover the mode bits after they had freed the space.
-	if spaceErr := noSpaceRefusal(dir); spaceErr != nil {
-		return result.blockedBy(BlockerNoSpace, dir, spaceErr)
+	if spaceErr := noSpaceRefusal(host); spaceErr != nil {
+		return result.blockedBy(BlockerNoSpace, host, spaceErr)
 	}
 
 	result.Writable = true
 	return result
+}
+
+// hostDirectory returns the nearest existing directory at or above dir, which is
+// where a create would have to happen and therefore the only path the remaining
+// questions can be asked of.
+//
+// Every stat failure walks up, not only ErrNotExist, for the same reason
+// filesystem.nearestExisting does it: a component the kernel will not answer for
+// cannot be the one a remedy names, because the mode refusing the lookup belongs
+// to something above it.
+func hostDirectory(dir string) string {
+	current := filepath.Clean(dir)
+	for {
+		if info, err := os.Stat(current); err == nil && info.IsDir() {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return current
+		}
+		current = parent
+	}
 }
 
 // withoutADirectoryToWriteIn decides the case where the directory holding the
@@ -198,30 +252,64 @@ func (a WriteAccess) withoutADirectoryToWriteIn(dir string, dirErr error) WriteA
 	return a
 }
 
-// blockedBy fills in the refusal half of the answer, so the four call sites
-// above cannot describe the same shape four different ways.
+// blockedBy fills in the refusal half of the answer, so the call sites above
+// cannot describe the same shape several different ways.
 func (a WriteAccess) blockedBy(blocker WriteBlocker, blocked string, cause error) WriteAccess {
 	a.Writable = false
-	a.Blocker = blocker
+	a.Blocker = conditionBlocker(blocker, cause)
 	a.Blocked = blocked
-	a.Err = writeRefusalError(a.Path, blocker, blocked, cause)
+	a.Err = writeRefusalError(a.Path, a.Blocker, blocked, cause)
 	return a
 }
 
-// writeRefusalError picks the diagnosis for a refusal, and exists because there
-// are two of them rather than one with a variable noun.
+// conditionBlocker lets the condition behind a refusal override the part of the
+// footprint that met it.
 //
-// Three of the four refusals that reach here are permission -- the database
-// file, its `-shm`, the directory -- and their remedy is a chmod on a path this
-// package can name. The fourth is space, and its remedy has nothing to do with
-// permission at all. Routing both through one constructor is how a
-// report ends up telling someone whose filesystem is full to restore write
-// permission on a file whose mode was already correct.
-func writeRefusalError(path string, blocker WriteBlocker, blocked string, cause error) error {
-	if blocker == BlockerNoSpace {
-		return noSpaceDatabaseError(path, blocked, cause)
+// Most of the blockers name a path: the database file, its `-shm`, the directory
+// that has to hold the sidecars. Two of them name a condition instead, and they
+// have to win, because when the filesystem is full or mounted read-only no part
+// of the footprint is at fault -- every mode bit is already correct, and the
+// chmod the part-shaped blockers prescribe cannot be carried out at all. That is
+// finding E4: a read-only mount arrived here as BlockerDatabaseFile and was
+// remedied with "restore write permission on mindrail.db, mindrail.db-wal,
+// mindrail.db-shm", on files whose owner-write bit was set and on which `chmod`
+// fails with the same EROFS.
+//
+// An obstruction is left alone: Probe has already described what is standing on
+// the path, and that description does not become less true on a full disk.
+func conditionBlocker(part WriteBlocker, cause error) WriteBlocker {
+	if part == BlockerObstruction {
+		return part
 	}
-	return unwritableDatabaseError(path, blocker, blocked, cause)
+	switch filesystem.ClassifyRefusal(cause) {
+	case filesystem.BarrierNoSpace:
+		return BlockerNoSpace
+	case filesystem.BarrierReadOnlyMedia:
+		return BlockerReadOnlyMedia
+	default:
+		return part
+	}
+}
+
+// writeRefusalError picks the diagnosis for a refusal, and exists because there
+// are three of them rather than one with a variable noun.
+//
+// Three of the refusals that reach here are permission -- the database file, its
+// `-shm`, the directory -- and their remedy is a chmod on a path this package
+// can name. One is space, whose remedy has nothing to do with permission. One is
+// a read-only mount, which neither a chmod nor free space can clear. Routing
+// them through one constructor is how a report ends up telling someone whose
+// filesystem is full, or whose mount refuses writes, to restore write permission
+// on a file whose mode was already correct.
+func writeRefusalError(path string, blocker WriteBlocker, blocked string, cause error) error {
+	switch blocker {
+	case BlockerNoSpace:
+		return noSpaceDatabaseError(path, blocked, cause)
+	case BlockerReadOnlyMedia:
+		return readOnlyMediaDatabaseError(path, blocked, cause)
+	default:
+		return unwritableDatabaseError(path, blocker, blocked, cause)
+	}
 }
 
 // unwritableDatabaseError reports a runtime database that can be read and not

@@ -28,6 +28,22 @@ var (
 	// the other — and prose alone cannot be branched on.
 	ErrInsideGitDirectory = errors.New("inside a git directory rather than a worktree")
 
+	// ErrForeignWorktree is the narrower case of ErrNotARepository where the
+	// repository's configured working tree is a directory that belongs to a
+	// different repository. It is separate because it is the one shape in this
+	// family with no command that re-links it: the remedies for its neighbours
+	// either refuse or damage somebody else's checkout when run here (finding
+	// E6).
+	ErrForeignWorktree = errors.New("the configured working tree belongs to a different repository")
+
+	// ErrLinkedWorktreeAdminDir is the narrower case of ErrInsideGitDirectory
+	// where the start directory is the administrative directory a repository
+	// keeps for one linked worktree, `<common-dir>/worktrees/<name>`. It is
+	// separate because that directory has a working tree of its own, and
+	// reporting the main worktree's paths describes a different place (finding
+	// E9).
+	ErrLinkedWorktreeAdminDir = errors.New("inside a linked worktree's administrative directory")
+
 	// ErrWorkingDirectory is the narrower case of ErrNotARepository where the
 	// start directory itself could not be entered, so git never ran. It is
 	// separate because the remedy is about the path the caller supplied, not
@@ -161,9 +177,12 @@ func (a *Adapter) classifyMissingWorktree(ctx context.Context, startDir string) 
 	}
 
 	// Reaching here means git found a repository, said the directory is not in
-	// its worktree, and said the repository is not bare: the start directory is
-	// somewhere inside the Git directory. Which worktree that Git directory
-	// serves is a question only git can answer.
+	// its worktree, and said the repository is not bare. Which worktree that
+	// repository has, and whether the reader is standing inside its Git
+	// directory or merely outside its worktree, are questions only git can
+	// answer — and the second one used to be assumed rather than asked, which is
+	// how an ordinary repository with core.worktree set was told it was "inside
+	// a Git directory" while its owner stood in the checkout root (finding E7).
 	worktree, err := a.probeWorktreeRoot(ctx, startDir)
 	if err != nil {
 		return err
@@ -172,12 +191,17 @@ func (a *Adapter) classifyMissingWorktree(ctx context.Context, startDir string) 
 	if err != nil {
 		return err
 	}
+	standing := standpointOf(startDir, commonDir)
 
 	if worktree == "" {
 		// git cannot name a worktree from here. That is the ordinary
-		// standing-inside-.git case, and also the `--separate-git-dir` case where
-		// no back-pointer to the worktree exists at all; the Git directory's own
-		// path is what separates them.
+		// standing-inside-.git case, the linked worktree's administrative
+		// directory, and also the `--separate-git-dir` case where no back-pointer
+		// to the worktree exists at all; the Git directory's own path is what
+		// separates them.
+		if linked := linkedWorktreeOfAdminDir(startDir, commonDir); linked != "" {
+			return linkedWorktreeAdminError(startDir, commonDir, linked)
+		}
 		return insideGitDirectoryError(startDir, commonDir)
 	}
 
@@ -187,24 +211,128 @@ func (a *Adapter) classifyMissingWorktree(ctx context.Context, startDir string) 
 	// git finds no repository in both send the reader somewhere that fails again,
 	// which is the loop this whole finding is about.
 	if fault := directoryEntryFault(worktree); fault != nil {
-		return unenterableWorktreeError(startDir, worktree, fault)
+		return unenterableWorktreeError(startDir, worktree, fault, standing)
 	}
-	reachable, err := a.worktreeReachesRepository(ctx, worktree, commonDir)
+	link, err := a.probeWorktreeLinkage(ctx, worktree, commonDir)
 	if err != nil {
 		return err
 	}
-	if !reachable {
-		gitDir, err := a.probeGitDir(ctx, startDir)
-		if err != nil {
-			return err
-		}
-		return unlinkedWorktreeError(startDir, gitDir, worktree)
+	if link.reaches {
+		return detachedWorktreeError(startDir, worktree, standing)
 	}
-	return detachedWorktreeError(startDir, worktree)
+
+	// Both remaining shapes have to name the per-worktree Git directory, which
+	// is the one a `.git` back-pointer has to contain. It is asked for here and
+	// nowhere above so the branches that do not need it keep their probe count.
+	gitDir, err := a.probeGitDir(ctx, startDir)
+	if err != nil {
+		return err
+	}
+	if link.commonDir != "" {
+		return foreignWorktreeError(startDir, gitDir, worktree, link, standing)
+	}
+	return unlinkedWorktreeError(startDir, gitDir, worktree, standing)
 }
 
-// worktreeReachesRepository reports whether git, run in worktree, finds a
-// working tree belonging to the same repository as commonDir.
+// standpoint records where the reader is standing relative to the repository
+// git just found: inside its Git directory, or outside its working tree with
+// the Git directory somewhere else entirely.
+//
+// The distinction is the whole of finding E7. Every message in this family
+// opened with "the directory is inside a Git directory", which is true of a
+// submodule's `.git/modules/<name>` and false of an ordinary checkout root
+// whose config happens to say `core.worktree = /elsewhere` — and the second is
+// an ordinary user standing in what they correctly believe is their repository.
+type standpoint struct{ insideGitDir bool }
+
+// standpointOf answers the question from the common directory alone.
+//
+// The common directory is enough because git's per-worktree Git directory is
+// always the common one or a directory beneath it (`<common>/worktrees/<name>`),
+// so anything inside the former is inside the latter. Asking for --git-dir as
+// well would buy nothing and cost a subprocess on every classification.
+//
+// When git declined to name a common directory the answer is unknown, and
+// unknown keeps the wording every one of these messages has always used: we
+// cannot claim the reader is outside a directory we cannot locate.
+func standpointOf(startDir, commonDir string) standpoint {
+	if commonDir == "" {
+		return standpoint{insideGitDir: true}
+	}
+	return standpoint{insideGitDir: pathWithin(startDir, commonDir)}
+}
+
+// impact is the consequence of the condition, which differs by standpoint: a
+// reader inside a Git directory is one `git init` away from nesting a
+// repository inside an administrative directory, and a reader outside a working
+// tree is not.
+func (s standpoint) impact() string {
+	if s.insideGitDir {
+		return gitDirectoryImpact
+	}
+	return outsideWorktreeImpact
+}
+
+// cause is the sentinel set for the condition. ErrInsideGitDirectory is
+// documented as the narrower case of ErrNotARepository where the start
+// directory is inside a repository's Git directory, so it is attached only when
+// the reader is actually there; a checkout root whose core.worktree points
+// elsewhere is not, and a sentinel that is true of everything can be branched
+// on by nobody.
+func (s standpoint) cause() error {
+	if s.insideGitDir {
+		return errors.Join(ErrNotARepository, ErrInsideGitDirectory)
+	}
+	return ErrNotARepository
+}
+
+// pathWithin reports whether path is dir or lies below it.
+//
+// The comparison is by file identity at every step rather than by string
+// prefix, so a repository reached through a symlink — or a /tmp that is really
+// /private/tmp — is not read as a different place. That matters here because
+// the answer decides which sentence a user is shown about their own checkout.
+func pathWithin(path, dir string) bool {
+	if path == "" || dir == "" {
+		return false
+	}
+	for current := filepath.Clean(path); ; {
+		if sameDirectory(current, dir) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+}
+
+// worktreeLinkage is what git finds in the directory core.worktree names.
+//
+// The bare "does it point back" boolean this replaces collapsed two conditions
+// with opposite remedies. A directory with no repository in it can be linked to
+// this Git directory, and `git init --separate-git-dir` does exactly that. A
+// directory that already belongs to *another* repository cannot: git refuses to
+// move that repository's Git directory onto this one, and where the directory
+// is merely inside another repository's working tree the same command succeeds
+// by carving a nested repository out of it. Printing the linking command for
+// both is finding E6.
+type worktreeLinkage struct {
+	// reaches reports that the directory is a working tree of this very
+	// repository, so the link is sound and only the reader is in the wrong place.
+	reaches bool
+	// commonDir is the Git directory of the *other* repository the configured
+	// working tree belongs to, or "" when git finds no repository there at all.
+	commonDir string
+	// toplevel is that other repository's working tree root, or "" when git
+	// named none — the configured path may be a bare repository or a Git
+	// directory rather than a checkout.
+	toplevel string
+}
+
+// probeWorktreeLinkage asks git, in the configured working tree, which
+// repository that directory belongs to.
 //
 // core.worktree is a one-way link. A worktree with no `.git` entry pointing
 // back is invisible to discovery, so "change into it" would land the reader on
@@ -212,30 +340,48 @@ func (a *Adapter) classifyMissingWorktree(ctx context.Context, startDir string) 
 // fixed. Running git there is the only way to know, and it is what the reader
 // is about to do anyway.
 //
-// An unknown answer counts as unreachable: the fallback remedy repairs a link
-// that is already sound, which costs nothing, while the confident remedy sends
-// the reader into a directory that may refuse them.
-func (a *Adapter) worktreeReachesRepository(ctx context.Context, worktree, commonDir string) (bool, error) {
+// An unknown answer counts as "no repository there", which is the conservative
+// end: its remedy writes a link, and writing a link that is already sound costs
+// nothing, while the confident remedy sends the reader into a directory that
+// may refuse them.
+func (a *Adapter) probeWorktreeLinkage(ctx context.Context, worktree, commonDir string) (worktreeLinkage, error) {
 	if commonDir == "" {
-		return false, nil
+		// Without knowing which repository the reader is in, "this is a different
+		// repository" is a claim that cannot be made. Degrade to the shape whose
+		// remedy is harmless.
+		return worktreeLinkage{}, nil
 	}
 
 	inside, _, err := a.revParse(ctx, worktree, "--is-inside-work-tree")
 	if err != nil {
 		if propagated := propagate(err); propagated != nil {
-			return false, propagated
+			return worktreeLinkage{}, propagated
 		}
-		return false, nil
-	}
-	if !parseGitBool(inside) {
-		return false, nil
+		return worktreeLinkage{}, nil
 	}
 
 	reached, err := a.probeCommonDir(ctx, worktree)
 	if err != nil {
-		return false, err
+		return worktreeLinkage{}, err
 	}
-	return reached != "" && sameDirectory(reached, commonDir), nil
+	if reached == "" || sameDirectory(reached, commonDir) {
+		// Same repository. Whether git also calls the directory a working tree
+		// decides between "the reader is merely in the wrong place" and a
+		// core.worktree pointing into this repository's own administrative
+		// directory, which is not a different repository and must not be
+		// described as one.
+		return worktreeLinkage{reaches: reached != "" && parseGitBool(inside)}, nil
+	}
+
+	link := worktreeLinkage{commonDir: reached}
+	if parseGitBool(inside) {
+		toplevel, err := a.probeWorktreeRoot(ctx, worktree)
+		if err != nil {
+			return worktreeLinkage{}, err
+		}
+		link.toplevel = toplevel
+	}
+	return link, nil
 }
 
 // sameDirectory compares two paths by identity rather than by spelling, so a
@@ -532,6 +678,13 @@ func notARepositoryError(startDir, stderr string, cause error) error {
 // a Git directory, whichever shape of Git directory it turns out to be.
 const gitDirectoryImpact = "Mindrail tracks work against files in a worktree, and a Git directory holds none; creating a repository here would nest a second one inside this repository's administrative directory"
 
+// outsideWorktreeImpact is the consequence for the other standpoint: the reader
+// is in an ordinary directory — often the checkout root itself — of a
+// repository whose config points its working tree somewhere else. Nothing is
+// about to be nested inside an administrative directory here, and saying so
+// describes a situation the reader is not in (finding E7).
+const outsideWorktreeImpact = "Mindrail tracks work against the files of a repository's working tree, and this repository's working tree is configured to be somewhere other than this directory"
+
 // detachedWorktreeError reports a start directory inside a Git directory whose
 // worktree git can name and which was checked to be reachable — a submodule's
 // Git directory, or any repository with core.worktree set.
@@ -541,17 +694,22 @@ const gitDirectoryImpact = "Mindrail tracks work against files in a worktree, an
 // repositories is the directory the reader is already standing in or its
 // unrelated parent, so following the remedy changed nothing and the reader
 // looped (finding D6).
-func detachedWorktreeError(startDir, worktree string) error {
+func detachedWorktreeError(startDir, worktree string, standing standpoint) error {
+	why := fmt.Sprintf("this repository's working tree is configured to be %q, and this directory is not inside it", worktree)
+	if standing.insideGitDir {
+		why = fmt.Sprintf("the directory is inside a Git directory, not a working tree; this repository's working tree is %q", worktree)
+	}
+
 	return app.NewError(
 		app.CodeNotAGitRepository,
 		app.KindUsage,
-		fmt.Sprintf("the directory is inside a Git directory, not a working tree; this repository's working tree is %q", worktree),
-		gitDirectoryImpact,
+		why,
+		standing.impact(),
 		fmt.Sprintf("change into %q and run the command again", worktree),
 		"or run the command from a linked worktree of this repository",
 	).WithMetadata("start_dir", startDir).
 		WithMetadata("worktree_root", worktree).
-		WithCause(errors.Join(ErrNotARepository, ErrInsideGitDirectory))
+		WithCause(standing.cause())
 }
 
 // unenterableWorktreeError reports a core.worktree that names a directory
@@ -561,22 +719,28 @@ func detachedWorktreeError(startDir, worktree string) error {
 // "Change into <path>" is not a remedy when <path> refuses; it is the same loop
 // with a longer stride. What is actionable is the path itself and why it
 // refused, so both are in the sentence.
-func unenterableWorktreeError(startDir, worktree string, fault error) error {
+func unenterableWorktreeError(startDir, worktree string, fault error, standing standpoint) error {
+	why := fmt.Sprintf("this repository's configured working tree %q could not be entered: %v", worktree, fault)
+	if standing.insideGitDir {
+		why = fmt.Sprintf("the directory is inside a Git directory whose configured working tree %q could not be entered: %v", worktree, fault)
+	}
+
 	return app.NewError(
 		app.CodeNotAGitRepository,
 		app.KindUsage,
-		fmt.Sprintf("the directory is inside a Git directory whose configured working tree %q could not be entered: %v", worktree, fault),
-		gitDirectoryImpact,
+		why,
+		standing.impact(),
 		fmt.Sprintf("restore %q, or make it a directory you can enter, and run the command from it", worktree),
 		fmt.Sprintf("or point this repository at a working tree that exists by running `git config core.worktree <path>` from %q", startDir),
 	).WithMetadata("start_dir", startDir).
 		WithMetadata("worktree_root", worktree).
 		WithMetadata("detail", fault.Error()).
-		WithCause(errors.Join(ErrNotARepository, ErrInsideGitDirectory, fault))
+		WithCause(errors.Join(standing.cause(), fault))
 }
 
 // unlinkedWorktreeError reports a core.worktree that names a real directory
-// which does not point back at the Git directory.
+// which holds no repository at all and does not point back at the Git
+// directory.
 //
 // The link is one-way: core.worktree lets the Git directory find the worktree,
 // and only a `.git` entry in the worktree lets discovery go the other way. With
@@ -585,7 +749,13 @@ func unenterableWorktreeError(startDir, worktree string, fault error) error {
 // — so the remedy repairs the link instead. `git init --separate-git-dir` is
 // the git-native way to write it: on an existing repository it reinitialises
 // rather than replaces, keeping every object and ref.
-func unlinkedWorktreeError(startDir, gitDir, worktree string) error {
+//
+// That command is only correct because this branch has established that git
+// finds *no* repository in the configured directory. Where it finds one, the
+// same command either refuses or nests a repository inside somebody else's
+// checkout, which is why that case left this function entirely (finding E6) and
+// is now foreignWorktreeError.
+func unlinkedWorktreeError(startDir, gitDir, worktree string, standing standpoint) error {
 	actions := []string{
 		fmt.Sprintf("add a .git entry in %q naming this Git directory, then run the command from %q", worktree, worktree),
 		"or run the command from a working tree that already points at this repository",
@@ -597,11 +767,16 @@ func unlinkedWorktreeError(startDir, gitDir, worktree string) error {
 		}
 	}
 
+	why := fmt.Sprintf("this repository's configured working tree %q does not point back at it, so git finds no repository there", worktree)
+	if standing.insideGitDir {
+		why = fmt.Sprintf("the directory is inside a Git directory whose configured working tree %q does not point back at it, so git finds no repository there", worktree)
+	}
+
 	err := app.NewError(
 		app.CodeNotAGitRepository,
 		app.KindUsage,
-		fmt.Sprintf("the directory is inside a Git directory whose configured working tree %q does not point back at it, so git finds no repository there", worktree),
-		gitDirectoryImpact,
+		why,
+		standing.impact(),
 		actions...,
 	).WithMetadata("start_dir", startDir).
 		WithMetadata("worktree_root", worktree)
@@ -609,7 +784,83 @@ func unlinkedWorktreeError(startDir, gitDir, worktree string) error {
 	if gitDir != "" {
 		err = err.WithMetadata("git_dir", gitDir)
 	}
-	return err.WithCause(errors.Join(ErrNotARepository, ErrInsideGitDirectory))
+	return err.WithCause(standing.cause())
+}
+
+// foreignWorktreeError reports a core.worktree that names a directory belonging
+// to a different repository.
+//
+// This is the shape both of unlinkedWorktreeError's remedies dead-ended on
+// (finding E6). Measured against git 2.55:
+//
+//   - When the configured directory is another repository's own root,
+//     `git init --separate-git-dir=<gitdir> <path>` exits 128 with
+//     "unable to move <path>/.git to <gitdir>: Directory not empty". It is
+//     trying to relocate the *other* repository, which is not what the sentence
+//     around it claimed to be doing.
+//   - When the configured directory merely sits inside another repository's
+//     working tree, the same command exits 0 — and what it has done is carve a
+//     nested repository out of that checkout, which nobody asked for.
+//   - And the alternative remedy, "run the command from a working tree whose
+//     .git already reads `gitdir: <gitdir>`", names a working tree that does not
+//     exist: if one did, discovery would have found it.
+//
+// The reason printed alongside them was false too. "git finds no repository
+// there" is exactly wrong about a directory that is one.
+//
+// What is left is to say what is true and to offer the two things that are
+// actually available: give this repository a working tree of its own, or go to
+// the other repository if that is the one that was meant. The first was carried
+// out end to end — init, config, checkout — before it was written down.
+func foreignWorktreeError(startDir, gitDir, worktree string, link worktreeLinkage, standing standpoint) error {
+	why := fmt.Sprintf("this repository's configured working tree %q belongs to a different repository, the one whose Git directory is %q", worktree, link.commonDir)
+	if standing.insideGitDir {
+		why = fmt.Sprintf("the directory is inside a Git directory, not a working tree, and the working tree it is configured to use — %q — belongs to a different repository, the one whose Git directory is %q", worktree, link.commonDir)
+	}
+
+	actions := []string{"give this repository a working tree of its own and point `core.worktree` at it"}
+	if gitDir != "" {
+		actions = []string{fmt.Sprintf(
+			"give this repository a working tree of its own: pick an unused path <path>, then run `git init --separate-git-dir=%s <path>`, `git --git-dir=%s config core.worktree <path>` and `git -C <path> checkout --force HEAD`, and run the command from <path>",
+			gitDir, gitDir)}
+	}
+	if link.toplevel != "" && directoryEntryFault(link.toplevel) == nil {
+		actions = append(actions, fmt.Sprintf("or change into %q and run the command there, if that other repository is the one you meant", link.toplevel))
+	}
+	if caveat := foreignRelinkCaveat(gitDir, worktree, link); caveat != "" {
+		actions = append(actions, caveat)
+	}
+
+	err := app.NewError(
+		app.CodeNotAGitRepository,
+		app.KindUsage,
+		why,
+		standing.impact(),
+		actions...,
+	).WithMetadata("start_dir", startDir).
+		WithMetadata("worktree_root", worktree).
+		WithMetadata("other_common_dir", link.commonDir)
+
+	if gitDir != "" {
+		err = err.WithMetadata("git_dir", gitDir)
+	}
+	if link.toplevel != "" {
+		err = err.WithMetadata("other_worktree_root", link.toplevel)
+	}
+	return err.WithCause(errors.Join(standing.cause(), ErrForeignWorktree))
+}
+
+// foreignRelinkCaveat says why the command the reader would reach for next does
+// not apply, in the words of what it actually does. Both branches were measured
+// rather than reasoned about; the sentence is omitted when neither was.
+func foreignRelinkCaveat(gitDir, worktree string, link worktreeLinkage) string {
+	if gitDir == "" || link.toplevel == "" {
+		return ""
+	}
+	if sameDirectory(link.toplevel, worktree) {
+		return fmt.Sprintf("`git init --separate-git-dir=%s %s` cannot re-link them: git refuses, because it would have to move that other repository's Git directory onto this one", gitDir, worktree)
+	}
+	return fmt.Sprintf("`git init --separate-git-dir=%s %s` would appear to succeed, but it carves a nested repository out of the working tree of the repository at %q", gitDir, worktree, link.toplevel)
 }
 
 // insideGitDirectoryError reports a start directory inside a Git directory that
@@ -674,6 +925,88 @@ func insideGitDirectoryError(startDir, commonDir string) error {
 		err = err.WithMetadata("worktree_root", worktree)
 	}
 	return err.WithCause(errors.Join(ErrNotARepository, ErrInsideGitDirectory))
+}
+
+// linkedWorktreeAdminError reports a start directory inside the administrative
+// directory a repository keeps for one linked worktree.
+//
+// git answers --show-toplevel with "this operation must be run in a work tree"
+// from there and --git-common-dir with the *main* repository's `.git`, so the
+// generic Git-directory classification described the main worktree: true of the
+// repository, and not a description of where the reader is standing or of the
+// checkout they were almost certainly working on. The linked worktree's own
+// root is recorded right there in the administrative directory, so naming it
+// costs one file read and no guessing (finding E9).
+func linkedWorktreeAdminError(startDir, commonDir, worktree string) error {
+	err := app.NewError(
+		app.CodeNotAGitRepository,
+		app.KindUsage,
+		fmt.Sprintf("the directory is inside the administrative directory this repository keeps for the linked working tree %q, which is not a working tree itself", worktree),
+		gitDirectoryImpact,
+		fmt.Sprintf("change into %q and run the command again", worktree),
+		"or run the command from another working tree of this repository",
+	).WithMetadata("start_dir", startDir).
+		WithMetadata("worktree_root", worktree)
+
+	if commonDir != "" {
+		err = err.WithMetadata("git_common_dir", commonDir)
+	}
+	return err.WithCause(errors.Join(ErrNotARepository, ErrInsideGitDirectory, ErrLinkedWorktreeAdminDir))
+}
+
+// linkedWorktreeOfAdminDir returns the working tree root whose administrative
+// directory startDir is in, or "" when startDir is not in one.
+//
+// The administrative directory is found by walking up from startDir to the
+// entry whose parent is `<common-dir>/worktrees`, which is git's documented
+// layout. It is derived from the two paths already in hand rather than from a
+// fresh `--git-dir` probe on purpose: this branch is reached by every start
+// directory inside an ordinary `.git`, and none of them should pay a subprocess
+// for a question that a stat answers.
+//
+// Two facts are then required to agree, because the value is about to be
+// printed as somewhere to go: the recorded root has to be a directory the
+// reader can enter, and its own `.git` has to point back at the administrative
+// directory. A pruned or moved worktree fails one of them and falls through to
+// the generic classification, which is never actively wrong.
+func linkedWorktreeOfAdminDir(startDir, commonDir string) string {
+	if startDir == "" || commonDir == "" {
+		return ""
+	}
+	container := filepath.Join(commonDir, linkedWorktreeDirName)
+
+	adminDir := ""
+	for current := filepath.Clean(startDir); ; {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		if sameDirectory(parent, container) {
+			adminDir = current
+			break
+		}
+		current = parent
+	}
+
+	// git records the linked worktree's `.git` file here, as an absolute path.
+	recorded, err := readSmallFile(filepath.Join(adminDir, "gitdir"), maxGitFileSize)
+	if err != nil {
+		return ""
+	}
+	target := strings.TrimRight(string(recorded), "\n ")
+	if target == "" || !filepath.IsAbs(target) {
+		return ""
+	}
+
+	root := filepath.Dir(filepath.Clean(target))
+	if directoryEntryFault(root) != nil {
+		return ""
+	}
+	back, ok := readGitFile(filepath.Join(root, ".git"), root)
+	if !ok || !sameDirectory(back, adminDir) {
+		return ""
+	}
+	return root
 }
 
 // worktreeHoldingGitDir returns the directory that holds commonDir as its

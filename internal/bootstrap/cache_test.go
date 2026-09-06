@@ -176,6 +176,23 @@ func TestEveryStartFailureReachesTheVerdict(t *testing.T) {
 		mode   bootstrap.Mode
 		setup  func(t *testing.T) string
 		runner git.CommandRunner
+
+		// wantCode is the code the verdict has to carry when it is not the one
+		// the failing step raised. The empty string means "the start error's own
+		// code", which is every row but one.
+		//
+		// It exists because a check is allowed to name a failure better than the
+		// layer that raised it, and exactly one condition in MR-001 does: an
+		// unusable `.mindrail/knowledge` reaches the loader as a directory it
+		// could not read, and reaches doctor's read-only probe as a path
+		// condition with a remedy — the chmod, or the move — that clears it. The
+		// probe's answer is the one every command publishes (finding E10), so the
+		// verdict deliberately refines the code rather than repeating it. The row
+		// names the refinement instead of the comparison being loosened for all
+		// of them: the property this test exists for is that no start failure
+		// reaches the process as a *different* failure, and an unstated code
+		// change is exactly that.
+		wantCode app.Code
 	}{
 		{
 			name: "not a git repository",
@@ -242,6 +259,7 @@ func TestEveryStartFailureReachesTheVerdict(t *testing.T) {
 				blockAccess(t, filepath.Join(repo, ".mindrail", "knowledge"))
 				return repo
 			},
+			wantCode: app.CodeRuntimePathUnwritable,
 		},
 	}
 
@@ -266,9 +284,13 @@ func TestEveryStartFailureReachesTheVerdict(t *testing.T) {
 
 			startPayload, _ := app.PayloadOf(startErr)
 			verdictPayload, _ := app.PayloadOf(verdict)
-			if verdictPayload.Code != startPayload.Code {
-				t.Errorf("verdict code = %q, start error code = %q: the verdict describes a different failure",
-					verdictPayload.Code, startPayload.Code)
+			wantCode := tc.wantCode
+			if wantCode == "" {
+				wantCode = startPayload.Code
+			}
+			if verdictPayload.Code != wantCode {
+				t.Errorf("verdict code = %q, want %q (start error code %q): the verdict describes a different failure",
+					verdictPayload.Code, wantCode, startPayload.Code)
 			}
 			if app.ExitCode(verdict) == app.ExitSuccess {
 				t.Errorf("verdict %q exits 0 although startup failed", verdictPayload.Code)
