@@ -32,7 +32,7 @@ Liste, **0.1 Kernel** kapsamını esas alır. Her görev tek başına alınabili
 
 ## Görevler
 
-### [ ] MR-001 — Yerel repository bootstrap ve tanılama yolu
+### [x] MR-001 — Yerel repository bootstrap ve tanılama yolu
 
 - **Tür:** AFK
 - **Blocked by:** None — hemen başlanabilir.
@@ -47,21 +47,21 @@ Tek bir Go binary içinde `mindrail init`, `mindrail status` ve `mindrail doctor
 - [x] `mindrail init` bir Git deposunda ağ veya bulut bağımlılığı olmadan başarılı olur.
 - [x] İlk çalıştırma SQLite veritabanını ve gömülü migration'ları idempotent biçimde oluşturur.
 - [x] Git common-dir ile aktif worktree doğru ve açıklanabilir biçimde raporlanır.
-- [ ] `status` ve `doctor` eksik/bozuk kurulumları yapılandırılmış hata ve önerilen `next_action` ile bildirir.
+- [x] `status` ve `doctor` eksik/bozuk kurulumları yapılandırılmış hata ve önerilen `next_action` ile bildirir.
 - [x] CLI sözleşme testleri ve temiz binary smoke testi bulunur.
 
 #### Durum
 
-Uygulama `b04b1bc`'de; `make verify` yeşil (gofmt, `go vet`, 1479 test, race detector,
+Tamamlandı. `make verify` yeşil (gofmt, `go vet`, 1524 test, race detector,
 3 temiz-binary smoke testi). Tasarım [mr-001-design.md](mr-001-design.md).
 
-Dördüncü kriter açık bırakıldı. Yedi bağımsız denetim turundan sonra üç HIGH bulgu
-ayakta: dolu disk `SQLITE_IOERR_SHMSIZE` üzerinden kota/dosya-boyutu sınırıyla
-karıştırılıyor; `init` kendi yazdıklarından *önce* alınan sondaja dayanarak
-`READY` diyebiliyorken aynı durumu `status` ve `doctor` `BLOCKED` sayıyor; ve
-okunamayan bir `config.toml` uygulanamayacak bir çare basıyor. Üçü de yapay ortam
-gerektiriyor (dolu dosya sistemi, disk kotası, mode 0000). Tamamı
-reprodüksiyonlarıyla [mr-001-findings.md](mr-001-findings.md) içinde.
+Dördüncü kriter, yedi denetim turundan artakalan 17 bulgunun tamamı kapatıldıktan
+sonra işaretlendi. Üç HIGH'ın üçü de yapay ortamda birebir reprodüksiyonlarıyla
+doğrulandı: `init` artık kendi son yazma işleminden *sonra* okuma yapıyor, bir
+boyut sınırı dolu diskle karıştırılmıyor, okunamayan `config.toml` uygulanabilir
+bir çare basıyor. Dokuz mutasyon survivor'ı öldürüldü. Her bulgunun ne olduğu,
+neyle kapandığı ve geri gelirse hangi testin düşeceği
+[mr-001-findings.md](mr-001-findings.md) içinde.
 
 ---
 
