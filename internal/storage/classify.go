@@ -229,6 +229,17 @@ func describeDatabaseFile(path string) string {
 	return path
 }
 
+// MainDatabaseFile is mainDatabaseFile for the packages above this one.
+//
+// internal/migration builds its own remedies and had no way to name the file
+// they are about, so it printed "the runtime database" while the corruption
+// remedy for the neighbouring condition printed the full path — and a remedy
+// carrying no absolute path is invisible to the coherence invariant that
+// compares what two documents say about one path, so it could never be caught
+// contradicting the error object beside it (finding F13). Exporting the lookup
+// is what keeps the second copy of it from being written there.
+func MainDatabaseFile(ctx context.Context, q Querier) string { return mainDatabaseFile(ctx, q) }
+
 // mainDatabaseFile asks the connection which file it is attached to, so a remedy
 // can name the path without the packages that write rows having to carry it.
 //

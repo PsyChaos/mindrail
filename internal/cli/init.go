@@ -152,13 +152,33 @@ func (inv invocation) refuseUnrepresentableRepository(ctx context.Context) error
 	}, nil)
 }
 
-// initReportOf assembles what init did and how the repository ended up.
+// terminalStateOf decides spec §82's terminal line from the two answers that
+// can each mean "targeted work cannot start here".
 //
-// TerminalState is derived from both the verdict and the readiness, not from
-// the verdict alone: a repository can end up unusable without any single check
-// failing outright — an unreadable knowledge record blocks work while every
-// component that did resolve is healthy — and spec §82 promises the terminal
-// line reflects whether targeted work can start, not whether init crashed.
+// The two coincide today. Every condition MR-001 can reach that produces a
+// verdict also leaves a component blocking, and the reverse: readiness is
+// BLOCKED for a component that is ERROR or UNAVAILABLE, and both of those reach
+// doctor.Verdict as well. An audit hunted for a divergence and found none, and
+// the justification the comment here used to give for the disjunction — "an
+// unreadable knowledge record blocks work while every component that did resolve
+// is healthy" — is simply not true of this binary: that record leaves the
+// repository DEGRADED and exit 0 (finding F14).
+//
+// The disjunction stays anyway, and it is a fail-safe rather than a live
+// branch. Each clause alone is one future change away from printing READY over
+// a repository the next command refuses, which is the shape of finding F01, and
+// the cost of keeping both is a test rather than a risk. This function exists so
+// that both clauses can be exercised from a value: the two survivors an audit
+// found here were survivors because neither could be reached separately through
+// a whole running command.
+func terminalStateOf(verdict error, readiness status.Readiness) status.TerminalState {
+	if verdict != nil || readiness == status.ReadinessBlocked {
+		return status.TerminalBlocked
+	}
+	return status.TerminalReady
+}
+
+// initReportOf assembles what init did and how the repository ended up.
 func initReportOf(a *bootstrap.App, verdict error, elapsed time.Duration) status.InitReport {
 	result := a.InitResult()
 	current := status.Build(a.Subject(), elapsed)
@@ -177,8 +197,8 @@ func initReportOf(a *bootstrap.App, verdict error, elapsed time.Duration) status
 		DurationMS:           elapsed.Milliseconds(),
 	}
 
-	if verdict != nil || current.Readiness == status.ReadinessBlocked {
-		report.TerminalState = status.TerminalBlocked
+	report.TerminalState = terminalStateOf(verdict, current.Readiness)
+	if report.TerminalState == status.TerminalBlocked {
 		report.Reason = blockedReason(verdict, blockingSummary(current))
 	}
 

@@ -68,6 +68,27 @@ func New(db *sql.DB, set []Migration, clock app.Clock) *Migrator {
 	return &Migrator{db: db, set: set, clock: clock}
 }
 
+// rebuildRemedy names the database the reader has to move aside.
+//
+// The path is asked of the connection rather than threaded in, the way storage's
+// own write remedies ask for it. Without it the sentence said "the runtime
+// database" and stopped, while the corruption remedy for the file next to it
+// printed the full path — and the database lives under `.git`, which most users
+// have never opened. The second cost is the one that matters more: a remedy
+// naming no absolute path cannot be read by the invariant that compares what two
+// documents say about one path, so it could never be caught contradicting the
+// error object it travels with (finding F13).
+//
+// An empty answer is a normal outcome, not a failure. It costs the sentence its
+// path, and the sentence is being built because something has already gone
+// wrong.
+func (m *Migrator) rebuildRemedy(ctx context.Context) string {
+	if path := storage.MainDatabaseFile(ctx, m.db); path != "" {
+		return "Move " + path + " aside and run `mindrail init` to rebuild it."
+	}
+	return "Move the runtime database aside and run `mindrail init` to rebuild it."
+}
+
 var (
 	// ErrApplyFailed means a migration's SQL did not run. Nothing it did was
 	// kept and nothing was recorded.
@@ -195,7 +216,7 @@ func (m *Migrator) readLedger(ctx context.Context) ([]Applied, error) {
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version`)
 	if err != nil {
-		return nil, unreadableFailure(ledgerDescription, fmt.Errorf("read %s: %w", bookkeepingTable, err))
+		return nil, m.unreadableFailure(ctx, ledgerDescription, fmt.Errorf("read %s: %w", bookkeepingTable, err))
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -206,17 +227,17 @@ func (m *Migrator) readLedger(ctx context.Context) ([]Applied, error) {
 			appliedAt string
 		)
 		if err := rows.Scan(&row.Version, &row.Name, &row.Checksum, &appliedAt); err != nil {
-			return nil, unreadableFailure(ledgerDescription, fmt.Errorf("scan %s row: %w", bookkeepingTable, err))
+			return nil, m.unreadableFailure(ctx, ledgerDescription, fmt.Errorf("scan %s row: %w", bookkeepingTable, err))
 		}
 		row.AppliedAt, err = app.ParseTime(appliedAt)
 		if err != nil {
-			return nil, unreadableFailure(ledgerDescription,
+			return nil, m.unreadableFailure(ctx, ledgerDescription,
 				fmt.Errorf("%s version %d: %w", bookkeepingTable, row.Version, err))
 		}
 		ledger = append(ledger, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, unreadableFailure(ledgerDescription, fmt.Errorf("read %s: %w", bookkeepingTable, err))
+		return nil, m.unreadableFailure(ctx, ledgerDescription, fmt.Errorf("read %s: %w", bookkeepingTable, err))
 	}
 
 	return ledger, nil
@@ -352,7 +373,7 @@ func (m *Migrator) verifySchemaObjects(ctx context.Context, ledger []Applied) er
 	}
 
 	if missing := namesAbsentFrom(expected, present); len(missing) != 0 {
-		return schemaObjectFailure(missing)
+		return m.schemaObjectFailure(ctx, missing)
 	}
 
 	if conflicts := namesPresentIn(unrecorded, present); len(conflicts) != 0 {
@@ -369,7 +390,7 @@ func (m *Migrator) verifySchemaObjects(ctx context.Context, ledger []Applied) er
 			return err
 		}
 		if unchanged {
-			return schemaBehindLedgerFailure(conflicts, unrecorded)
+			return m.schemaBehindLedgerFailure(ctx, conflicts, unrecorded)
 		}
 	}
 
@@ -408,7 +429,7 @@ func (m *Migrator) presentTables(
 		`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (`+
 			strings.Join(placeholders, ", ")+`)`, names...)
 	if err != nil {
-		return nil, unreadableFailure("the runtime database's table list", err)
+		return nil, m.unreadableFailure(ctx, "the runtime database's table list", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -416,12 +437,12 @@ func (m *Migrator) presentTables(
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return nil, unreadableFailure("the runtime database's table list", err)
+			return nil, m.unreadableFailure(ctx, "the runtime database's table list", err)
 		}
 		present[name] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, unreadableFailure("the runtime database's table list", err)
+		return nil, m.unreadableFailure(ctx, "the runtime database's table list", err)
 	}
 
 	return present, nil
@@ -495,7 +516,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 		`SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_xinfo(m.name) p `+
 			`WHERE m.type = 'table' AND m.name IN (`+strings.Join(placeholders, ", ")+`)`, names...)
 	if err != nil {
-		return unreadableFailure(columnsDescription, fmt.Errorf("read table columns: %w", err))
+		return m.unreadableFailure(ctx, columnsDescription, fmt.Errorf("read table columns: %w", err))
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -503,7 +524,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 	for rows.Next() {
 		var table, column string
 		if err := rows.Scan(&table, &column); err != nil {
-			return unreadableFailure(columnsDescription, fmt.Errorf("scan table column row: %w", err))
+			return m.unreadableFailure(ctx, columnsDescription, fmt.Errorf("scan table column row: %w", err))
 		}
 		if present[table] == nil {
 			present[table] = make(map[string]struct{})
@@ -511,7 +532,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 		present[table][strings.ToLower(column)] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return unreadableFailure(columnsDescription, fmt.Errorf("read table columns: %w", err))
+		return m.unreadableFailure(ctx, columnsDescription, fmt.Errorf("read table columns: %w", err))
 	}
 
 	missing := make(map[string][]string)
@@ -526,7 +547,7 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 		return nil
 	}
 
-	return schemaShapeFailure(missing)
+	return m.schemaShapeFailure(ctx, missing)
 }
 
 // declaredColumns replays the recorded migrations and returns the columns each
@@ -771,10 +792,10 @@ func (m *Migrator) ensureBookkeeping(ctx context.Context) error {
 	// ledger table yet.
 	kind, occupied, err := m.bookkeepingOccupant(ctx)
 	if err != nil {
-		return unreadableFailure(ledgerDescription, fmt.Errorf("look up %s: %w", bookkeepingTable, err))
+		return m.unreadableFailure(ctx, ledgerDescription, fmt.Errorf("look up %s: %w", bookkeepingTable, err))
 	}
 	if occupied {
-		return bookkeepingOccupiedFailure(kind)
+		return m.bookkeepingOccupiedFailure(ctx, kind)
 	}
 
 	err = storage.InTx(ctx, m.db, func(ctx context.Context, tx *sql.Tx) error {
@@ -814,7 +835,7 @@ func (m *Migrator) bookkeepingExists(ctx context.Context) (bool, error) {
 	err := m.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, tableKind, bookkeepingTable).Scan(&count)
 	if err != nil {
-		return false, unreadableFailure(ledgerDescription, fmt.Errorf("look up %s: %w", bookkeepingTable, err))
+		return false, m.unreadableFailure(ctx, ledgerDescription, fmt.Errorf("look up %s: %w", bookkeepingTable, err))
 	}
 	return count > 0, nil
 }
@@ -911,7 +932,7 @@ func checksumFailure(expected Migration, recorded Applied) error {
 // longer has. The remedy is a rebuild rather than `mindrail init`, because init
 // would find every version already recorded, apply nothing, and leave the
 // database in exactly the state that produced this error.
-func schemaObjectFailure(names []string) error {
+func (m *Migrator) schemaObjectFailure(ctx context.Context, names []string) error {
 	detail := make([]string, 0, len(names))
 	for _, name := range names {
 		detail = append(detail, tableKind+" "+name)
@@ -923,7 +944,7 @@ func schemaObjectFailure(names []string) error {
 		app.KindFailed,
 		"the schema does not contain what the applied migrations created: "+listed,
 		"The recorded schema version does not describe this database, so any command that trusted it would fail on a missing object.",
-		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+		m.rebuildRemedy(ctx),
 	).
 		WithMetadata("missing", listed).
 		WithMetadata("missing_count", strconv.Itoa(len(names))).
@@ -934,7 +955,7 @@ func schemaObjectFailure(names []string) error {
 // The remedy is the rebuild rather than `mindrail init`, for the same reason
 // schemaObjectFailure's is: every version is already recorded, so init would
 // apply nothing and leave the table exactly as it is.
-func schemaShapeFailure(missing map[string][]string) error {
+func (m *Migrator) schemaShapeFailure(ctx context.Context, missing map[string][]string) error {
 	tables := slices.Sorted(maps.Keys(missing))
 
 	detail := make([]string, 0, len(tables))
@@ -949,7 +970,7 @@ func schemaShapeFailure(missing map[string][]string) error {
 		app.KindFailed,
 		"the schema is missing columns the applied migrations declared: "+listed,
 		"The recorded schema version does not describe this database, so the next write would fail on a column this report called healthy.",
-		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+		m.rebuildRemedy(ctx),
 	).
 		WithMetadata("missing_columns", listed).
 		WithMetadata("missing_table_count", strconv.Itoa(len(tables))).
@@ -968,7 +989,7 @@ func schemaShapeFailure(missing map[string][]string) error {
 // on the first `CREATE TABLE`, every time, forever. A rebuilt database has no
 // tables to collide with, so this is a remedy that ends the loop rather than
 // re-entering it.
-func schemaBehindLedgerFailure(conflicts []string, unrecorded map[string]Migration) error {
+func (m *Migrator) schemaBehindLedgerFailure(ctx context.Context, conflicts []string, unrecorded map[string]Migration) error {
 	first := unrecorded[conflicts[0]]
 	for _, name := range conflicts[1:] {
 		if unrecorded[name].Version < first.Version {
@@ -985,7 +1006,7 @@ func schemaBehindLedgerFailure(conflicts []string, unrecorded map[string]Migrati
 		"the migration ledger does not record migration "+migrationName+
 			", but the tables it creates are already in this database: "+listed,
 		"The ledger no longer describes this database, so `mindrail init` would try to create tables that already exist and would fail the same way every time it ran.",
-		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+		m.rebuildRemedy(ctx),
 	).
 		WithMetadata("unrecorded_version", strconv.FormatInt(first.Version, 10)).
 		WithMetadata("unrecorded_name", first.Name).
@@ -998,13 +1019,13 @@ func schemaBehindLedgerFailure(conflicts []string, unrecorded map[string]Migrati
 // is not the ledger holds the ledger's name. Every run of `mindrail init` fails
 // on the same `CREATE TABLE IF NOT EXISTS`, so the remedy has to be the rebuild
 // rather than another init.
-func bookkeepingOccupiedFailure(kind string) error {
+func (m *Migrator) bookkeepingOccupiedFailure(ctx context.Context, kind string) error {
 	return app.NewError(
 		app.CodeMigrationFailed,
 		app.KindFailed,
 		"the runtime database has a "+kind+" named "+bookkeepingTable+", which is the name the migration ledger needs",
 		"Mindrail cannot record which schema migrations have run, so `mindrail init` would fail on the same name every time it ran.",
-		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+		m.rebuildRemedy(ctx),
 	).
 		WithMetadata("occupying_kind", kind).
 		WithCause(fmt.Errorf("%w: sqlite_master holds a %s named %s", ErrBookkeepingOccupied, kind, bookkeepingTable))
@@ -1023,7 +1044,7 @@ func bookkeepingOccupiedFailure(kind string) error {
 // A cancelled or expired context is told apart because it is not damage: telling
 // someone who pressed Ctrl-C to move their database aside would be a worse
 // remedy than the one this function exists to replace.
-func unreadableFailure(what string, cause error) error {
+func (m *Migrator) unreadableFailure(ctx context.Context, what string, cause error) error {
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
 		return app.NewError(
 			app.CodeMigrationFailed,
@@ -1039,7 +1060,7 @@ func unreadableFailure(what string, cause error) error {
 		app.KindFailed,
 		what+" could not be read",
 		"Mindrail cannot confirm which schema migrations have run, so it will not trust or write to this database.",
-		"Move the runtime database aside and run `mindrail init` to rebuild it.",
+		m.rebuildRemedy(ctx),
 	).WithCause(cause)
 }
 

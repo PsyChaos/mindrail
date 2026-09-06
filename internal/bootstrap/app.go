@@ -672,7 +672,7 @@ func (a *App) migrateDB(ctx context.Context) error {
 
 	set, err := migration.Load(a.migrationFS())
 	if err != nil {
-		a.subject.MigrateErr = asMigrationError(err)
+		a.subject.MigrateErr = asMigrationSetError(err)
 		return a.subject.MigrateErr
 	}
 
@@ -920,6 +920,27 @@ func asMigrationError(err error) error {
 		"the runtime schema could not be established",
 		"The runtime database is not on the schema this binary expects, so it will not be written to.",
 		"Run `mindrail init` to apply the pending migrations.")
+}
+
+// asMigrationSetError codes a migration set this binary could not even read.
+//
+// It is separate from asMigrationError because the two have nothing in common
+// but a code. Everything asMigrationError describes is a state of the user's
+// database, and "run `mindrail init` to apply the pending migrations" is the
+// remedy for it. This one is a state of the *binary*: two files claiming the
+// same version, a name the loader cannot parse, an embed that did not embed.
+// No repository is at fault, `mindrail init` re-runs the command that just
+// failed and reproduces it verbatim forever, and the reader is left carrying out
+// a remedy that cannot clear the condition it was printed for (finding F12).
+//
+// It is developer-facing by nature — only a defective build reaches it — so the
+// remedy names the build rather than the repository.
+func asMigrationSetError(err error) error {
+	return domainize(err, app.CodeMigrationFailed, app.KindFailed,
+		"this Mindrail build ships a migration set it cannot read",
+		"No repository is at fault: the migrations are compiled into the binary, so every command will fail this way in every repository until the binary is replaced.",
+		"Reinstall or rebuild Mindrail; `mindrail version` names the build that is failing.",
+		"Report the version and the message above, which names the migration files that disagree.")
 }
 
 func asKnowledgeError(err error) error {

@@ -163,7 +163,7 @@ func overrideOrDefault(base, override, derived string) (string, error) {
 		return derived, nil
 	}
 	if hasParentSegment(override) {
-		return "", escapeError(override)
+		return "", escapeError(override, override)
 	}
 	if filepath.IsAbs(override) {
 		return filepath.Clean(override), nil

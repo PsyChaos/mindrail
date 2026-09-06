@@ -1404,6 +1404,64 @@ func TestNoPanicOnHostileInput(t *testing.T) {
 	}
 }
 
+// TestAMalformedMigrationSetBlamesTheBuildRatherThanTheRepository is finding
+// F12.
+//
+// Two files claiming the same version is a defect in the binary: the migrations
+// are compiled in, no repository can be at fault, and the remedy printed for it
+// was "Run `mindrail init` to apply the pending migrations." — the command that
+// had just failed, which reproduces the condition verbatim every time it is run.
+// The reader loops.
+func TestAMalformedMigrationSetBlamesTheBuildRatherThanTheRepository(t *testing.T) {
+	repo := newRepo(t)
+	application := bootstrap.New(bootstrap.Options{
+		StartDir:      repo,
+		Mode:          bootstrap.ModeInit,
+		Environ:       []string{},
+		UserConfigDir: t.TempDir(),
+		MigrationFS: fstest.MapFS{
+			"000002_drop.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
+			"000002_bad.sql":  &fstest.MapFile{Data: []byte("SELECT 1;")},
+		},
+	})
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+	err := application.Start(t.Context())
+	if err == nil {
+		t.Fatal("a migration set with two files at one version started cleanly")
+	}
+
+	payload, ok := app.PayloadOf(err)
+	if !ok {
+		t.Fatalf("error %v carries no domain payload", err)
+	}
+	remedy := strings.Join(payload.NextAction, " ")
+	if strings.Contains(remedy, "mindrail init") {
+		t.Errorf("next_action = %q, which sends the reader to the command that just failed", payload.NextAction)
+	}
+	if !strings.Contains(remedy, "mindrail version") {
+		t.Errorf("next_action = %q, want it to name the build that is failing", payload.NextAction)
+	}
+	if !strings.Contains(payload.Why, "migration set") {
+		t.Errorf("why = %q, want it to say the binary's migration set is the problem", payload.Why)
+	}
+}
+
+// TestAPendingMigrationStillSendsTheReaderToInit is the over-fire guard for the
+// row above: the condition `mindrail init` really does clear must keep saying
+// so, or F12's fix has moved a wrong remedy onto a different set of readers.
+func TestAPendingMigrationStillSendsTheReaderToInit(t *testing.T) {
+	repo := newRepo(t)
+	createUnmigratedDatabase(t, repo)
+
+	got := run(t, repo, "status", "--json")
+	got.requireExit(t, app.ExitSuccess)
+
+	if run(t, repo, "init").code != app.ExitSuccess {
+		t.Fatal("init could not apply the pending migrations to a database it created")
+	}
+}
+
 // --- harness ----------------------------------------------------------------
 
 // result is one command invocation, captured the way a caller sees it.

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -124,7 +125,7 @@ func (r Root) Resolve(rel string) (string, error) {
 		return "", errUninitializedRoot
 	}
 	if isAbsoluteInput(rel) {
-		return "", escapeError(rel)
+		return "", escapeError(rel, rel)
 	}
 
 	candidate := filepath.Join(r.canonical, filepath.FromSlash(rel))
@@ -133,9 +134,35 @@ func (r Root) Resolve(rel string) (string, error) {
 		return "", err
 	}
 	if !r.holds(canonical) {
-		return "", escapeError(rel)
+		return "", escapeError(rel, r.escapingComponent(rel))
 	}
 	return canonical, nil
+}
+
+// escapingComponent names the shallowest prefix of rel that already leaves the
+// root, which is the entry a reader has to change.
+//
+// The requested path is not that answer, and quoting it made two commands
+// disagree about one link: `status` resolves `.mindrail/config.toml` because it
+// wants to read the file, `init` resolves `.mindrail` because it wants to create
+// the directory, and both are refused by the same symbolic link one level up. A
+// remedy that named what each command happened to ask for described the link as
+// being in two places (finding F15).
+//
+// A prefix that cannot be canonicalized at all is the answer too: it is as far
+// as the walk got, and the reader has to look there either way.
+func (r Root) escapingComponent(rel string) string {
+	cleaned := filepath.Clean(filepath.FromSlash(rel))
+	parts := strings.Split(filepath.ToSlash(cleaned), "/")
+
+	for i := range parts {
+		prefix := filepath.Join(r.canonical, filepath.FromSlash(strings.Join(parts[:i+1], "/")))
+		canonical, err := canonicalize(prefix)
+		if err != nil || !r.holds(canonical) {
+			return prefix
+		}
+	}
+	return filepath.Join(r.canonical, cleaned)
 }
 
 // Contains reports whether an absolute path canonicalizes to the root or a
@@ -159,12 +186,12 @@ func (r Root) RelSlash(abs string) (string, error) {
 		return "", err
 	}
 	if !r.holds(canonical) {
-		return "", escapeError(abs)
+		return "", escapeError(abs, abs)
 	}
 
 	rel, err := filepath.Rel(r.canonical, canonical)
 	if err != nil {
-		return "", escapeError(abs)
+		return "", escapeError(abs, abs)
 	}
 	return filepath.ToSlash(rel), nil
 }
@@ -349,13 +376,29 @@ func canonicalizeHop(abs string, hops int) (string, error) {
 
 // escapeError pairs the sentinel with the structured payload the CLI renders,
 // so errors.Is and app.PayloadOf both work on the same value (tech-stack §72).
-func escapeError(target string) error {
+//
+// inspect is the absolute path the reader has to look at, and quoting it is the
+// whole of finding F15. "Replace any symbolic link on the path that points
+// outside the repository" named no path at all, so in a repository with more
+// than one link the reader had to hunt for the one meant — while every
+// neighbouring condition, obstruction and permission and space and read-only
+// mount, already quotes the path it is about. The sentence also carried no
+// absolute path for the invariant that compares what two documents say about
+// one path, so it could never be caught contradicting the error object beside
+// it.
+func escapeError(target, inspect string) error {
 	return app.NewError(
 		app.CodePathEscapesRoot,
 		app.KindUsage,
-		"the path resolves outside the repository root",
+		"the path "+strconv.Quote(inspect)+" resolves outside the repository root",
 		"Mindrail refuses the operation rather than reading or writing outside the repository",
 		"use a path inside the repository",
-		"replace any symbolic link on the path that points outside the repository",
-	).WithMetadata("path", target).WithCause(ErrEscapesRoot)
+		// One sentence for both causes, because escapeError serves both: a
+		// configured value carrying a ".." segment, and a resolved path with a
+		// symbolic link on it that leaves the root. Naming only the link would
+		// be wrong for the first, and naming neither is what F15 is.
+		"check "+strconv.Quote(inspect)+` for a ".." segment or a symbolic link that leaves the repository`,
+	).WithMetadata("path", target).
+		WithMetadata("inspect_path", inspect).
+		WithCause(ErrEscapesRoot)
 }

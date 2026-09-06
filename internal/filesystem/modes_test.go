@@ -200,7 +200,7 @@ func TestRootKindOfStillRefusesWhatItDoesNotKnow(t *testing.T) {
 	for _, err := range []error{
 		nil,
 		errors.New("unrelated"),
-		escapeError("some/path"),
+		escapeError("some/path", "/repo/some/path"),
 	} {
 		if kind, ok := RootKindOf(err); ok {
 			t.Errorf("RootKindOf(%v) = (%q, true), want no answer", err, kind)
