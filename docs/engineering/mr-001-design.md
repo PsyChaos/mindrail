@@ -1,8 +1,8 @@
 # MR-001 — Implementation design
 
-- **Task:** MR-001 — Yerel repository bootstrap ve tanılama yolu (`.tasks/mindrail-0.1-task-list.md` L35–L51)
+- **Task:** MR-001 — Yerel repository bootstrap ve tanılama yolu (`docs/engineering/mindrail-0.1-task-list.md` L35–L51)
 - **Deliverable:** `mindrail init`, `mindrail status`, `mindrail doctor` (+ minimal `mindrail version`) in one binary
-- **Authority:** `.docs/mindrail-tech-stack.md` (sequencing, package names), `.docs/mindrail-technical-specification-1.0.md` (scope wins on conflict, §168), `.docs/mindrail-0.1-kernel-scope.md` (0.1 delivery scope)
+- **Authority:** `docs/specification/mindrail-tech-stack.md` (sequencing, package names), `docs/specification/mindrail-technical-specification-1.0.md` (scope wins on conflict, §168), `docs/specification/mindrail-0.1-kernel-scope.md` (0.1 delivery scope)
 - **Status:** contract for four parallel work units + one wiring unit
 
 ## 0. Citation audit
@@ -62,7 +62,7 @@ Corrections applied to the handed-over contract:
 
 ## 1. Package plan
 
-`.docs/mindrail-tech-stack.md` §7 is the naming authority. Every package below
+`docs/specification/mindrail-tech-stack.md` §7 is the naming authority. Every package below
 except one is named there.
 
 | Package | Directory | Responsibility (one line) | Unit |
