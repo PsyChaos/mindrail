@@ -4,8 +4,10 @@ Every finding the MR-001 audit cycle produced, and how each was closed. Every
 one was reproduced against the compiled binary by an auditor that had not
 written the code; every one was closed against the same reproduction.
 
-**Status: all 17 closed.** `make verify` is green — gofmt, `go vet`, 1524 tests,
-the race detector and 3 clean-binary smoke tests.
+**Status: all 17 closed, and the pass that closed them was itself audited** —
+see "The audit of this remediation" at the end, which found twenty-nine more.
+`make verify` is green: gofmt, `go vet`, 1595 tests, the race detector and 3
+clean-binary smoke tests.
 
 **Provenance.** MR-001 went through seven adversarial audits and six remediation
 passes before the milestone closed at `b04b1bc` with these 17 outstanding. The
@@ -299,6 +301,12 @@ path, so it could never be caught contradicting the error object it travels with
 **Closed by** `Migrator.rebuildRemedy`, which asks the connection for its own
 file through the newly exported `storage.MainDatabaseFile`.
 
+**Fails if it regresses:** `TestEveryRemedyAboutAFileNamesThatFileAbsolutely`.
+This line was missing for a round, and its absence was the finding: the fix was
+declared closed while nothing could fail. The agreement matrix classifies a
+remedy on a phrase, and `"to rebuild it"` is in both the path-less sentence and
+the one that replaced it, so reverting the fix left the whole suite green.
+
 ### F14 — three unexercised claims in the init report path
 
 Both halves of the disjunction deciding the terminal line, and the pending-count
@@ -325,6 +333,12 @@ one. The first attempt quoted the path each command had asked for, which made
 and broke the agreement matrix. `Root.escapingComponent` now names the
 shallowest prefix that already leaves the root, which is the entry a reader has
 to change and the same entry whichever command met it.
+
+**Fails if it regresses:** `TestEveryRemedyAboutAFileNamesThatFileAbsolutely`
+(the sentence and the `inspect_path` metadata) and
+`TestEscapingComponentNamesTheEntryThatLeaves` (the choice of path). Like F13,
+this line was missing for a round and both halves of the fix could be reverted
+in silence.
 
 ### F16 — a guard that could not fail
 
@@ -353,3 +367,85 @@ the path, so Mindrail looked for a directory git never named. `inspectGitEntry`'
 rows in `TestReadGitFileMirrorsGit` (trailing tab, CRLF, and the leading space
 git deliberately keeps), and `TestTheWalkStopsAtAGitEntryItCannotFollow`. All
 three mutations are killed.
+
+---
+
+## The audit of this remediation
+
+Closing the seventeen above was itself audited, by three independent reviewers
+that had not written any of it: one on the runtime write path, one on error
+classification and remedies, one on test quality. They produced twenty-nine
+findings between them. All are closed; `make verify` is green with 1595 tests.
+
+**Five were defects the fixes introduced.** This is the number worth carrying
+forward: a third of what a remediation pass produces is new.
+
+- Ctrl-C during the new checkpoint was reported as `RUNTIME_DB_UNAVAILABLE` at
+  exit 4, in the same output whose readiness line said READY and whose printed
+  remedy, `mindrail doctor`, then exited 0 and found nothing. A cancelled
+  checkpoint finds nothing wrong; it is reported as busy.
+- The size-limit classification over-fired into a new false claim. Reading "more
+  than zero bytes available" as room meant a filesystem with four kilobytes left
+  was told a limit was refusing the write and that *freeing space would not
+  change it* — on a disk where freeing two megabytes cleared it at once. The
+  filesystem now has to show room for what SQLite was actually refused: the
+  32 KiB shared-memory index plus the log on disk.
+- `wal_checkpoint(TRUNCATE)` inherited the database's five-second busy timeout,
+  so one held read lock took `mindrail init` from about ten milliseconds to
+  five seconds. The wait is now capped per connection at 250 ms. The cap has to
+  be the busy timeout: a context deadline around the query changed nothing,
+  because the wait happens inside SQLite's own busy handler.
+- `mindrail help bogus` printed the whole root help on stdout and exited 0,
+  because a non-nil `Args` on the root stops cobra consulting `legacyArgs`.
+- The exit-code fix did not reach cobra's own commands. `help`, `completion` and
+  one command per shell are added inside `ExecuteC`, after any loop over
+  `Commands()` in the constructor has finished, so `mindrail completion bash
+  extra --json` still exited 1 with an empty stdout — the exact symptom F04 and
+  F08 describe. The tree is now classified at execution rather than at
+  construction.
+
+**Two were false claims in this document.** F13 and F15 were recorded as closed
+while nothing could fail if either were reverted, and both were reverted to
+prove it. The regression-test lines above were written afterwards, against
+assertions that exist.
+
+**One gutted the fix that was supposed to prevent all of this.** The
+remedy-class assertion added for F05 was defeated by the bare substring
+`"make "` in the shared classifier: "Delete the whole repository to make it
+stop" classified as a permission remedy, so the seven matrix rows declaring
+`classPermission` were satisfied by any sentence containing an English verb. The
+classifier matches shapes now, and has a test of its own. The matrix's escape
+hatch was the same kind of hole — free text that skipped the assertion entirely
+— and no longer excuses a row from declaring its class.
+
+**One reported success without running.** The flagship F01 regression test
+re-executes the test binary inside a mount namespace and the parent only checked
+the child's exit code, which is zero for a child that skipped. A refused mount,
+a `-test.run` matching nothing and `go test -short` all reported a pass. The
+child now says how many rows it ran and the parent refuses an answer without it.
+
+**The rest were unfalsifiable claims**: comments asserting behaviour no
+assertion pinned. `sizeLimitOpenFailure` was reached by no test at all — its
+four remedies could be replaced with the very "free space" sentence F03 exists
+to prevent, in silence. `Flush` could swallow the error it exists to surface.
+`TRUNCATE` could become `PASSIVE`. Each now has a test; where a claim turned out
+to be genuinely untestable, the code says so instead of implying otherwise —
+`escapingComponent`'s redundant error clause was deleted the way F16's dead
+guard was, and the trim in `adapter.go` records that nothing can currently fail
+if it regresses.
+
+### What generalises to MR-002
+
+1. **A remediation pass needs its own audit.** Five of these were introduced by
+   the fixes, and two were false claims in the document recording them. The
+   fixes were made by someone who had just read the findings and believed them.
+2. **A test that classifies on a phrase asserts the phrase, not the property.**
+   Both F13 and F15 survived reversion because the matrix matched a sentence
+   fragment that both the right and the wrong answer contained. Assert the
+   property — the absolute path, the metadata key — not the wording.
+3. **A test that re-executes anything must prove it ran.** Exit codes are not
+   evidence; a marker the parent requires is.
+4. **A widened classification over-fires before it under-fires.** F03's fix and
+   its own correction are the same mistake twice, one in each direction: first
+   asserting a full disk without asking, then asserting *not* a full disk on the
+   strength of four kilobytes.

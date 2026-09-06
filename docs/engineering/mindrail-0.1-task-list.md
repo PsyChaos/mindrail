@@ -52,16 +52,20 @@ Tek bir Go binary içinde `mindrail init`, `mindrail status` ve `mindrail doctor
 
 #### Durum
 
-Tamamlandı. `make verify` yeşil (gofmt, `go vet`, 1524 test, race detector,
+Tamamlandı. `make verify` yeşil (gofmt, `go vet`, 1595 test, race detector,
 3 temiz-binary smoke testi). Tasarım [mr-001-design.md](mr-001-design.md).
 
 Dördüncü kriter, yedi denetim turundan artakalan 17 bulgunun tamamı kapatıldıktan
 sonra işaretlendi. Üç HIGH'ın üçü de yapay ortamda birebir reprodüksiyonlarıyla
 doğrulandı: `init` artık kendi son yazma işleminden *sonra* okuma yapıyor, bir
 boyut sınırı dolu diskle karıştırılmıyor, okunamayan `config.toml` uygulanabilir
-bir çare basıyor. Dokuz mutasyon survivor'ı öldürüldü. Her bulgunun ne olduğu,
-neyle kapandığı ve geri gelirse hangi testin düşeceği
-[mr-001-findings.md](mr-001-findings.md) içinde.
+bir çare basıyor.
+
+Kapatma turu da bağımsız olarak denetlendi ve 29 bulgu daha üretti; beşi
+düzeltmelerin kendi getirdiği kusurlardı, ikisi bulgu belgesindeki yanlış
+"kapandı" iddialarıydı. Hepsi kapalı. Her bulgunun ne olduğu, neyle kapandığı ve
+geri gelirse hangi testin düşeceği — düşecek bir test yoksa bunun neden böyle
+olduğu — [mr-001-findings.md](mr-001-findings.md) içinde.
 
 ---
 
