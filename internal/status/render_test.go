@@ -88,6 +88,7 @@ func TestStatusJSONParityWithHuman(t *testing.T) {
 		{label: "Decisions:", path: "knowledge.decisions"},
 		{label: "Invariants:", path: "knowledge.invariants"},
 		{label: "Problems:", path: "knowledge.problems"},
+		{label: "Findings:", path: "knowledge.findings"},
 		{label: "Write schema version:", path: "knowledge.write_schema_version"},
 		{label: "Readable schema versions:", path: "knowledge.readable_schema_versions"},
 		{label: "Registered:", path: "workspace.registered"},

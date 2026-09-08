@@ -13,6 +13,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
 	"github.com/PsyChaos/mindrail/internal/workspace"
@@ -216,6 +217,8 @@ func buildSubjects() map[string]doctor.Subject {
 		"uninitialized":       uninitializedSubject(),
 		"unreadable record":   subjectWithKnowledgeProblem(false),
 		"unsupported schema":  subjectWithKnowledgeProblem(true),
+		"invalid record":      subjectWithKnowledgeFinding(false),
+		"supersede cycle":     subjectWithKnowledgeFinding(true),
 		"repository unusable": subjectWithoutRepository(),
 		"halted at sqlite":    haltedAtSQLiteSubject(),
 	}
@@ -523,6 +526,16 @@ func subjectWithKnowledgeProblem(fatal bool) doctor.Subject {
 		Message: "record rejected",
 		Fatal:   fatal,
 	}}
+	return s
+}
+
+// subjectWithKnowledgeFinding is a store this binary read whole and found
+// wrong. It is deliberately not subjectWithKnowledgeProblem: that one is a
+// record nothing could read, and decision D-38 keeps the two apart because
+// their remedies are opposite.
+func subjectWithKnowledgeFinding(cycle bool) doctor.Subject {
+	s := healthySubject()
+	s.KnowledgeFindings = []validate.Finding{findingOn(".mindrail/knowledge/decisions/dec-1.json", cycle)}
 	return s
 }
 

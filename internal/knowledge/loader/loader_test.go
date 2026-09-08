@@ -107,19 +107,22 @@ func TestLoadCountsDecisionsAndInvariants(t *testing.T) {
 		t.Errorf("Problems = %v, want none", store.Problems)
 	}
 
+	// slices.EqualFunc rather than slices.Equal: RecordRef stopped being
+	// comparable when D-46 gave it a []byte body. sameRef compares every field,
+	// so this assertion is the one it was before, not a narrowed version of it.
 	wantDecisions := []loader.RecordRef{
-		{Kind: loader.KindDecision, ID: "DEC-0001", Path: ".mindrail/knowledge/decisions/DEC-0001.json", SchemaVersion: 1},
-		{Kind: loader.KindDecision, ID: "DEC-0002", Path: ".mindrail/knowledge/decisions/DEC-0002.json", SchemaVersion: 1},
+		{Kind: loader.KindDecision, ID: "DEC-0001", Path: ".mindrail/knowledge/decisions/DEC-0001.json", SchemaVersion: 1, Body: []byte(decisionJSON("DEC-0001", 1))},
+		{Kind: loader.KindDecision, ID: "DEC-0002", Path: ".mindrail/knowledge/decisions/DEC-0002.json", SchemaVersion: 1, Body: []byte(decisionJSON("DEC-0002", 1))},
 	}
-	if !slices.Equal(store.Decisions, wantDecisions) {
-		t.Errorf("Decisions = %+v, want %+v (sorted by file name)", store.Decisions, wantDecisions)
+	if !slices.EqualFunc(store.Decisions, wantDecisions, sameRef) {
+		t.Errorf("Decisions = %s, want %s (sorted by file name)", describeRefs(store.Decisions), describeRefs(wantDecisions))
 	}
 
 	wantInvariants := []loader.RecordRef{
-		{Kind: loader.KindInvariant, ID: "INV-0001", Path: ".mindrail/knowledge/invariants/INV-0001.json", SchemaVersion: 1},
+		{Kind: loader.KindInvariant, ID: "INV-0001", Path: ".mindrail/knowledge/invariants/INV-0001.json", SchemaVersion: 1, Body: []byte(invariantJSON("INV-0001", 1))},
 	}
-	if !slices.Equal(store.Invariants, wantInvariants) {
-		t.Errorf("Invariants = %+v, want %+v", store.Invariants, wantInvariants)
+	if !slices.EqualFunc(store.Invariants, wantInvariants, sameRef) {
+		t.Errorf("Invariants = %s, want %s", describeRefs(store.Invariants), describeRefs(wantInvariants))
 	}
 }
 

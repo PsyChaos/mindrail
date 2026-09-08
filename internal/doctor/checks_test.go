@@ -979,6 +979,11 @@ func haltedSubject(st step) Subject {
 	}
 	if fromHere(stepValidateKnowledge) {
 		s.Knowledge = loader.Store{}
+		// Steps 5-11 run inside the same bootstrap step as the load, so a halt
+		// there leaves no findings behind either. Clearing both is what makes
+		// "nobody looked" the shape of this fixture rather than a claim it
+		// happens not to carry.
+		s.KnowledgeFindings = nil
 	}
 	if fromHere(stepMigrateDB) {
 		s.Migrations = nil

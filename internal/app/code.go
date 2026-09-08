@@ -33,6 +33,28 @@ const (
 	CodeKnowledgeUnreadable         Code = "KNOWLEDGE_UNREADABLE"
 	CodeKnowledgeSchemaUnsupported  Code = "KNOWLEDGE_SCHEMA_UNSUPPORTED"
 
+	// CodeKnowledgeInvalid marks a knowledge record this binary read and found
+	// wrong: it breaks its own schema document, its file name disagrees with the
+	// id inside it, it names a supersede target that is not there, or its scope
+	// is not spelled the way tech-stack §74 requires.
+	//
+	// It is deliberately not KNOWLEDGE_UNREADABLE. That code means "this binary
+	// could not read the record", and the two have opposite remedies: one is
+	// fixed by upgrading Mindrail, this one by editing a file the repository
+	// owns (decision D-38). Collapsing them would make the component code
+	// ambiguous at the one place a consumer branches on it.
+	CodeKnowledgeInvalid Code = "KNOWLEDGE_INVALID"
+
+	// CodeKnowledgeSupersedeCycle marks a supersede lineage with no end (spec
+	// §95 step 9).
+	//
+	// It is separate from KNOWLEDGE_INVALID rather than the same code carrying a
+	// flag because `status` publishes exactly one Code per component, and the two
+	// conditions differ in state, exit class and remedy: an invalid record costs
+	// the repository the records it names, while a cycle makes every answer to
+	// "which Decision is current" wrong (decision D-39, D-43).
+	CodeKnowledgeSupersedeCycle Code = "KNOWLEDGE_SUPERSEDE_CYCLE"
+
 	// CodeCommandLineInvalid marks a command line this binary could not
 	// understand: an unknown subcommand, an unknown flag, a surplus argument.
 	// It is distinct from CONFIG_INVALID because the two have different
@@ -70,6 +92,8 @@ var allCodes = sortedCodes([]Code{
 	CodeConfigUnknownEnvVar,
 	CodeKnowledgeUnreadable,
 	CodeKnowledgeSchemaUnsupported,
+	CodeKnowledgeInvalid,
+	CodeKnowledgeSupersedeCycle,
 	CodeCommandLineInvalid,
 	CodeStartupIncomplete,
 })

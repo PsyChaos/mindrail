@@ -26,6 +26,7 @@ data.status.components.syntax.state
 data.status.components.syntax.summary
 data.status.duration_ms
 data.status.knowledge.decisions
+data.status.knowledge.findings
 data.status.knowledge.invariants
 data.status.knowledge.observation
 data.status.knowledge.present

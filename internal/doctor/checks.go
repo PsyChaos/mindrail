@@ -14,6 +14,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/workspace"
 )
 
@@ -697,6 +698,39 @@ func knowledgeResult(s Subject) Result {
 		return result
 	}
 
+	// Decision D-44: a fatal loader Problem outranks every finding, which is why
+	// the branch above returns before this one is reached. Steps 5-11 judge the
+	// records this binary read; a verdict computed over a store the binary has
+	// just admitted it cannot fully read would be a claim from incomplete data.
+	cycles, invalid := splitFindings(s.KnowledgeFindings)
+
+	// A cycle is the one fatal finding (decision D-39). It is reported ahead of
+	// every other finding because it costs the repository a different thing: a
+	// malformed record costs the records it names, while a lineage that closes
+	// on itself makes "which decision is current" unanswerable for every record
+	// in it.
+	if len(cycles) > 0 {
+		result := failure(StateError, "Knowledge store has a supersede cycle", diagnosis{
+			code:       app.CodeKnowledgeSupersedeCycle,
+			diagnostic: describeFindings(cycles),
+			impact:     "No record in the cycle has a newest version, so every answer about which decision is current is wrong rather than merely incomplete.",
+			next:       findingRemedies(cycles),
+		})
+		result.Details = details
+		return result
+	}
+
+	if len(invalid) > 0 {
+		result := failure(StateDegraded, "Knowledge store has invalid records", diagnosis{
+			code:       app.CodeKnowledgeInvalid,
+			diagnostic: describeFindings(invalid),
+			impact:     "The reported records are readable but wrong, so anything derived from them rests on a record that breaks the contract this repository declares; the rest of the store is unaffected.",
+			next:       findingRemedies(invalid),
+		})
+		result.Details = details
+		return result
+	}
+
 	if len(degraded) > 0 {
 		result := failure(StateDegraded, "Knowledge store has unreadable records", diagnosis{
 			code:       app.CodeKnowledgeUnreadable,
@@ -914,6 +948,139 @@ func recordRemedies(problems []loader.Problem) []string {
 		actions = append(actions, "Fix or remove "+problem.Path+".")
 	}
 	return actions
+}
+
+// splitFindings separates the one fatal finding class from the rest, keyed on
+// the Code the branch above publishes rather than on the Fatal flag beside it.
+//
+// The code is the right key because it is the value a consumer branches on:
+// `status` publishes exactly one Code per component, and a finding filed here as
+// a cycle is a finding reported to the world as KNOWLEDGE_SUPERSEDE_CYCLE. Using
+// Fatal instead would let the two disagree, and the disagreement would be
+// invisible — the state would say ERROR while the code said the records were
+// merely invalid (decisions D-39, D-43).
+func splitFindings(findings []validate.Finding) (cycles, invalid []validate.Finding) {
+	for _, finding := range findings {
+		if finding.Code == app.CodeKnowledgeSupersedeCycle {
+			cycles = append(cycles, finding)
+			continue
+		}
+		invalid = append(invalid, finding)
+	}
+	return cycles, invalid
+}
+
+// knowledgeStepNames spells spec §95's pipeline steps in the words the
+// specification, the design and internal/knowledge/validate's package doc all
+// use. A report that says "step 6 (filename <-> kind/id consistency)" names the
+// same rule those three documents name, which is the point of the step numbers
+// being the specification's.
+var knowledgeStepNames = map[validate.Step]string{
+	validate.StepSchema:                 "JSON Schema validation",
+	validate.StepFilenameConsistency:    "filename <-> kind/id consistency",
+	validate.StepUniqueID:               "unique ID",
+	validate.StepSupersedeTarget:        "supersede target",
+	validate.StepSupersedeCycle:         "supersede DAG/cycle",
+	validate.StepDuplicateActiveLineage: "duplicate active lineage",
+	validate.StepScopeSyntax:            "scope syntax",
+}
+
+// knowledgeStep renders one step for a reader.
+//
+// A step this binary has no name for is still reported by its number rather
+// than dropped or renamed. Steps 12, 13 and 14 exist in the specification and
+// are deferred, not absent (AC-12.2), so the day one of them starts producing
+// findings the report says "step 12" instead of quietly attributing it to a
+// rule this table does know.
+func knowledgeStep(step validate.Step) string {
+	name, known := knowledgeStepNames[step]
+	if !known {
+		return fmt.Sprintf("step %d", int(step))
+	}
+	return fmt.Sprintf("step %d (%s)", int(step), name)
+}
+
+// describeFindings renders what steps 5-11 found.
+//
+// It is deliberately not describeProblems (AC-06.2). That function renders the
+// loader's account, every line of which means "this binary could not read the
+// record"; every line here means "this binary read it and it is wrong", and the
+// two have opposite remedies (decision D-38). The rule that was broken is named
+// as well as the file, because "wrong" without "which rule" leaves the reader
+// with nothing to correct.
+//
+// The path is written by this function rather than left to the finding's own
+// message. The messages do carry it today, but a diagnostic that names the file
+// only when the sentence inside it happens to would be a property of prose
+// rather than of the report.
+func describeFindings(findings []validate.Finding) string {
+	lines := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		lines = append(lines, finding.Path+": "+knowledgeStep(finding.Step)+": "+finding.Message)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// findingRemedyByStep is the action each rule asks of the reader.
+//
+// One sentence per step rather than one shared "fix the reported records": the
+// steps break in different ways and are repaired differently, and a remedy that
+// does not say what to change is the same unactionable field finding R6 was
+// about. Each carries a %s for the offending path, because status.componentFrom
+// drops Diagnostic and Impact and keeps only these sentences (AC-06.4).
+var findingRemedyByStep = map[validate.Step]string{
+	validate.StepSchema:                 "Correct %s so it satisfies the knowledge schema document for its kind.",
+	validate.StepFilenameConsistency:    "Rename %s, or change the id inside it, so the file name and the id agree.",
+	validate.StepUniqueID:               "Give %s an id no other record carries, or delete whichever copy is redundant.",
+	validate.StepSupersedeTarget:        "Add the record %s supersedes, or drop that id from its supersedes list.",
+	validate.StepSupersedeCycle:         "Break the supersede cycle by dropping the superseded id from %s.",
+	validate.StepDuplicateActiveLineage: "Set status \"superseded\" on %s if it is not the current record of its lineage.",
+	validate.StepScopeSyntax:            "Correct the scope in %s to a level from the enum and a repository-relative forward-slash target.",
+}
+
+// findingRemedies names the records to fix, one action per record.
+//
+// One action per *record*, not per finding: a record that breaks six schema
+// rules is one file to open, and printing the same path six times pushes the
+// other offending files off the end of the maxNamedRecords cap. The step whose
+// remedy is printed is the first one reported against that path, which is the
+// lowest-numbered step because Check sorts by (Path, Step, ...) — and the lowest
+// step is the right one to lead with, since a record that fails step 5 was never
+// asked steps 6-11 (decision D-40).
+func findingRemedies(findings []validate.Finding) []string {
+	paths := make([]string, 0, len(findings))
+	step := make(map[string]validate.Step, len(findings))
+	for _, finding := range findings {
+		if _, seen := step[finding.Path]; seen {
+			continue
+		}
+		step[finding.Path] = finding.Step
+		paths = append(paths, finding.Path)
+	}
+
+	actions := make([]string, 0, min(len(paths), maxNamedRecords)+1)
+	for i, path := range paths {
+		if i == maxNamedRecords {
+			remaining := len(paths) - maxNamedRecords
+			actions = append(actions, fmt.Sprintf("Correct the remaining %d reported %s under %s.",
+				remaining, plural(remaining, "record", "records"), loader.StoreRoot))
+			break
+		}
+		actions = append(actions, fmt.Sprintf(remedyFormatFor(step[path]), path))
+	}
+	return actions
+}
+
+// remedyFormatFor falls back to naming the file alone when a step has no remedy
+// of its own. It is reachable the same day knowledgeStep's fallback is — a
+// deferred step starting to report — and it exists for the same reason: a
+// finding with no sentence for it must still leave the reader a file to open,
+// not an empty next_action that assertDiagnosable would be right to reject.
+func remedyFormatFor(step validate.Step) string {
+	if format, known := findingRemedyByStep[step]; known {
+		return format
+	}
+	return "Correct %s, which this binary read and rejected."
 }
 
 // KnowledgeWriteSchemaVersion reports the schema version this binary stamps on

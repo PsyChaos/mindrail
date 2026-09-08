@@ -69,6 +69,7 @@
       "decisions": 2,
       "invariants": 1,
       "problems": 0,
+      "findings": 0,
       "write_schema_version": 1,
       "readable_schema_versions": [
         1

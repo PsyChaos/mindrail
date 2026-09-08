@@ -1,11 +1,14 @@
-// Package schema owns the knowledge JSON Schema documents and the reader
-// compatibility window that decides which records this binary may read.
+// Package schema owns the knowledge JSON Schema documents, the reader
+// compatibility window that decides which records this binary may read, and
+// the compiled validator that evaluates one record against them.
 //
-// MR-001 ships the documents and enforces the window; it deliberately does not
-// compile or evaluate the schemas (decision D-28). Compiling them is MR-002's
-// job, together with the acceptance criteria that justify the dependency, so a
-// packaging mistake still fails here at construction while record-level
-// enforcement stays with the milestone that owns it.
+// The split is deliberate and survives from MR-001. Registry answers "does this
+// binary ship the documents, and may it read this version" and does so without
+// compiling anything (decision D-28); Validator answers "is this record what
+// the document says it must be" and is spec §95 step 5. Both fail at
+// construction rather than per record, because a missing or malformed shipped
+// document is a defect in the binary and reporting it once per record would
+// blame the repository for it.
 package schema
 
 import (

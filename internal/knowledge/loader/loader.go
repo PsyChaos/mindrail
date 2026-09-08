@@ -56,14 +56,28 @@ var kindDirs = []struct {
 	{kind: KindInvariant, dir: "invariants"},
 }
 
-// RecordRef is a record this binary was able to read. It is a reference, not
-// the record: MR-001 needs the count and the version window, and loading
-// bodies it cannot yet interpret would only invite premature use of them.
+// RecordRef is a record this binary was able to read. It is a reference plus
+// the bytes: MR-001 needed only the count and the version window, and carrying
+// a body it could not yet interpret would have invited premature use of it.
+// MR-002 has the interpreter, so decision D-46 hands the bytes over rather than
+// making every later step re-read a file the loader has already opened — two
+// reads of one path can disagree, and a verdict computed from bytes nobody else
+// saw is not reproducible from the store the report shows.
 type RecordRef struct {
 	Kind          RecordKind `json:"kind"`
 	ID            string     `json:"id"`
 	Path          string     `json:"path"` // repo-relative, slash
 	SchemaVersion int        `json:"schema_version"`
+
+	// Body is the exact bytes step 1 read. It is what steps 5-11 evaluate, and
+	// it is excluded from JSON so the store's published shape is unchanged.
+	//
+	// Excluded rather than merely omitted when empty: .mindrail/knowledge is
+	// repository content a reader already has on disk, so republishing it inside
+	// every status and doctor document would double the payload to say nothing
+	// new. Adding it to the wire is a deliberate change to a published shape,
+	// not a side effect of a field appearing in a struct.
+	Body []byte `json:"-"`
 }
 
 // Problem is one record the loader could not accept.
@@ -264,6 +278,14 @@ func (l *Loader) readRecord(kind RecordKind, absDir, relDir, name string) (*Reco
 		ID:            stringField(fields, "id"),
 		Path:          rel,
 		SchemaVersion: version,
+		// The bytes step 1 read, handed on unchanged (D-46). Not re-encoded from
+		// fields: a round trip through map[string]json.RawMessage would reorder
+		// the keys and drop the duplicates that make a document ambiguous, and
+		// step 5 has to judge the file the repository actually committed. Safe to
+		// store without copying because os.ReadFile allocates a fresh slice per
+		// call and this is its only surviving reference — json.Unmarshal above
+		// copied into the RawMessage values rather than aliasing this array.
+		Body: data,
 	}, nil
 }
 

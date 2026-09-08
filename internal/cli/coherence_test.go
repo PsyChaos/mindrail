@@ -268,6 +268,14 @@ const (
 	classContain    remedyClass = "put the path back inside the repository"
 	classUpgrade    remedyClass = "upgrade to a binary that reads these records"
 	classEnterable  remedyClass = "make sure the path exists and can be entered"
+
+	// MR-002's one fatal knowledge finding (decision D-39). It is declared here,
+	// beside the ten above, rather than anywhere the knowledge rows could keep a
+	// vocabulary of their own: the five classes in the group above spent three
+	// audits in a private table owned by the agreement matrix, and the whole
+	// point of merging them was that a second table is how a real remedy becomes
+	// invisible to the invariant that reads them.
+	classSupersedeCycle remedyClass = "break the supersede cycle recorded in"
 )
 
 // remedyPhrases maps the sentences this binary actually prints onto the class
@@ -311,6 +319,26 @@ var remedyPhrases = []struct {
 	{containing("use a path inside the repository"), classContain},
 	{containing(`for a ".." segment`), classContain},
 	{containing("is a directory you can enter"), classEnterable},
+	// doctor.findingRemedyByStep[validate.StepSupersedeCycle]. Its position is
+	// free rather than chosen, and that was checked rather than assumed, in both
+	// directions. Nothing above it reads the sentence it matches: the nearest
+	// candidate, makesSomethingUsable, requires the sentence to open with
+	// "make ", and this one opens with "break ". And it reads nothing above it
+	// matches: the substring is the whole clause "break the supersede cycle", so
+	// the two other remedies in the binary that mention superseding at all —
+	// "Add the record %s supersedes, or drop that id from its supersedes list."
+	// and `Set status "superseded" on %s ...` — are outside it. The whole package
+	// was run with this entry moved to the front of the table as well as at the
+	// end, green both times, which is what "does not shadow and is not shadowed"
+	// means operationally.
+	//
+	// The other six sentences findingRemedyByStep prints are deliberately absent.
+	// They belong to KNOWLEDGE_INVALID, which is DEGRADED at exit 0 and therefore
+	// never reaches an error object, so no row in the matrix can hold the binary
+	// to a class for them: a class added here for one of those would be a claim
+	// nothing could falsify. TestTheRemedyClassifierRefusesASentenceThatMerelyContainsAVerb
+	// states that absence as a fact instead of leaving it to be inferred.
+	{containing("break the supersede cycle"), classSupersedeCycle},
 }
 
 func containing(phrase string) func(string) bool {
@@ -365,6 +393,16 @@ func TestTheRemedyClassifierRefusesASentenceThatMerelyContainsAVerb(t *testing.T
 		{`remove or move aside "/repo/.mindrail"`, classObstruction},
 		{`remove or repoint the link at "/repo/.mindrail"`, classRelink},
 		{`remount the filesystem holding /repo read-write`, classReadOnly},
+		{`Break the supersede cycle by dropping the superseded id from .mindrail/knowledge/decisions/DEC-0001.json.`, classSupersedeCycle},
+
+		// The six remedies MR-002 prints for a KNOWLEDGE_INVALID record classify
+		// as nothing, and that is the intended reading rather than an oversight.
+		// A DEGRADED knowledge check produces no error object, so the agreement
+		// matrix cannot assert a class for any of them and nothing would notice a
+		// wrong one. This row is where that decision is recorded: a later wave
+		// that gives one of these sentences a class has to change this line, and
+		// changing it is the moment to say what now holds the class honest.
+		{`Correct .mindrail/knowledge/decisions/DEC-0001.json so it satisfies the knowledge schema document for its kind.`, classUnknown},
 
 		// None of these tells the reader to change a permission, and none of
 		// them may be read as if it did.

@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -37,6 +38,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
 	"github.com/PsyChaos/mindrail/internal/workspace"
@@ -749,8 +751,15 @@ func verifyLedger(set []migration.Migration, ledger []migration.Applied) error {
 	return nil
 }
 
-// validateKnowledge is step 6. It performs spec §95 steps 1-4 only; the rest of
-// the pipeline belongs to MR-002 (decision D-27).
+// validateKnowledge is step 6. The loader performs spec §95 steps 1-4; steps
+// 5-11 run here, once, immediately afterwards (decision D-42).
+//
+// This is the only place in the process that calls validate.Check. Not inside a
+// doctor check body: doctor checks are pure functions of an already-resolved
+// Subject that open nothing and create nothing, and schema.NewValidator returns
+// an error a doctor.Result has no honest way to express. Not in status.Build
+// either, for the same reason plus decision D-41 — two layers computing the same
+// verdict is two layers that can disagree about one store.
 func (a *App) validateKnowledge(ctx context.Context) error {
 	a.record(StepValidateKnowledge)
 
@@ -773,7 +782,42 @@ func (a *App) validateKnowledge(ctx context.Context) error {
 	}
 	a.subject.Knowledge = store
 
+	// The findings are data, never an error (decision D-42). A store full of
+	// invalid records leaves KnowledgeErr nil and the sequence running: the
+	// records the repository owns are wrong and the binary is fine, and halting
+	// here would make every later step report itself as never taken — publishing
+	// a fabricated absence in place of a finding this step actually made.
+	a.subject.KnowledgeFindings = validate.Check(store, mustCompileSchemas(registry))
+
 	return nil
+}
+
+// mustCompileSchemas builds the validator steps 5-11 evaluate against, and
+// refuses to continue when the documents this binary embeds do not compile.
+//
+// A failure here is a defect in the binary, not a condition of the repository
+// (AC-08.2), and the two must not be confused. Folding it into KnowledgeErr
+// would publish it as KNOWLEDGE_UNREADABLE with "Make .mindrail/knowledge
+// readable." beside it — a diagnosis of a repository that is fine and a remedy
+// that cannot work. There is no registered app.Code for "this binary cannot
+// build its own validator", and REQ-05 freezes the code vocabulary MR-002 adds
+// at two, so there is no honest envelope to put it in either.
+//
+// Returning a nil validator is worse still: validate.Check panics on one
+// precisely because reporting unvalidated records as clean is the fabricated
+// pass this whole milestone exists to prevent. So the failure is raised here,
+// in the binary's own voice, naming the compile error it came from — the same
+// reasoning, and the same shape, as validate.Check's own refusal.
+//
+// It is reachable only through Options.SchemaFS. The embedded documents compile,
+// which internal/knowledge/schema's own tests assert; an injected filesystem
+// that ships something else is how this path is exercised.
+func mustCompileSchemas(registry *schema.Registry) *schema.Validator {
+	validator, err := schema.NewValidator(registry)
+	if err != nil {
+		panic(fmt.Errorf("mindrail: the knowledge schema documents this binary ships do not compile, so no record can be validated: %w", err))
+	}
+	return validator
 }
 
 // registerWorkspace is step 7. Registration is a write, so ModeReadOnly only

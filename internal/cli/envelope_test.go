@@ -28,6 +28,14 @@ import (
 // decision D-03's one zero-exit row — "you have not run init yet" is a state to
 // report — and a fatal envelope carrying it would be the opposite regression to
 // the one this file exists for.
+//
+// KNOWLEDGE_INVALID joins that class for the same reason and by decision D-43:
+// a record this binary read and found wrong leaves the knowledge component
+// DEGRADED, and doctor.Report.Err builds an error object from ERROR readings
+// only. A repository with one malformed Decision must stay usable, so the row
+// being ExitSuccess is the assertion that it does. Its sibling
+// KNOWLEDGE_SUPERSEDE_CYCLE is ExitFailed instead: D-39 makes a lineage with no
+// end fatal, because every answer to "which Decision is current" is then wrong.
 var exitForCode = map[app.Code]int{
 	app.CodeNotAGitRepository:           app.ExitUsage,
 	app.CodeBareRepository:              app.ExitUsage,
@@ -47,8 +55,10 @@ var exitForCode = map[app.Code]int{
 	app.CodeWorkspaceRegistrationFailed: app.ExitFailed,
 	app.CodeKnowledgeUnreadable:         app.ExitFailed,
 	app.CodeKnowledgeSchemaUnsupported:  app.ExitFailed,
+	app.CodeKnowledgeSupersedeCycle:     app.ExitFailed,
 	app.CodeWorkspaceNotInitialized:     app.ExitSuccess,
 	app.CodeConfigUnknownEnvVar:         app.ExitSuccess,
+	app.CodeKnowledgeInvalid:            app.ExitSuccess,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible
@@ -64,6 +74,100 @@ func TestExitClassTableCoversEveryRegisteredCode(t *testing.T) {
 		if !app.IsRegistered(code) {
 			t.Errorf("exitForCode names %q, which this binary does not emit", code)
 		}
+	}
+}
+
+// TestTheKnowledgeExitClassesAreTheOnesTheBinaryTakes ties MR-002's two rows of
+// the table above to a repository the binary was actually driven over.
+//
+// The table is hand-written data, and a row no run ever reads asserts nothing:
+// both knowledge rows could be flipped — KNOWLEDGE_INVALID to ExitFailed,
+// KNOWLEDGE_SUPERSEDE_CYCLE to ExitSuccess — with `go test ./...` staying green,
+// because no envelope scenario produces a knowledge finding and the exit class is
+// only consulted when a code reaches the wire inside an error object. That is the
+// unfalsifiable-guard class the whole of MR-001's second audit round was spent
+// deleting.
+//
+// So each row here observes an exit from the real command tree and compares the
+// table against that, never against a literal. The condition is proved to have
+// reproduced first — by the code on the wire for the fatal row, and by the
+// knowledge component's own code for the exit-0 one — because a repository where
+// nothing went wrong would otherwise satisfy the exit comparison for the wrong
+// reason.
+func TestTheKnowledgeExitClassesAreTheOnesTheBinaryTakes(t *testing.T) {
+	tests := []struct {
+		name string
+		// records is written into the store before `status` is run. The fixtures
+		// are agreement_test.go's, so the two matrices cannot end up describing
+		// different repositories under one name.
+		records map[string]string
+		// wantCode is the code the reading has to carry for the row to be about
+		// anything at all.
+		wantCode app.Code
+		// wantFatal says which carrier publishes it: an error object on the wire,
+		// or a component of a report that reports success.
+		wantFatal bool
+	}{
+		{
+			name: "a supersede cycle is fatal and exits the class D-03 assigns it",
+			records: map[string]string{
+				"DEC-0001.json": cyclicSupersededDecision,
+				"DEC-0002.json": supersedingDecision,
+			},
+			wantCode:  app.CodeKnowledgeSupersedeCycle,
+			wantFatal: true,
+		},
+		{
+			name:      "a record its schema rejects is a state and exits the class D-03 assigns it",
+			records:   map[string]string{"DEC-0001.json": invalidStatusDecision},
+			wantCode:  app.CodeKnowledgeInvalid,
+			wantFatal: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newInitializedRepo(t)
+			for name, content := range tc.records {
+				writeKnowledgeRecord(t, repo, name, content)
+			}
+
+			got := runWith(t, repo, cli.Options{}, "status", "--json")
+			envelope := decodeStrictEnvelope(t, got.stdout)
+
+			if tc.wantFatal {
+				if envelope.Error == nil {
+					t.Fatalf("the condition did not reproduce: `status` reported ok on a repository carrying %q\n%s",
+						tc.wantCode, got.stdout)
+				}
+				if envelope.Error.Code != tc.wantCode {
+					t.Fatalf("`status` reported %q, want %q", envelope.Error.Code, tc.wantCode)
+				}
+			} else {
+				if envelope.Error != nil {
+					t.Fatalf("`status` turned %q into a fatal envelope: %+v", tc.wantCode, *envelope.Error)
+				}
+				var report status.Report
+				decodeData(t, got.stdout, &report)
+				component, present := report.Components[status.ComponentKnowledge]
+				if !present {
+					t.Fatalf("the status report has no %q component: %v", status.ComponentKnowledge, report.Components)
+				}
+				if component.Code != tc.wantCode {
+					t.Fatalf("the condition did not reproduce: the knowledge component reports %q, want %q",
+						component.Code, tc.wantCode)
+				}
+			}
+
+			assigned, known := exitForCode[tc.wantCode]
+			if !known {
+				t.Fatalf("code %q has no exit class in exitForCode", tc.wantCode)
+			}
+			if got.code != assigned {
+				t.Errorf("`status` exited %d carrying %q, but decision D-03's table assigns that code %d",
+					got.code, tc.wantCode, assigned)
+			}
+		})
 	}
 }
 

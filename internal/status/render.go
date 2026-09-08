@@ -58,6 +58,7 @@ func (r Report) RenderHuman(w io.Writer, color bool) error {
 		{"Decisions", observed(r.Knowledge.Observation, strconv.Itoa(r.Knowledge.Decisions))},
 		{"Invariants", observed(r.Knowledge.Observation, strconv.Itoa(r.Knowledge.Invariants))},
 		{"Problems", observed(r.Knowledge.Observation, strconv.Itoa(r.Knowledge.Problems))},
+		{"Findings", observed(r.Knowledge.Observation, strconv.Itoa(r.Knowledge.Findings))},
 		{"Write schema version", strconv.Itoa(r.Knowledge.WriteSchemaVersion)},
 		{"Readable schema versions", joinInts(r.Knowledge.ReadableSchemaVersions)},
 	})

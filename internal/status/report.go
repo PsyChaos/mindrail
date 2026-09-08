@@ -80,18 +80,28 @@ type RuntimeInfo struct {
 // schema window this binary enforced, so a reader can tell "no records" from
 // "records this binary refused to read".
 //
-// Observation qualifies Present, Decisions, Invariants and Problems, which
-// describe the repository. WriteSchemaVersion and ReadableSchemaVersions do
-// not: they describe this binary and are always populated, however far startup
-// got (kernel-scope §3).
+// Observation qualifies Present, Decisions, Invariants, Problems and Findings,
+// which describe the repository. WriteSchemaVersion and ReadableSchemaVersions
+// do not: they describe this binary and are always populated, however far
+// startup got (kernel-scope §3).
 type KnowledgeInfo struct {
-	Observation            Observation `json:"observation"`
-	Present                bool        `json:"present"`
-	Decisions              int         `json:"decisions"`
-	Invariants             int         `json:"invariants"`
-	Problems               int         `json:"problems"`
-	WriteSchemaVersion     int         `json:"write_schema_version"`
-	ReadableSchemaVersions []int       `json:"readable_schema_versions"`
+	Observation Observation `json:"observation"`
+	Present     bool        `json:"present"`
+	Decisions   int         `json:"decisions"`
+	Invariants  int         `json:"invariants"`
+	// Problems counts the records this binary could not read; Findings counts
+	// the ones it read and found wrong. They are two counts rather than one
+	// because their remedies are opposite — one is fixed by upgrading Mindrail,
+	// the other by editing a file the repository owns (decision D-38) — and a
+	// single total would tell a reader neither.
+	//
+	// Neither carries omitempty. A store with nothing wrong publishes both as
+	// zero, because a count a consumer has to infer from an absent key is a
+	// count it cannot tell from a report that never took it.
+	Problems               int   `json:"problems"`
+	Findings               int   `json:"findings"`
+	WriteSchemaVersion     int   `json:"write_schema_version"`
+	ReadableSchemaVersions []int `json:"readable_schema_versions"`
 }
 
 // WorkspaceInfo reports the opaque identity of this worktree. The ids are the
@@ -209,6 +219,11 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 			Decisions:   len(s.Knowledge.Decisions),
 			Invariants:  len(s.Knowledge.Invariants),
 			Problems:    len(s.Knowledge.Problems),
+			// Read from the subject, never recomputed here (decisions D-41,
+			// D-42). Building a validator in this function would make `status`
+			// and `doctor` two places that judge one store, and the day they
+			// disagreed the report would carry both answers.
+			Findings: len(s.KnowledgeFindings),
 			// From the binary, never from the subject: these two are what this
 			// binary can do, and a startup that stopped early does not change it.
 			WriteSchemaVersion:     doctor.KnowledgeWriteSchemaVersion(s.Knowledge),

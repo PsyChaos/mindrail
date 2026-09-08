@@ -611,6 +611,70 @@ func knowledgeConditions() []condition {
 				removeForRemedy(t, filepath.Join(knowledgeDir(repo), "decisions", "DEC-0001.json"))
 			},
 		},
+		{
+			// MR-002's second fatal knowledge condition (decision D-39). Two
+			// Decisions that supersede each other leave the lineage with no
+			// newest record, so "which Decision is current" has no right answer
+			// for either of them — which is a different cost from a malformed
+			// record, and is why it is the one finding graded ERROR.
+			name:   "two knowledge records that supersede each other",
+			broken: true,
+			remedy: classSupersedeCycle,
+			// Carried out as printed, on one of the two files the report named.
+			// The report says to drop the superseded id from DEC-0001 and from
+			// DEC-0002, because either edge removed opens the loop; clear takes
+			// the first of those two sentences and does exactly what it says.
+			//
+			// The bytes it leaves behind are the ones the row below starts from,
+			// so what this proves is stronger than "all three then exit 0": the
+			// cleared state is the legitimate supersede whose own row asserts
+			// that nothing is wrong with it.
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", cyclicSupersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				rewriteKnowledgeRecordForRemedy(t, repo, "DEC-0001.json", supersededDecision)
+			},
+		},
+		{
+			// The over-fire guard for the row above, and the one this milestone
+			// can least afford to be missing: spec §93's ordinary lineage, which
+			// every repository that has ever revised a Decision carries. DEC-0002
+			// supersedes DEC-0001 and DEC-0001 records that by carrying status
+			// "superseded".
+			//
+			// It must read as neither of the two conditions that surround it: not
+			// a cycle, because the walk from DEC-0002 reaches DEC-0001 and stops
+			// there, and not a duplicate active lineage, because exactly one of
+			// the pair is still active. A detection that fires here fires on
+			// working repositories.
+			name: "one knowledge record that legitimately supersedes another",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				return repo
+			},
+		},
+		{
+			// A record this binary reads and rejects costs the repository that
+			// record and no more (decision D-39), so it is graded the way the
+			// unparseable record earlier in this group is graded rather than the
+			// way the future-schema row is: exit 0 from every command, and no
+			// error object anywhere. The two pipelines differ — the loader could
+			// not read the unparseable one, and steps 5-11 read this one and
+			// found it wrong (D-38) — and the grade is deliberately the same.
+			name: "a knowledge record whose status is not one the schema defines",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", invalidStatusDecision)
+				return repo
+			},
+		},
 	}
 }
 
@@ -809,6 +873,49 @@ func healthyConditions() []condition {
 // binary's reader window (kernel-scope §3), which is the one knowledge problem
 // that is fatal rather than costing a single record.
 const futureSchemaRecord = `{"schema_version": 99, "id": "DEC-0001", "title": "from the future", "status": "accepted"}`
+
+// The records MR-002's rows are built from, spelled once for this package so the
+// agreement matrix and the broken-setup matrix cannot end up describing two
+// different repositories under one name.
+//
+// They are written out in full rather than assembled from a template because
+// every field is load-bearing to some row, and two of them are the difference
+// between a fatal condition and a healthy one: `status` decides whether the
+// lineage has an end, `supersedes` decides whether it closes on itself, and
+// supersededDecision and cyclicSupersededDecision differ in nothing else. A
+// template would hide exactly the edit the cycle row's remedy performs.
+const (
+	// supersededDecision is the older half of an ordinary spec §93 lineage: it
+	// has been replaced, it says so, and it points at nothing.
+	supersededDecision = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
+		`"status":"superseded","created_at":"2026-01-01T00:00:00Z",` +
+		`"title":"the first decision","decision":"Adopt the first approach."}`
+
+	// cyclicSupersededDecision is supersededDecision with one array added: it now
+	// claims to replace the record that replaced it, which closes the lineage on
+	// itself. Dropping that array is the whole of the remedy the report prints.
+	cyclicSupersededDecision = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
+		`"status":"superseded","created_at":"2026-01-01T00:00:00Z",` +
+		`"title":"the first decision","decision":"Adopt the first approach.",` +
+		`"supersedes":["DEC-0002"]}`
+
+	// supersedingDecision is the newer half, and it is unchanged between the
+	// cycle row and the healthy row beside it. Only its counterpart moves, which
+	// is what makes the pair an over-fire guard rather than two unrelated
+	// fixtures.
+	supersedingDecision = `{"schema_version":1,"kind":"decision","id":"DEC-0002",` +
+		`"status":"active","created_at":"2026-02-01T00:00:00Z",` +
+		`"title":"the second decision","decision":"Adopt the second approach.",` +
+		`"supersedes":["DEC-0001"]}`
+
+	// invalidStatusDecision is inside the reader window, parses, is filed under
+	// the id it carries, and still breaks decision.v1: "accepted" is not one of
+	// the two values the status enum defines. It is the shape of a record written
+	// by hand from memory, which is the shape steps 5-11 exist to catch.
+	invalidStatusDecision = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
+		`"status":"accepted","created_at":"2026-01-01T00:00:00Z",` +
+		`"title":"a decision with a status nobody defined","decision":"Adopt something."}`
+)
 
 // answerOf runs one command in JSON mode and reduces its envelope.
 func answerOf(t *testing.T, repo string, options cli.Options, command string) answer {
@@ -1011,6 +1118,27 @@ func truncateForSetup(t *testing.T, path string) {
 	}
 	if err := os.Truncate(path, 0); err != nil {
 		t.Fatalf("arrange %s: %v", path, err)
+	}
+}
+
+// rewriteKnowledgeRecordForRemedy carries out an edit the report asked for on a
+// record that is already in the store.
+//
+// It refuses a path that is not there rather than creating one. writeKnowledgeRecord
+// creates the directory and the file, which is right for arranging a condition
+// and wrong for carrying a remedy out: a row whose fixture name had drifted would
+// otherwise "clear" the condition by dropping a brand-new file beside the broken
+// one it was supposed to edit, and the run after it would still be broken while
+// this half reported success.
+func rewriteKnowledgeRecordForRemedy(t *testing.T, repo, name, content string) {
+	t.Helper()
+
+	path := filepath.Join(knowledgeDir(repo), "decisions", name)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("carry out the remedy on %s: the record the report named is not there: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("carry out the remedy on %s: %v", path, err)
 	}
 }
 

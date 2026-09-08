@@ -62,6 +62,41 @@ func TestCodeRegistryIsUniqueAndExhaustive(t *testing.T) {
 	}
 }
 
+// TestTheKnowledgeCodesCarryTheSpellingConsumersBranchOn pins the two wire
+// strings MR-002 adds.
+//
+// Nothing else in the tree does. TestCodeRegistryIsUniqueAndExhaustive above
+// parses code.go and compares it to RegisteredCodes, which is the file compared
+// against itself; every other assertion names these two through their Go
+// constants, so the test and the production code read one identifier and a
+// rename of the *value* is invisible to both. That was measured, not assumed:
+// rewriting CodeKnowledgeInvalid to "KNOWLEDGE_BROKEN" and
+// CodeKnowledgeSupersedeCycle to "KNOWLEDGE_LOOP" left `go test ./...` green.
+//
+// The older codes are pinned only incidentally, by goldens that happen to
+// contain them — renaming KNOWLEDGE_UNREADABLE the same way does turn three
+// tests red. MR-002's two appear in no golden, because the conditions that
+// produce them are not in any golden fixture, so the literal has to be written
+// down here. A consumer branches on this string and cannot see the constant.
+func TestTheKnowledgeCodesCarryTheSpellingConsumersBranchOn(t *testing.T) {
+	pinned := []struct {
+		got  Code
+		want string
+	}{
+		{CodeKnowledgeInvalid, "KNOWLEDGE_INVALID"},
+		{CodeKnowledgeSupersedeCycle, "KNOWLEDGE_SUPERSEDE_CYCLE"},
+	}
+
+	for _, tc := range pinned {
+		if string(tc.got) != tc.want {
+			t.Errorf("a knowledge code reaches the wire as %q, want %q", tc.got, tc.want)
+		}
+		if !IsRegistered(tc.got) {
+			t.Errorf("code %q is pinned here but not registered", tc.got)
+		}
+	}
+}
+
 // TestRegisteredCodesIsNotAliased guards the registry against a caller that
 // sorts or truncates the slice it was handed.
 func TestRegisteredCodesIsNotAliased(t *testing.T) {

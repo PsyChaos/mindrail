@@ -5,6 +5,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
 	"github.com/PsyChaos/mindrail/internal/workspace"
@@ -53,6 +54,25 @@ type Subject struct {
 	MigrateErr   error
 	Knowledge    loader.Store
 	KnowledgeErr error
+
+	// KnowledgeFindings is spec §95 steps 5-11 over the store above, run once
+	// by bootstrap and filed here (decision D-42). It is deliberately a third
+	// field beside Knowledge and KnowledgeErr rather than a fourth thing a check
+	// could compute: validate.Check needs a compiled schema.Validator whose
+	// construction returns an error, and a check that built one would be opening
+	// and failing in a place this type promises does neither.
+	//
+	// It is data, never an error. A store full of invalid records leaves
+	// KnowledgeErr nil (decision D-42, AC-08.3): the records the repository owns
+	// are wrong and the binary is fine, so folding them into KnowledgeErr would
+	// halt the startup sequence and make every later block report itself as
+	// never taken — a fabricated absence rather than a finding.
+	//
+	// A nil slice here means the same thing a zero Knowledge does: bootstrap
+	// never got as far as running the pipeline. That is why no check reads it
+	// without first asking reached(stepValidateKnowledge).
+	KnowledgeFindings []validate.Finding
+
 	Workspace    workspace.Workspace
 	WorkspaceErr error
 

@@ -581,6 +581,52 @@ func TestBrokenSetupMatrix(t *testing.T) {
 			noUnderlyingCause: true,
 		},
 		{
+			name: "knowledge records that supersede each other",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", cyclicSupersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				return repo
+			},
+			// Decision D-39's second fatal rule. Both records parse, both are
+			// inside the reader window and both satisfy decision.v1, so nothing
+			// the loader can see is wrong with either; what is wrong is the pair,
+			// and it costs every question about which of the two is current.
+			wantExit:      app.ExitFailed,
+			wantCode:      app.CodeKnowledgeSupersedeCycle,
+			wantState:     doctor.StateError,
+			wantError:     true,
+			wantComponent: status.ComponentKnowledge,
+			wantCheck:     "knowledge",
+			// Only editing one of the two records clears it; init writes the
+			// scaffold and never touches a record already in the store.
+			unusableRemedies: []string{"mindrail init"},
+			// Nothing underneath failed. Both files opened and decoded, and the
+			// refusal is Mindrail's own reading of the two together — the same
+			// position as the future-schema row above.
+			noUnderlyingCause: true,
+		},
+		{
+			name: "knowledge record the schema rejects",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", invalidStatusDecision)
+				return repo
+			},
+			// The exit-0 half of MR-002, and the reason this row is here rather
+			// than only in the agreement matrix: KNOWLEDGE_INVALID is carried by a
+			// DEGRADED component and a DEGRADED check with no error object at all,
+			// which is the shape the previous form of this table could not
+			// express. A consumer branching on `ok` must still get a usable
+			// repository, and the reader must still be told which file to open.
+			wantExit:         app.ExitSuccess,
+			wantCode:         app.CodeKnowledgeInvalid,
+			wantState:        doctor.StateDegraded,
+			wantComponent:    status.ComponentKnowledge,
+			wantCheck:        "knowledge",
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
 			name:    "git is not installed",
 			setup:   func(t *testing.T) string { isolateEnvironment(t); return t.TempDir() },
 			options: cli.Options{Runner: unavailableGit()},
