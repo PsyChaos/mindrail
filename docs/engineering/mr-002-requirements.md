@@ -3,8 +3,8 @@
 - **Frozen at:** commit `79716a9`, branch `mr-002-knowledge-lifecycle`
 - **Contract this refines:** [mr-002-design.md](mr-002-design.md). Where the two
   disagree, the design wins on intent and this document wins on the detail the
-  design left open — every such gap is recorded below as a decision D-42…D-50.
-- **Amended after freezing.** Two remediation waves edited this document, each
+  design left open — every such gap is recorded below as a decision D-42…D-51.
+- **Amended after freezing.** Four remediation waves edited this document, each
   edit marked in the text where it stands.
   - **FIX-D**: **AC-01.2** (finding F-R9, a frozen signature that contradicted
     the frozen schema beside it) and the new **D-49** (finding B-05,
@@ -13,7 +13,17 @@
     because it closes an import cycle) and the new **D-50** carrying its
     argument. F-R4's text asks for this to be recorded as "D-49"; that number
     was already taken by FIX-D in the same round, so it is D-50 and D-50 says so.
-  - Nothing in D-36…D-48 was reinterpreted by either wave.
+  - **FIX-I**: **D-49**'s argument only (round-2 finding R-02). The rule D-49
+    states is unchanged and no acceptance criterion moved; three of its six
+    refusals were recorded as unloadable spellings and are in fact loadable ones
+    refused on tech-stack §42's spelling ground. AC-01.3's read-side clause is
+    untouched and still one-directional — it bounds what step 5 may *accept*, and
+    it never was the authority for refusing a correctly-loading offset.
+  - **FIX-J**: the new **D-51** (round-2 findings R-05 and B-A6), recording how a
+    record file that resolves outside the repository is published. No acceptance
+    criterion moved and no `app.Code` was added; the decision names which of two
+    already-registered codes a reading carries, and on what condition.
+  - Nothing in D-36…D-48 was reinterpreted by any wave.
 - **Task:** [mindrail-0.1-task-list.md](mindrail-0.1-task-list.md) MR-002
 - **Tier:** 3 (Program). Not for its size — for its surface. It adds a
   compile-time dependency, a JSON Schema contract evaluated against
@@ -154,19 +164,58 @@ would claim a rule it does not have.
 **Added after MR-002 shipped, by the FIX-D remediation wave, in response to
 finding B-05. It adds a rule; it does not reinterpret D-36…D-48.**
 
+**Amended by the FIX-I wave, in response to round-2 finding R-02. The rule is
+unchanged: the `pattern` in both documents is byte-for-byte the one FIX-D
+shipped, and no spelling changed side — verified against `3bd453c` and `45ab5c9`.
+What changed is the reason recorded for three of the six refusals, which was
+false. The paragraphs below are the amended text; the measurements they now cite
+are reproduced in the finding record.**
+
 `format: "date-time"` is RFC 3339, and RFC 3339 is wider than the timestamp this
-project writes. Measured against both readers, four spellings were accepted by
-step 5 and could not be loaded by `record.Decision`: a lowercase `z` and a
-lowercase `t` (RFC 3339 §5.6 makes the literals case-insensitive; Go's
-`time.RFC3339` layout does not), a leap second `23:59:60` (§5.7 permits it; Go's
-`time.Time` has no representation for it), and a non-UTC offset such as
-`-05:00`, which both readers accept and which the property's own `description`
-and tech-stack §42 both forbid. A fifth was found while measuring: more than
-nine fractional digits, which Go accepts and silently truncates, loading a
-different instant than the document names.
+project writes. It is wider on two grounds, and the amendment exists because the
+original text ran them together.
+
+The first ground is that the reader cannot load the spelling at all. Measured
+against `record.Decision`, `record.Invariant` and `app.ParseTime`, three
+spellings were accepted by step 5 and refused by every one of them: a lowercase
+`z` and a lowercase `t` (RFC 3339 §5.6 makes the literals case-insensitive; Go's
+`time.RFC3339` layout does not), and a leap second `23:59:60` (§5.7 permits it;
+Go's `time.Time` has no representation for it). A record spelled any of these
+was called clean and could then not be opened by anything.
+
+The second ground is that the spelling is not the one tech-stack §42 persists,
+which is a rule about how a timestamp is written rather than about which instant
+it names. Three more spellings are refused on that ground alone, and **each of
+them loads, through all three readers, as exactly the instant it spells**:
+`2026-01-01T00:00:00-05:00` loads as `2026-01-01T05:00:00Z`, `+03:00` and
+`+05:30` likewise, and twelve fractional digits whose tail is zero loads the same
+instant `Z` would. §42 says "All persisted timestamps: UTC", and both v1
+documents have said "UTC RFC 3339 timestamp (tech-stack §42)" in this property's
+own `description` since they shipped at `8e5c2e5` — before there was a `pattern`
+to enforce it. The `pattern` makes the document's own published sentence true; it
+does not introduce a rule the document did not already state.
+
+One row belongs to both grounds and was described correctly by accident: more
+than nine fractional digits **whose tail is not zero** — `.123456789012Z` loads
+as `.123456789Z`, a different instant. The original text generalised that to the
+whole class, and the zero-tailed member of the class refutes it. Both are
+refused, and the honest statement is that the class is refused on §42's spelling
+ground, with the non-zero tail additionally lossy.
 
 Both schema documents therefore gain a `pattern` beside the existing `format`,
 and the Go decoder is left alone.
+
+Why the rule was not widened instead. R-02 offered that as its first remedy:
+narrow the change to what AC-01.3's clause covers and hand the offset question
+back to `format`. Measured at `8e5c2e5`, where the `pattern` did not exist,
+`created_at: "2026-01-01T00:00:00-05:00"` produced `READY` and zero findings —
+`format: "date-time"` accepts every offset RFC 3339 allows, so handing it the
+question is not delegating the rule, it is dropping it, and §42's read-side
+enforcement would go with it. Nothing this repository can write is affected by
+keeping the refusal: the constructors force `.UTC()`, measured — `NewDecision`
+given `2026-01-02T03:04:05+05:30` writes `2026-01-01T21:34:05Z`. A stated reason
+that is false is a defect even when the behaviour it justifies is right, and the
+repair for a false reason is a true reason, not a changed behaviour.
 
 The two keywords divide one rule rather than restating it. `format` owns
 calendar validity — no regular expression knows how long February is, and
@@ -191,13 +240,32 @@ enumeration of spellings that were valid before and are not now is: lowercase
 and more than nine fractional digits. **No record any Mindrail binary has ever
 written is in that set** — the constructors force `.UTC()` and `time.Time`
 marshals `Z` with at most nine digits — and neither golden fixture nor any
-fixture in the suite is either. Every one of the newly-refused spellings was
-already a record this binary could not load or could not load faithfully, so the
-change converts a silent failure downstream into a step-5 finding that names the
+fixture in the suite is either. ~~Every one of the newly-refused spellings was
+already a record this binary could not load or could not load faithfully~~
+(**struck by the FIX-I wave: false for the three offsets and for a zero-tailed
+long fraction, all of which load faithfully — this is finding R-02**). Three of
+the six were unloadable, and the change converts a silent failure downstream into
+a step-5 finding that names the file. The other three are refused because §42
+fixes the spelling of a persisted timestamp, and because the property's own
+`description` has said so since `8e5c2e5`; for those the change converts a record
+that contradicted the document's published sentence into a finding that names the
 file. What is deliberately still accepted, because it is currently valid, parses
 identically and denotes the same instant, is `+00:00` and `-00:00`: a pattern
 anchored on `Z$` would have refused what most ISO-8601 libraries emit for UTC,
-and that would have been a fresh over-fire wearing a fix's clothes.
+and that would have been a fresh over-fire wearing a fix's clothes. Those two are
+also the reason the spelling ground is stated as *zero offset* rather than
+*`Z`* — §42 asks for UTC, and `+00:00` is a UTC spelling.
+
+The `description` is not commentary any more, and the FIX-I amendment is partly
+about that. Finding R-04 changed step 5's message for a `created_at` `pattern`
+violation: it no longer reproduces the expression, because the library renders it
+through Go's `%q` and publishes a doubled backslash, so it names the property's
+own `description` as the rule instead. A reader holding a record spelled
+`-05:00` is now sent to that sentence by the CLI, and the sentence told them
+their timestamp could not be read back as the same instant — which is false, and
+sends them to look for a decoding bug that is not there. Both documents now state
+the two grounds apart, and state the accepted spelling positively so the sentence
+answers the question the reader arrived with.
 
 No `schema_version` bump: the window is `[1]`, bumping would mean shipping a v2
 document and widening the reader, which orphans every v1 record to fix a rule
@@ -210,6 +278,23 @@ the reverse is the defect — and
 over-fire guard. Both documents are held together by
 `TestBothDocumentsStateTheSameCreatedAtRule`, which exists because a mutation
 proved that deleting the pattern from `invariant.v1` alone was otherwise silent.
+
+The FIX-I amendment added the tests that make *this section's reasons*
+falsifiable rather than only its rule.
+`TestEveryTimestampTheContractRefusesIsRefusedOnTheGroundTheDocumentsRecord`
+carries the six refused spellings with the ground each is refused on, and derives
+the ground by asking the three readers rather than by reading anything written
+down, so a row whose reason stops being true goes red.
+`TestTheCreatedAtDescriptionSaysOnlyThingsThatAreTrueOfThisRepository` is the
+pair: each claim is a sentence the shipped `description` must carry and a
+measurement that sentence must survive, so reverting the prose is as red as
+breaking the rule. `TestTheAmendmentAcceptsEveryTimestampTheContractAcceptedBeforeIt`
+is the over-fire arm that holds the accepted set to what `3bd453c` shipped, since
+the amendment was to the reason and not to the rule.
+`TestTheCreatedAtDescriptionIsTheSameSentenceInBothDocuments` extends the older
+drift guard to the `description`, which R-04 made load-bearing — the older test
+compares only the two `pattern` values, and would sleep through a description
+that drifted between the two kinds.
 
 One consequence for D-48: `created_at: "yesterday"` now breaks both keywords,
 and this library reports one finding per instance location. AC-02.3's guard
@@ -286,6 +371,103 @@ document, so all four spellings fail together or not at all.
 was not a choice that was later revisited; it was a form that never compiled,
 and leaving it in the contract would make a reader grade a working binary
 against an impossible one.
+
+### D-51 — a declined record is published as `PATH_ESCAPES_ROOT` when the degraded set is homogeneous, and stays `KNOWLEDGE_UNREADABLE` when it is mixed
+
+**Added after MR-002 shipped, by the FIX-J wave, in response to round-2 findings
+R-05 and B-A6. It resolves a condition the first remediation introduced and left
+unnamed. No acceptance criterion moves and no new `app.Code` is registered; both
+codes named here were already in the wire vocabulary.**
+
+**The condition.** The first remediation closed finding BA-10 by putting the
+containment boundary in front of every record file, not only in front of the
+bucket directory: a record that is a symbolic link resolving outside the
+repository is refused rather than read and counted as repository content. The
+loader files that refusal as a non-fatal `loader.Problem` carrying
+`app.CodePathEscapesRoot`. The report layers did not read that code. Every
+non-fatal loader problem produced one reading — `KNOWLEDGE_UNREADABLE`, summary
+"Knowledge store has unreadable records", remedy "Fix or remove `<path>`" — so a
+file that reads perfectly was published as one this binary could not read.
+
+**Why that is a defect and not a wording preference.** The code is the value a
+consumer branches on, and `KNOWLEDGE_UNREADABLE` is a false statement about this
+file: nothing is wrong with its bytes, its permissions or its JSON. The remedy
+inherits the falsehood and becomes unfollowable — there is nothing in the file to
+fix, and "remove it" removes a link whose target the reader may still want. The
+thing to act on is the link, and only a reading that knows the record was
+*declined* rather than *unread* can say so. This is the same defect shape as
+finding E10, one level further down: one condition wearing another condition's
+name, with that name's remedy attached.
+
+**The rule.**
+
+- The loader's account of the condition does not move. `escapingRecord` keeps
+  `app.CodePathEscapesRoot`, keeps `Fatal: false`, and keeps its comment and its
+  message — the function's body is byte-identical across this decision, and only
+  its call site moved when `recordFile` was extracted for a separate finding. The
+  classification belongs at the layer that detected it, and `doctor` reads
+  `loader.Problem.Code` rather than the prose in `Message` — for the reason D-43
+  gives about findings: a classification taken from a sentence disagrees with the
+  published code the first time the sentence is reworded.
+- `doctor.knowledgeResult` gains one branch. When the **degraded** loader-problem
+  set is non-empty and **every** member of it carries `app.CodePathEscapesRoot`,
+  the reading is published under that code, with its own summary, diagnostic,
+  impact and remedy.
+- When the degraded set is **mixed**, the reading stays `KNOWLEDGE_UNREADABLE`.
+
+**Why homogeneity is the condition, rather than "any escaping record".** A
+component publishes exactly one code (AC-06.4). Over a mixed set,
+`KNOWLEDGE_UNREADABLE` is wrong about none of it — a declined record is, from a
+consumer's side, a record that is not in the store — while `PATH_ESCAPES_ROOT`
+would be a false statement about the genuinely unreadable half, which is the
+defect this decision exists to remove, reintroduced from the other direction. The
+tie is broken towards the code that overclaims about nothing. The summary is the
+one prose field `status` prints beside the code, so a mixed set says
+"Knowledge store has unreadable records and records that resolve outside the
+repository" and names one remedy per record in that record's own class. Nothing
+is filed under the other class's sentence, and nothing is silent.
+
+**Exit class, measured rather than derived.** The reading is `DEGRADED` at
+`app.ExitSuccess` from `doctor --json`, `status --json` and `init --json`, with
+no error object on any of them; `status` readiness is `DEGRADED` and no
+`blocking_component` is named. The contrast that makes the grade legible is the
+`.mindrail/knowledge` *directory* resolving outside the worktree, which is the
+same code on the same policy and is `BLOCKED` at exit 2 with
+`blocking_component` `knowledge` — measured on the same binary. One condition
+costs the repository a record; the other costs it the store. `app.CodePathEscapesRoot` maps to `KindUsage` and
+therefore to exit 2 *where it is a fatal error object* — the `.mindrail/knowledge`
+directory escaping is such a case — and that mapping is not on this path, because
+`doctor.errorFrom` is reached only for an ERROR reading or the halting one.
+Declining one record costs the repository that record and no more, which is
+decision D-39's grade for a record this binary cannot use, and the same grade the
+unparseable record beside it already had. Promoting one bad record to a usage
+error would be a new policy, not a fix.
+
+**Remedy wording**, in full, because it is the field a consumer acts on:
+`Replace the link at <repo-relative slash path> with the record itself, or
+remove it.` Past the `maxNamedRecords` cap of 10: `Replace or remove the
+remaining N links under .mindrail/knowledge that resolve outside the repository
+root.` Paths are repo-relative (tech-stack §74), like every other knowledge
+remedy. Neither sentence is classified by `internal/cli`'s shared remedy table,
+and that is deliberate and stated as a fact rather than left to inference: a
+DEGRADED reading produces no error object, so no agreement-matrix row can hold
+the binary to a class for it and a class added here would be a claim nothing
+could falsify. `TestTheRemedyClassifierRefusesASentenceThatMerelyContainsAVerb`
+carries both sentences with `classUnknown`, which is also what keeps a future
+entry matching a bare "the link" from collapsing this condition into
+`classRelink` — a dangling link to be pointed somewhere real and a link that
+resolves perfectly to something this repository does not own are two conditions
+with two remedies.
+
+**What holds it.** `internal/doctor/knowledge_escaping_test.go` carries the
+regression, the over-fire guard (a genuinely unreadable record still reports
+`KNOWLEDGE_UNREADABLE`; a store with nothing declined does not enter the branch)
+and the under-fire guard (the declined record keeps its class below every
+condition that outranks it on AC-06.1's ladder). At the layer a user meets it,
+`TestBrokenSetupMatrix` carries "knowledge record that resolves outside the
+repository" and its mixed-set twin, and `TestOneConditionIsNamedTheSameWayByEveryCommand`
+carries the exit-0 half — that `status`, `doctor` and `init` all agree this disk
+costs the repository one record and stops nothing.
 
 ---
 

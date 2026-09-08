@@ -627,6 +627,91 @@ func TestBrokenSetupMatrix(t *testing.T) {
 			unusableRemedies: []string{"mindrail init"},
 		},
 		{
+			name: "knowledge record that resolves outside the repository",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				linkKnowledgeRecordOutside(t, repo, "DEC-0002.json")
+				return repo
+			},
+			// Finding BA-10's condition, published under decision D-51. The whole
+			// point of the row is the code: this file reads perfectly, so
+			// KNOWLEDGE_UNREADABLE was a false statement about it and the remedy
+			// that comes with that code — "Fix or remove <path>" — asks the reader
+			// to repair a file with nothing wrong in it. The thing to act on is
+			// the link, and PATH_ESCAPES_ROOT is the code that says so.
+			//
+			// Exit 0 and DEGRADED, not a usage error: app.CodePathEscapesRoot maps
+			// to ExitUsage where it is a fatal error object, and this is not one —
+			// declining one record costs the repository that record, exactly as an
+			// unreadable record does (decision D-39). The agreement matrix's
+			// "a single knowledge record that resolves outside the worktree" row
+			// asserts the other half, that no command produces an error object at
+			// all for this disk.
+			wantExit:      app.ExitSuccess,
+			wantCode:      app.CodePathEscapesRoot,
+			wantState:     doctor.StateDegraded,
+			wantComponent: status.ComponentKnowledge,
+			wantCheck:     "knowledge",
+			// init writes the scaffold and never touches a record already in the
+			// store, least of all one it declined to read.
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
+			name: "knowledge record that resolves outside the repository beside an unreadable one",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				linkKnowledgeRecordOutside(t, repo, "DEC-0002.json")
+				writeKnowledgeRecord(t, repo, "DEC-0003.json", "{not json")
+				denyAccess(t, filepath.Join(repo, ".mindrail", "knowledge", "decisions", "DEC-0003.json"))
+				return repo
+			},
+			// Decision D-51's boundary, and the reason the row above cannot be read
+			// as "any escaping record publishes PATH_ESCAPES_ROOT". One record here
+			// genuinely cannot be read, so KNOWLEDGE_UNREADABLE is wrong about none
+			// of the set and stays; the summary is what carries the other class.
+			//
+			// Stated as its own row because the two differ in nothing a reader of
+			// the setup would notice — one extra file — and a branch keyed on "some
+			// record escapes" instead of "every degraded record escapes" passes the
+			// row above and fails here.
+			wantExit:         app.ExitSuccess,
+			wantCode:         app.CodeKnowledgeUnreadable,
+			wantState:        doctor.StateDegraded,
+			wantComponent:    status.ComponentKnowledge,
+			wantCheck:        "knowledge",
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
+			name: "schema-invalid draft carrying a valid record's id",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0003.json", draftReusingAnActiveId)
+				return repo
+			},
+			// Audit round 2's HIGH. The graph indexes every record the loader read,
+			// including ones step 5 rejected, so that a chain closing through a
+			// rejected record is still a cycle — and for one commit that also let a
+			// rejected record's *id* speak for a node, fusing a draft's supersedes
+			// onto a valid record. This store was reported as
+			// KNOWLEDGE_SUPERSEDE_CYCLE at exit 1, ERROR, naming two files whose
+			// bytes could not carry the remedy out.
+			//
+			// The right answer is the one the "knowledge record the schema rejects"
+			// row above gives: a record this binary reads and rejects costs the
+			// repository that record. DEGRADED, exit 0, KNOWLEDGE_INVALID, and the
+			// two correct records beside it stay answerable.
+			wantExit:         app.ExitSuccess,
+			wantCode:         app.CodeKnowledgeInvalid,
+			wantState:        doctor.StateDegraded,
+			wantComponent:    status.ComponentKnowledge,
+			wantCheck:        "knowledge",
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
 			name:    "git is not installed",
 			setup:   func(t *testing.T) string { isolateEnvironment(t); return t.TempDir() },
 			options: cli.Options{Runner: unavailableGit()},

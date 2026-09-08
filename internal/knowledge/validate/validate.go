@@ -262,6 +262,12 @@ func Check(store loader.Store, v *schema.Validator) []Finding {
 	// to such a record — so a chain through an id the loader could not read
 	// still closes nothing, which is decision D-45 expressed as a data structure
 	// rather than as a condition each step has to remember.
+	//
+	// `all` rather than `judged`, and the graph then decides for itself which of
+	// those records speaks for which node: a record step 5 rejected keeps the
+	// relation it declares and does not get to override an accepted record's id.
+	// Both halves of that sentence are load-bearing and each was once wrong on
+	// its own — see newGraph.
 	lineages := newGraph(all)
 
 	found = append(found, stepFilenameConsistency(judged)...)
@@ -289,36 +295,64 @@ func readRecords(store loader.Store) []subject {
 	return records
 }
 
+// account is what this run knows about one knowledge file: whether the loader
+// read it, whether the loader recorded a Problem for it, and — when it was read
+// — the id the record in it carries.
+//
+// The id is the field that keeps step 8 from over-suppressing. "The file is
+// there" and "the file holds the record you referenced" are different facts, and
+// a suppression set that carried only the first turned a real dangling
+// supersede into silence.
+type account struct {
+	// read is true when the loader produced a RecordRef for this path.
+	read bool
+	// problem is true when the loader recorded a Problem for this path. It wins
+	// over read: a file this binary could not read is D-45's case whatever else
+	// is known about it.
+	problem bool
+	// id is the id the read record carries, empty when the record's own "id"
+	// property is missing or is not a string. The loader leaves it empty in both
+	// of those cases and lets step 5 judge the type.
+	id string
+}
+
 // filesTheLoaderNamed indexes every knowledge file this run has an account of:
 // the ones it read, and the ones it recorded a Problem for.
 //
-// It is step 8's suppression set, and both halves say the same thing for the
-// same reason — the file is there, and this report already names it, so
-// publishing "it does not exist" about it would be a fabricated claim:
+// It is step 8's suppression set, and the two halves do NOT say the same thing,
+// which is the distinction this index exists to keep:
 //
 //   - A Problem means the record exists and this binary could not read it. That
 //     is decision D-45 in its plainest form, and the loader has already named
-//     the file in its own voice.
-//   - A read record means this binary opened the file and has its bytes. If it
-//     is also invalid, the same report carries a step-5 finding against that
-//     exact path telling the reader to correct it — and a report that says
-//     "correct this file" one line above "this file is not there" is telling the
-//     reader to do two contradictory things about one file.
+//     the file in its own voice. Nothing more can be said about it.
+//   - A read record means this binary opened the file and has its bytes — and
+//     therefore also knows which id that record carries. If it is the referenced
+//     id, the reference resolved and step 8 never asks. If it is not, the file
+//     being there does not make the reference good, and the honest report is
+//     that the file exists and carries another id. What must not be published is
+//     the bare "it is not there": the same report carries a step-5 or step-6
+//     finding against that exact path, and "correct this file" one line above
+//     "this file is not there" tells the reader to do two contradictory things
+//     about one file.
 //
 // The loader spells Problem.Path and RecordRef.Path repo-relative with forward
 // slashes, which is the spelling expectedPath builds, so all three are directly
 // comparable — TestTheExpectedPathIsTheOneTheLoaderProduces is what keeps them
 // that way.
-func filesTheLoaderNamed(store loader.Store) map[string]struct{} {
-	paths := make(map[string]struct{}, store.Count()+len(store.Problems))
-	for _, ref := range store.Decisions {
-		paths[ref.Path] = struct{}{}
-	}
-	for _, ref := range store.Invariants {
-		paths[ref.Path] = struct{}{}
+func filesTheLoaderNamed(store loader.Store) map[string]account {
+	paths := make(map[string]account, store.Count()+len(store.Problems))
+	for _, bucket := range [][]loader.RecordRef{store.Decisions, store.Invariants} {
+		for _, ref := range bucket {
+			entry := paths[ref.Path]
+			entry.read = true
+			entry.id = ref.ID
+			paths[ref.Path] = entry
+		}
 	}
 	for _, problem := range store.Problems {
-		paths[problem.Path] = struct{}{}
+		entry := paths[problem.Path]
+		entry.problem = true
+		paths[problem.Path] = entry
 	}
 	return paths
 }

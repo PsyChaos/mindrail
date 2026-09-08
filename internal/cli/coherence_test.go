@@ -404,6 +404,22 @@ func TestTheRemedyClassifierRefusesASentenceThatMerelyContainsAVerb(t *testing.T
 		// changing it is the moment to say what now holds the class honest.
 		{`Correct .mindrail/knowledge/decisions/DEC-0001.json so it satisfies the knowledge schema document for its kind.`, classUnknown},
 
+		// Decision D-51's two remedies, for the same reason and with the same
+		// consequence if that reason stops holding. A declined record is reported
+		// by a DEGRADED knowledge reading at exit 0, so no error object carries
+		// these sentences and no agreement-matrix row can hold the binary to a
+		// class for them.
+		//
+		// They are spelled out here rather than left unmentioned because they are
+		// the two remedies in this binary that talk about a link without being
+		// classRelink: "repoint the link at <path>" is a dangling link to point
+		// somewhere real, and these are a link that resolves perfectly to
+		// something this repository does not own. A future entry matching a bare
+		// "the link" would collapse the two conditions into one class, and the row
+		// that notices is this one.
+		{`Replace the link at .mindrail/knowledge/decisions/DEC-0002.json with the record itself, or remove it.`, classUnknown},
+		{`Replace or remove the remaining 3 links under .mindrail/knowledge that resolve outside the repository root.`, classUnknown},
+
 		// None of these tells the reader to change a permission, and none of
 		// them may be read as if it did.
 		{"Delete the whole repository to make it stop", classUnknown},

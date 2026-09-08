@@ -560,6 +560,60 @@ func knowledgeConditions() []condition {
 			},
 		},
 		{
+			// The containment boundary met one level below the row above: the
+			// directory is where it belongs and one file inside it is a link out
+			// of the worktree (finding BA-10). It is deliberately NOT the row
+			// above's grade.
+			//
+			// A knowledge directory that escapes costs the repository its whole
+			// store and is a usage error every command has to refuse; one record
+			// that escapes costs the repository that record, exactly as an
+			// unreadable one does (decision D-39), so all three commands exit 0
+			// with no error object at all. That is what `broken: false` asserts
+			// here, and the choice is the measured one rather than the plausible
+			// one — `doctor --json`, `status --json` and `init --json` were run
+			// against this disk and none of them produced an error payload.
+			//
+			// The condition still has to be visible, and it is: the knowledge
+			// component and the knowledge check both read DEGRADED with code
+			// PATH_ESCAPES_ROOT under its own D-51 branch. An exit-0 row here
+			// cannot see a code, so that half is asserted by TestBrokenSetupMatrix's
+			// "knowledge record that resolves outside the repository" row. The two
+			// rows are one condition read at two altitudes: this one says no
+			// command fails on it, that one says every command names it.
+			name: "a single knowledge record that resolves outside the worktree",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				linkKnowledgeRecordOutside(t, repo, "DEC-0002.json")
+				return repo
+			},
+		},
+		{
+			// The row above with one genuinely unreadable record beside it, which
+			// is the boundary of decision D-51 rather than a second instance of
+			// it: a set that is homogeneously escaping is published as
+			// PATH_ESCAPES_ROOT, and a set that is not stays KNOWLEDGE_UNREADABLE,
+			// because that code is wrong about none of it.
+			//
+			// It is here because the two rows differ in the published code and in
+			// nothing a reader of this file would notice, so a branch that fired
+			// on "any escaping record" instead of "every degraded record escapes"
+			// would pass the row above and change this one. The code itself is
+			// asserted in TestBrokenSetupMatrix; what this row adds is that the
+			// mixture is still exit 0 from all three commands and still produces
+			// no error object.
+			name: "a knowledge record that escapes beside one that cannot be read",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				linkKnowledgeRecordOutside(t, repo, "DEC-0002.json")
+				writeKnowledgeRecord(t, repo, "DEC-0003.json", "{not json")
+				denyAccess(t, filepath.Join(knowledgeDir(repo), "decisions", "DEC-0003.json"))
+				return repo
+			},
+		},
+		{
 			// The over-fire guard for both rows above: one record file nobody
 			// can read is a problem with that record, not with the directory
 			// holding it, and the path remedy must not fire on it.
@@ -657,6 +711,39 @@ func knowledgeConditions() []condition {
 				repo := newInitializedRepo(t)
 				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
 				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				return repo
+			},
+		},
+		{
+			// Audit round 2's HIGH, pinned at the layer a user meets it.
+			//
+			// The two records are the healthy lineage of the row above, unchanged.
+			// Beside them is a draft that step 5 rejects and that claims DEC-0001's
+			// id. The pipeline's graph indexes every record it READ — a rejected
+			// record's supersedes is what a round-1 fix restored, and restoring it
+			// also started letting a rejected record's *id* speak for a node — so
+			// the draft's "supersedes":["DEC-0002"] was unioned onto DEC-0001's
+			// node and closed the lineage into a loop. Both correct files were
+			// named in a fatal KNOWLEDGE_SUPERSEDE_CYCLE, at exit 1, with a remedy
+			// neither of their bytes could carry out: the sentence told the reader
+			// to drop a superseded id from files that were already right.
+			//
+			// Measured on the binary at the commit the audit graded: `doctor`,
+			// `status` and `init` all exited 1 and published
+			// KNOWLEDGE_SUPERSEDE_CYCLE. This row is `broken: false` because the
+			// answer is that nothing here is fatal — a draft costs the repository
+			// the draft (decision D-39), and the two records beside it are current
+			// and answerable.
+			//
+			// It sits beside the cycle rows deliberately. A detection that fires
+			// here fires on any working tree with a half-written record in it,
+			// which is every working tree at some point in an afternoon.
+			name: "a schema-invalid draft carrying a valid record's id",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0003.json", draftReusingAnActiveId)
 				return repo
 			},
 		},
@@ -915,7 +1002,48 @@ const (
 	invalidStatusDecision = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
 		`"status":"accepted","created_at":"2026-01-01T00:00:00Z",` +
 		`"title":"a decision with a status nobody defined","decision":"Adopt something."}`
+
+	// draftReusingAnActiveId is the record that produced audit round 2's HIGH,
+	// spelled here so the condition can be met at the layer a user meets it.
+	//
+	// It is filed at DEC-0003.json, it fails decision.v1 (status "draft" is not
+	// one of the two the enum defines), it claims id DEC-0001 — which
+	// supersededDecision already carries — and it claims to supersede DEC-0002.
+	// Every one of those four is load-bearing: the file name keeps step 6 out of
+	// the picture, the broken status is what makes it a record step 5 rejects,
+	// the reused id is what let it be fused onto a valid record's node, and the
+	// supersedes array is the edge that fusion turned into a loop.
+	//
+	// This is the shape of a half-written record left in a working tree, which is
+	// why the over-fire matters: the two records beside it are correct, and a
+	// pipeline that calls them a fatal supersede cycle blocks a repository over a
+	// draft.
+	draftReusingAnActiveId = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
+		`"status":"draft","created_at":"2026-03-01T00:00:00Z",` +
+		`"title":"a draft reusing an id","decision":"Adopt a third approach.",` +
+		`"supersedes":["DEC-0002"]}`
 )
+
+// linkKnowledgeRecordOutside puts a symbolic link where a record file belongs
+// and points it at a perfectly valid record the repository does not contain.
+//
+// The target is valid on purpose. The condition under test is where the bytes
+// live, not what they say: a record that is refused because it is outside the
+// repository and a record that is refused because it is malformed are two
+// different diagnoses with two different remedies (decision D-51), and a fixture
+// whose target was also broken could not tell them apart.
+func linkKnowledgeRecordOutside(t *testing.T, repo, name string) {
+	t.Helper()
+
+	outside := filepath.Join(t.TempDir(), name)
+	writeFile(t, outside, []byte(supersedingDecision))
+
+	dir := filepath.Join(knowledgeDir(repo), "decisions")
+	mkdirForSetup(t, dir)
+	if err := os.Symlink(outside, filepath.Join(dir, name)); err != nil {
+		t.Fatalf("point %s out of the worktree: %v", name, err)
+	}
+}
 
 // answerOf runs one command in JSON mode and reduces its envelope.
 func answerOf(t *testing.T, repo string, options cli.Options, command string) answer {

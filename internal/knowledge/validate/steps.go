@@ -89,12 +89,61 @@ func stepSchema(s *subject, v *schema.Validator) []ordered {
 				Step: StepSchema,
 				Code: app.CodeKnowledgeInvalid,
 				Message: fmt.Sprintf("%s breaks the %q rule of %s: %s",
-					s.ref.Path, violation.Keyword, document, violation.Message),
+					s.ref.Path, violation.Keyword, document, schemaClause(violation, document)),
 				Fatal: false,
 			},
 		})
 	}
 	return found
+}
+
+// keywordPattern and timestampPointer name the one violation whose library
+// wording states a rule the validator did not apply. They are spelled here
+// rather than inline so the condition reads as the thing it is.
+const (
+	keywordPattern   = "pattern"
+	timestampPointer = "/created_at"
+)
+
+// schemaClause is the violation's own wording, except where reproducing it would
+// misquote the rule.
+//
+// Every other message in this package's step 5 is the library's, deliberately:
+// decision D-36 makes the shipped document the contract and a second Go-language
+// statement of any keyword would drift from it. That argument holds only while
+// the library's sentence is true, and for one keyword it is not.
+//
+// The "pattern" message renders the regular expression through Go's %q, so a
+// pattern containing a backslash is published with that backslash doubled. The
+// created_at pattern contains "(\.[0-9]{1,9})?" and prints as
+// "(\\.[0-9]{1,9})?", which is a different expression: it asks for a literal
+// backslash. Measured — a record whose created_at is "…T00:00:00.1Z" is accepted
+// by the validator and refused by the rule the message prints. A reader who
+// pastes it into a tester is debugging a rule nothing enforces.
+//
+// The remedy is to stop reproducing the expression rather than to restate it.
+// Restating it in prose would be the second implementation D-36 forbids, and
+// re-deriving the true regex from the quoted one would be a second
+// implementation of the library's quoting. The property's own "description" is
+// part of the contract the reader can already open, so the message names it —
+// TestTheCreatedAtRuleTheMessageSendsTheReaderToIsThere is what keeps that
+// pointer from dangling.
+//
+// Narrow on purpose. The other two patterns both documents carry — the id and
+// the supersedes items, "^DEC-[0-9]{4,}$" and its invariant twin — contain no
+// character %q escapes, so the library prints them faithfully and they are the
+// most useful sentence a reader could get. Suppressing every pattern message
+// would trade one misquote for a whole class of lost facts.
+func schemaClause(violation schema.Finding, document string) string {
+	if violation.Keyword != keywordPattern || violation.InstanceLocation != timestampPointer {
+		return violation.Message
+	}
+	return fmt.Sprintf(
+		"at %q: the timestamp is not spelled the way this project writes one. "+
+			"The rule is the %q property's own %q in %s, which is the contract; "+
+			"the expression itself is not reproduced here, because a JSON Schema pattern "+
+			"rendered into a Go string literal is not the expression the validator applied",
+		timestampPointer, "created_at", "description", document)
 }
 
 // stepFilenameConsistency is spec §95 step 6: the file .../decisions/X.json has
@@ -191,23 +240,43 @@ func stepUniqueID(subjects []*subject) []ordered {
 //     just called absent. This is the second half of MR-002's root defect, and
 //     it is why the graph holds every record read rather than every record that
 //     survived step 5.
-//   - The file the id would occupy is one the loader named, either as a record
-//     it read or as a Problem it could not. Either way the file is there.
+//   - The file the id would occupy is one the loader recorded a Problem for. The
+//     record exists and this binary could not read it; the loader has already
+//     named the file in its own voice.
+//   - The file the id would occupy was read, and the record in it carries no id
+//     this run could read — its "id" property is missing or is not a string. The
+//     file is there and the same report carries a step-5 finding against it.
 //
-// The two conditions are not redundant. A record carrying id DEC-0001 may live
+// The three conditions are not redundant. A record carrying id DEC-0001 may live
 // at decisions/DEC-0009.json — step 6's condition — so it resolves without its
 // expected path having been read; and a record at decisions/DEC-0001.json whose
-// own id property is missing or not a string carries no id at all, so its file
-// was read without anything resolving. Dropping either check publishes "it is
-// not there" about a file this run has in its hands.
+// own id property is missing carries no id at all, so its file was read without
+// anything resolving. Dropping either check publishes "it is not there" about a
+// file this run has in its hands.
+//
+// # The read file that carries someone else's id
+//
+// There is a fourth shape, and it is a finding rather than a suppression: the
+// expected file was read, its id was readable, and it is a different id. Nothing
+// in the store carries the referenced id, so the reference is dangling — and
+// telling the reader only "rename DEC-0009.json" (step 6) leaves them to work
+// out on their own why the supersede they wrote resolves to nothing.
+//
+// Collapsing this case into the suppression is how the diagnosis was lost once:
+// widening the set to "every file this run named" made a supersede pointing at
+// DEC-0009 silent merely because a file called DEC-0009.json had been read, even
+// when that file declares itself DEC-0007. The suppression's whole warrant is
+// that saying "it is not there" about a file this run holds is a fabricated
+// claim — so the fix is not silence, it is a message that says what this run
+// actually found: the file exists and carries another id.
 //
 // The expected file for id X of kind k is exactly what step 6 requires, so the
 // mapping is not a guess.
-func stepSupersedeTarget(subjects []*subject, lineages *graph, named map[string]struct{}) []ordered {
+func stepSupersedeTarget(subjects []*subject, lineages *graph, named map[string]account) []ordered {
 	found := make([]ordered, 0, 1)
 	for _, s := range subjects {
 		for _, target := range s.doc.Supersedes {
-			if lineages.resolves(target) {
+			if lineages.resolves(node{kind: s.ref.Kind, id: target}) {
 				continue
 			}
 
@@ -218,13 +287,26 @@ func stepSupersedeTarget(subjects []*subject, lineages *graph, named map[string]
 				// direction D-45 points.
 				continue
 			}
-			if _, accounted := named[expected]; accounted {
-				continue
-			}
 
-			found = append(found, invalid(s, StepSupersedeTarget, fmt.Sprintf(
-				"%s supersedes %q, but this store has no such record: %s is not there",
-				s.ref.Path, target, expected)))
+			accounted, known := named[expected]
+			switch {
+			case known && accounted.problem:
+				// D-45 in its plainest form: the record exists and this binary
+				// could not read it.
+				continue
+			case known && accounted.read && accounted.id == "":
+				// The file was read and its own id is unreadable, so nothing could
+				// have resolved. Step 5 names it one line above.
+				continue
+			case known && accounted.read:
+				found = append(found, invalid(s, StepSupersedeTarget, fmt.Sprintf(
+					"%s supersedes %q, but no record in this store carries that id: %s was read and carries id %q instead",
+					s.ref.Path, target, expected, accounted.id)))
+			default:
+				found = append(found, invalid(s, StepSupersedeTarget, fmt.Sprintf(
+					"%s supersedes %q, but this store has no such record: %s is not there",
+					s.ref.Path, target, expected)))
+			}
 		}
 	}
 	return found
@@ -258,12 +340,30 @@ func stepSupersedeTarget(subjects []*subject, lineages *graph, named map[string]
 // table. The list is built once per group rather than once per member: it is the
 // same string for all of them, and rebuilding it inside the loop is O(n^2) bytes
 // for a lineage this project has already measured at 224 MB.
+//
+// The message says every member "is reachable from every other by following
+// supersedes", and that sentence is only true while a node's edges come from the
+// records the reader is being pointed at. It was false once: a graph that unioned
+// a rejected draft's "supersedes" into a valid record's node reported a fatal
+// cycle against a file with no "supersedes" property at all, with a remedy its
+// bytes could not carry out. newGraph is where that is now prevented, and
+// TestACycleMessageIsTrueOfEveryFileItIsAttachedTo is what holds the claim.
+//
+// One narrower case remains, deliberately and with its own row in
+// TestARejectedRecordIsStillTheOnlyAccountOfAnIdNobodyElseCarries: an id whose
+// only claimant is a record step 5 rejected and whose file name is something
+// else. That id is named in the member list and no finding is attached to any
+// file carrying it, so a reader looking for its file will not find one — they
+// are pointed at the rejected record by step 5 instead. Naming the declaring
+// file in this message would close that, at the cost of a clause on every step-9
+// finding; it is left to a milestone that can measure the message-size tradeoff
+// rather than folded into a fix pass.
 func stepSupersedeCycle(lineages *graph) []ordered {
 	found := make([]ordered, 0, 1)
 	for _, group := range lineages.closedGroups() {
-		members := nameList(group, len(group))
-		for _, id := range group {
-			for _, s := range lineages.askedFor(id) {
+		members := nameList(ids(group), len(group))
+		for _, key := range group {
+			for _, s := range lineages.askedFor(key) {
 				found = append(found, ordered{finding: Finding{
 					Path: s.ref.Path,
 					ID:   s.ref.ID,
@@ -312,8 +412,8 @@ func stepDuplicateActiveLineage(lineages *graph) []ordered {
 	for _, members := range lineages.lineages() {
 		active := make([]*subject, 0, len(members))
 		activeIDs := 0
-		for _, id := range members {
-			carrying := activeSubjects(lineages.askedFor(id))
+		for _, key := range members {
+			carrying := activeSubjects(lineages.askedFor(key))
 			if len(carrying) == 0 {
 				continue
 			}

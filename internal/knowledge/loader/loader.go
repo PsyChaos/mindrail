@@ -31,6 +31,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -210,7 +211,7 @@ func (l *Loader) Load(ctx context.Context) (Store, error) {
 				continue
 			}
 
-			ref, problem := l.readRecord(bucket.kind, rel, entry.Name())
+			ref, problem := l.readRecord(bucket.kind, dir, rel, entry.Name())
 			switch {
 			case problem != nil:
 				store.Problems = append(store.Problems, *problem)
@@ -240,38 +241,16 @@ func recordPath(relDir, name string) string {
 }
 
 // readRecord performs steps 1-4 for one file. Exactly one of the two returns
-// is non-nil.
-func (l *Loader) readRecord(kind RecordKind, relDir, name string) (*RecordRef, *Problem) {
+// is non-nil. absDir is the canonical, already-contained bucket directory the
+// entry was enumerated from; relDir is the same directory in the repo-relative
+// slash spelling everything printed uses.
+func (l *Loader) readRecord(kind RecordKind, absDir, relDir, name string) (*RecordRef, *Problem) {
 	rel := recordPath(relDir, name)
 
 	// Step 1: file read.
-	//
-	// The path goes through the containment boundary rather than being joined
-	// onto the already-resolved bucket directory. Resolving the directory proves
-	// the directory is inside the repository; it proves nothing about an entry
-	// inside it, and a record file that is a symbolic link out of the worktree
-	// was therefore read and counted as repository content (finding BA-10). That
-	// mattered little while the loader only counted records; MR-002 derives
-	// verdicts from these bytes, so an unvetted file now supplies the evidence a
-	// report reasons from.
-	//
-	// It is Root.Resolve rather than a symlink check on the directory entry
-	// because decision D-32's policy is "links inside the root are allowed,
-	// links that leave it are refused", not "no links". A repository may
-	// legitimately hold a record behind a link, and refusing every link would
-	// also refuse every ordinary layout that reaches the worktree through one.
-	// One boundary answers the question for the file exactly as it already
-	// answers it for the directory.
-	//
-	// The canonical path Resolve returns is what is opened, so the final open
-	// follows no link at all: a link swapped in after the check cannot redirect
-	// the read that follows it.
-	abs, err := l.root.Resolve(rel)
-	if err != nil {
-		if errors.Is(err, filesystem.ErrEscapesRoot) {
-			return nil, escapingRecord(rel)
-		}
-		return nil, unreadableRecord(rel, "cannot be read: "+readFailureReason(err))
+	abs, problem := l.recordFile(absDir, rel, name)
+	if problem != nil {
+		return nil, problem
 	}
 
 	data, err := os.ReadFile(abs)
@@ -329,6 +308,91 @@ func (l *Loader) readRecord(kind RecordKind, relDir, name string) (*RecordRef, *
 	}, nil
 }
 
+// recordFile decides which absolute path — if any — the loader may open for one
+// directory entry, and returns the problem that stops it otherwise.
+//
+// Why containment is checked here at all. Resolving the bucket directory proves
+// the directory is inside the repository; it proves nothing about an entry
+// inside it, and a record file that is a symbolic link out of the worktree was
+// therefore read and counted as repository content (finding BA-10). That
+// mattered little while the loader only counted records; MR-002 derives verdicts
+// from these bytes, so an unvetted file now supplies the evidence a report
+// reasons from.
+//
+// Why it is not Root.Resolve for every entry. It was, and Resolve canonicalizes
+// every component of the path it is given — the worktree root, .mindrail,
+// knowledge, the bucket, and only then the record — so the answer already known
+// about the first four was recomputed once per record. That cost about 3.9 µs a
+// record and 45% of the loader's per-record time at scale, and moved the 150 ms
+// warm-path budget for `status --json` from roughly 8,700 records to roughly
+// 5,700 (finding B-A3). The four components are answered once, by the Resolve of
+// the bucket that produced absDir, and answering them again cannot change the
+// verdict: absDir is canonical, so nothing on it is a link any more.
+//
+// What is left to decide is the final component, and one os.Lstat decides it:
+//
+//   - Not a symbolic link. Then filepath.Join(absDir, name) IS the canonical
+//     path of the entry — a canonical parent plus a non-link leaf — and absDir
+//     is already known to be inside the root, so the entry is too. This is the
+//     ordinary record, and it is the whole of the saving.
+//   - A symbolic link. Then where it lands is genuinely unknown and the full
+//     boundary decides it, exactly as before. That is decision D-32's policy —
+//     "links inside the root are allowed, links that leave it are refused", not
+//     "no links" — so a linked record inside the repository stays readable, and
+//     so does every ordinary layout that reaches the worktree through a link.
+//
+// The two branches are the same function of the filesystem that Root.Resolve
+// alone was, so no layout changes verdict; only the syscalls spent on the
+// unremarkable case do.
+//
+// The os.Lstat is deliberate and not free: os.ReadDir has already reported a
+// type for every entry, and reading the answer off that instead measured about
+// 0.7 µs a record cheaper again. It is not taken, because that type was observed
+// when the directory was listed, and the last record of a ten-thousand-record
+// store is read some seventy milliseconds later. Deciding containment from it
+// would widen the gap between the check and the open from microseconds to the
+// whole walk — wider than the code this replaces, and wider than the code before
+// that. A fresh stat of the entry about to be opened is what the remaining cost
+// buys.
+//
+// The path handed to os.ReadFile stays canonical in both branches, which is the
+// guarantee the previous code stated and this one has to keep: the final open
+// follows no link, so a link swapped in after the check cannot redirect the read
+// that follows it. In the second branch it is canonical because Resolve returns
+// it that way; in the first because a non-link leaf on a canonical parent is
+// already canonical.
+//
+// Reading from absDir rather than re-deriving the directory from the root also
+// means the record is read out of the very directory os.ReadDir enumerated. A
+// bucket swapped for an escaping link midway through the walk cannot make the
+// loader read entries from somewhere else; it could only ever have made the
+// remaining entries fail, which is a diagnosis about a directory that is no
+// longer the one the listing came from.
+func (l *Loader) recordFile(absDir, rel, name string) (string, *Problem) {
+	// The equivalence above rests on name being a single path component, which
+	// is all os.ReadDir yields. Anything else is not reasoned about here: it
+	// goes to the boundary, which is written to reason about whole paths.
+	if filepath.Base(name) == name {
+		candidate := filepath.Join(absDir, name)
+		info, err := os.Lstat(candidate)
+		if err != nil {
+			return "", unreadableRecord(rel, "cannot be read: "+readFailureReason(err))
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			return candidate, nil
+		}
+	}
+
+	abs, err := l.root.Resolve(rel)
+	if err != nil {
+		if errors.Is(err, filesystem.ErrEscapesRoot) {
+			return "", escapingRecord(rel)
+		}
+		return "", unreadableRecord(rel, "cannot be read: "+readFailureReason(err))
+	}
+	return abs, nil
+}
+
 func (l *Loader) supports(version int) bool {
 	if l.registry != nil {
 		return l.registry.Supports(version)
@@ -357,15 +421,44 @@ func stringField(fields map[string]json.RawMessage, name string) string {
 	return value
 }
 
-// readFailureReason reduces a file error to its reason. The path is already in
-// the message in its repo-relative spelling (tech-stack §74), and *fs.PathError
-// would otherwise repeat it as a machine-local absolute one.
+// unresolvableReason is the reason for a path the containment layer could not
+// canonicalize at all. See readFailureReason for why it is a fixed sentence.
+const unresolvableReason = "its path could not be resolved; check it for a symbolic link that loops" +
+	" or for a chain of links that is too long to follow"
+
+// readFailureReason reduces a file error to its reason, in a spelling that
+// carries no path at all.
+//
+// The caller has already put the path in the message in the repo-relative
+// forward-slash form that is the only one Mindrail stores or prints (tech-stack
+// §74). Every path an error of its own carries is the machine-local absolute
+// one, so none of them may reach a Problem.Message, which is persisted and
+// printed.
+//
+// An *fs.PathError is unwrapped to its inner error, which is a syscall errno —
+// "permission denied", "no such file or directory" — and path-free by
+// construction.
+//
+// Everything else becomes the fixed sentence above rather than err.Error().
+// Pasting the error in was finding R-01: filepath.EvalSymlinks reports a link
+// loop as a plain errors.New, and canonicalizeHop reports its own hop cap as a
+// plain fmt.Errorf, so neither is an *fs.PathError and both fell through — and
+// both quote the absolute component they gave up on, which is how
+// `.mindrail/knowledge/decisions/DEC-0002.json cannot be read: filesystem:
+// canonicalize "/tmp/repo/.mindrail/..."` came to be printed. Those two are also
+// the only errors the boundary can return here that are not *fs.PathError and
+// not the containment sentinel, which is why the sentence may name what it names.
+//
+// It is a fixed sentence and not a scrubbing of err.Error() because the property
+// has to hold for errors nobody has written yet: a filter can only remove the
+// shapes of path someone thought of, while a sentence with no path in it cannot
+// acquire one.
 func readFailureReason(err error) string {
 	var pathErr *fs.PathError
 	if errors.As(err, &pathErr) && pathErr.Err != nil {
 		return pathErr.Err.Error()
 	}
-	return err.Error()
+	return unresolvableReason
 }
 
 // unreadableRecord builds a non-fatal problem. It costs the repository one
