@@ -346,18 +346,20 @@ func stepSupersedeTarget(subjects []*subject, lineages *graph, named map[string]
 // records the reader is being pointed at. It was false once: a graph that unioned
 // a rejected draft's "supersedes" into a valid record's node reported a fatal
 // cycle against a file with no "supersedes" property at all, with a remedy its
-// bytes could not carry out. newGraph is where that is now prevented, and
-// TestACycleMessageIsTrueOfEveryFileItIsAttachedTo is what holds the claim.
+// bytes could not carry out. Decision D-52 is what now holds it from both sides —
+// newGraph gives a node only its canonical record's edges, and askedFor names
+// only that same record in this finding — and
+// TestACycleMessageIsTrueOfEveryFileItIsAttachedTo is the test that reads the
+// published message back and checks it against the file it is attached to.
 //
-// One narrower case remains, deliberately and with its own row in
-// TestARejectedRecordIsStillTheOnlyAccountOfAnIdNobodyElseCarries: an id whose
-// only claimant is a record step 5 rejected and whose file name is something
-// else. That id is named in the member list and no finding is attached to any
-// file carrying it, so a reader looking for its file will not find one — they
-// are pointed at the rejected record by step 5 instead. Naming the declaring
-// file in this message would close that, at the cost of a clause on every step-9
-// finding; it is left to a milestone that can measure the message-size tradeoff
-// rather than folded into a fix pass.
+// A member id may still have no finding of its own, and there is exactly one way
+// that happens now: its canonical record is one step 5 rejected. The id is named
+// in every member's list, no finding is attached to its file, and the reader is
+// pointed at that file by a step-5 finding instead — at the path the id names,
+// because that is what being canonical means. Before D-52 this case also covered
+// an id whose only claimant sat under some other file name entirely, which left a
+// reader hunting for a file that did not exist; such an id now supplies no edges
+// and cannot be a member of anything (D-52 rule 3).
 func stepSupersedeCycle(lineages *graph) []ordered {
 	found := make([]ordered, 0, 1)
 	for _, group := range lineages.closedGroups() {

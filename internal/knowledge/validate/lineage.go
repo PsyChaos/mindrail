@@ -62,11 +62,11 @@ func ids(group []node) []string {
 // be computed over the store as it actually is. askedFor is where that line is
 // drawn; subjectsFor is the structural view that ignores it.
 //
-// D-40 draws a second line inside this type, and it took a second defect to
-// find. Being in the graph is not the same as owning a node: where an accepted
-// record and a rejected one carry one id, the accepted record is who that node
-// is, and only its "supersedes" leaves the node. newGraph is where that is
-// written down and why.
+// There is a second line inside this type, and it took three audit rounds to
+// place. Being in the graph is not the same as owning a node: a node's edges,
+// and the findings a verdict about it may name, come from its *canonical*
+// record — the one filed at the path its id names. That is decision D-52, and
+// newGraph is where it is written down and why.
 //
 // Decision D-45 is a different rule and is untouched here. It is about records
 // the loader could NOT read, of which this graph knows nothing at all: they have
@@ -110,35 +110,40 @@ type graph struct {
 // # Which record speaks for a node
 //
 // The paragraph above is about *edges*. This one is about *identity*, and the
-// two are not the same question — conflating them is what MR-002 got wrong
-// twice, once in each direction.
+// two are not the same question — conflating them is what MR-002 got wrong three
+// times, twice in one direction and once in the other.
 //
 // A record tells this graph two things: which node it IS ("id") and what that
-// node supersedes ("supersedes"). The first defect dropped the second from every
-// rejected record, so one unknown property deleted a fatal cycle. Restoring it
-// also started trusting the first, which nothing had checked: before the change
-// only step-5 survivors were nodes, and a survivor's id is vouched for by its
-// schema `pattern` *and* — because D-40 asks a survivor step 7 — a survivor that
-// duplicates another's id is reported. Both guarantees went with the fix, and a
-// stray draft carrying a valid record's id then had its "supersedes" unioned
-// into that record's node: two correct files were named in a fatal cycle finding
-// whose remedy could not be performed on either of them, and the file that
-// created the edge was named nowhere.
+// node supersedes ("supersedes"). Three fix passes each asked "is this record's
+// claim on that id credible?" and each answered with a property of the record's
+// *contents*: first "step 5 accepted it", then "step 5 accepted it and nobody
+// else was accepted". Round 1 lost a fatal cycle to an unknown JSON property,
+// round 2 manufactured one against innocent files from a rejected draft, and
+// round 3 lost a cycle again to a schema-valid record sitting at the wrong file
+// name. The seam flipped every round because the property was never the one the
+// question is about.
 //
-// So: a rejected record's claim about what it supersedes stands, and its claim
-// about which node it is does not get to override an accepted record's. When
-// some subject under a node satisfied its schema, only those subjects supply
-// that node's edges. That is D-40's own shape — a rejected record's conditions
-// wait for step 5 and surface the moment the record is readable — applied to the
-// half of the graph step 5 actually vouches for.
+// Decision D-52 answers it with a property of *where the record sits*. Spec §95
+// step 6 requires that id X of kind k live at <k-dir>/X.json; file names are
+// unique inside a directory, so at most one record can be canonical for an id.
+// A node's edges come from its canonical record — subject.canonical — whether or
+// not step 5 accepted it. A schema violation elsewhere in the document does not
+// make that record's "supersedes" a lie, which is round 1's case; and a record
+// sitting under someone else's file name has no standing to add or remove edges
+// on a node it does not own, which is rounds 2 and 3 seen from two sides.
 //
-// The rejected record is still indexed: resolves and subjectsFor see it, because
-// the file was read and step 8 must not call it absent. Only its edges wait.
+// A non-canonical claimant is still indexed: resolves and subjectsFor see it,
+// because the file was read and step 8 must not call it absent, and step 6 still
+// tells its reader the file name and the id disagree.
 //
-// When *no* subject under a node was accepted, every one of them supplies edges.
-// That is the round-1 case and it must stay open: an id whose only account is a
-// rejected record is still that id's only account, and deleting it is exactly
-// the fail-open that turned the milestone's one fatal check off.
+// An id with no canonical record at all supplies no edges — not the union of its
+// claimants' edges, and not the edges of whichever claimant looks best. Nothing
+// in the store establishes which record that id is, so no cycle verdict may be
+// built on it. That is D-52 rule 3, and it is deliberately the conservative arm:
+// a genuine cycle among wholly misfiled records is reported in two steps, step 6
+// first and the cycle after the reader renames the files. D-39 makes a cycle the
+// milestone's one fatal finding, and a false fatal is worse than a true one
+// discovered one step later.
 func newGraph(subjects []*subject) *graph {
 	g := &graph{
 		byNode: make(map[node][]*subject, len(subjects)),
@@ -158,20 +163,14 @@ func newGraph(subjects []*subject) *graph {
 	slices.SortFunc(g.nodes, compareNodes)
 
 	for _, key := range g.nodes {
-		// Counted rather than taken from askedFor, which allocates the slice it
-		// returns: this asks only whether one exists, once per node, and
-		// TestAllocationGrowsLinearlyWithTheStore is the reason that matters.
-		vouched := false
-		for _, s := range g.byNode[key] {
-			vouched = vouched || s.schemaValid
-		}
-
 		targets := make([]node, 0, 2)
 		for _, s := range g.byNode[key] {
-			if vouched && !s.schemaValid {
-				// Another record under this id satisfied its schema, so that
-				// record is who this node is. This one's "supersedes" is an edge
-				// out of a node the pipeline has not agreed it owns.
+			if !s.canonical {
+				// This record is filed under a name that spells another id, so
+				// step 6 has already said it does not belong here. Its
+				// "supersedes" is an edge out of a node it does not own, and a
+				// node whose only claimants are such records gets no edges at
+				// all — D-52 rules 2 and 3.
 				continue
 			}
 			for _, target := range s.doc.Supersedes {
@@ -215,19 +214,31 @@ func (g *graph) resolves(n node) bool {
 // whatever step 5 made of it. It is the structural view: who is in the lineage.
 func (g *graph) subjectsFor(n node) []*subject { return g.byNode[n] }
 
-// askedFor returns the records carrying an id that step 5 accepted — the ones
-// decision D-40 lets steps 9 and 10 report a finding against.
+// askedFor returns the records that may be named in a verdict about an id: the
+// canonical one, and only when step 5 accepted it.
 //
-// The split between this and subjectsFor is D-40 stated as data flow. A rejected
-// record shapes the graph, because the relation it declares is real; it does not
-// receive a finding from a step that was never asked about it, because the
-// fields those steps would judge it on are the ones step 5 has just said are
-// wrong.
+// Two decisions meet here and they are separate conditions, not one.
+//
+// D-40 is the schemaValid half, stated as data flow. A rejected record shapes
+// the graph, because the relation it declares is real; it does not receive a
+// finding from a step that was never asked about it, because the fields those
+// steps would judge it on are the ones step 5 has just said are wrong.
+//
+// D-52 rule 4 is the canonical half, and it exists because ownership has to
+// govern reporting as it governs edges. Without it a store could report a real
+// cycle — correctly, from canonical records' edges — and attach the fatal
+// finding to a misfiled namesake whose own bytes declare no "supersedes" at all
+// and which therefore cannot perform the printed remedy. That is round 2's
+// defect arriving through the reporting door instead of the edge door, and it is
+// what an adversarial review of D-52 caught before this was implemented.
+//
+// subjectsFor is the structural view that applies neither condition: who is in
+// the lineage, whatever step 5 or step 6 made of them.
 func (g *graph) askedFor(n node) []*subject {
 	carrying := g.byNode[n]
 	asked := make([]*subject, 0, len(carrying))
 	for _, s := range carrying {
-		if s.schemaValid {
+		if s.schemaValid && s.canonical {
 			asked = append(asked, s)
 		}
 	}

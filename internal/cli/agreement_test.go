@@ -748,6 +748,42 @@ func knowledgeConditions() []condition {
 			},
 		},
 		{
+			// The fail-open arm of the seam the three rows above guard, and the
+			// gap audit round 3 found in this matrix: every knowledge row here
+			// asked whether the pipeline refuses too much, and none asked whether
+			// it still refuses at all. A guard checked in one direction only is
+			// how the second remediation shipped an over-fire while closing a
+			// fail-open.
+			//
+			// The store is audit round 3's own. DEC-0001.json and DEC-0002.json
+			// supersede each other, so the lineage closes on itself exactly as in
+			// the cycle row above; DEC-0001.json also carries a property no schema
+			// defines, and DEC-0009.json is a schema-valid record carrying
+			// DEC-0001's id that declares no supersede at all. Neither addition
+			// changes which files a reader can trace the loop through, so neither
+			// may change the verdict — measured at the commit the audit graded,
+			// this disk reported exit 0 and DEGRADED.
+			//
+			// The remedy is the cycle row's, carried out on the file that declares
+			// the closing edge. What is left behind is a store that is still
+			// untidy — one misfiled namesake, one duplicate id — and no longer
+			// fatal, which is the grade decision D-39 assigns each of those.
+			name:   "a supersede cycle beside a namesake that claims one member's id",
+			broken: true,
+			remedy: classSupersedeCycle,
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", halfWrittenCycleMember)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0009.json", namesakeOfACycleMember)
+				return repo
+			},
+			clear: func(t *testing.T, repo string) {
+				t.Helper()
+				rewriteKnowledgeRecordForRemedy(t, repo, "DEC-0001.json", supersededDecision)
+			},
+		},
+		{
 			// A record this binary reads and rejects costs the repository that
 			// record and no more (decision D-39), so it is graded the way the
 			// unparseable record earlier in this group is graded rather than the
@@ -1022,6 +1058,32 @@ const (
 		`"status":"draft","created_at":"2026-03-01T00:00:00Z",` +
 		`"title":"a draft reusing an id","decision":"Adopt a third approach.",` +
 		`"supersedes":["DEC-0002"]}`
+
+	// halfWrittenCycleMember is cyclicSupersededDecision with one property no
+	// schema defines. It is still filed at the path its id names and still says
+	// it supersedes DEC-0002, so the lineage it closes is exactly the same one —
+	// what changed is only that step 5 now refuses the record.
+	//
+	// That difference is the whole of audit round 1's fail-open: a graph built
+	// from step-5 survivors lost this record's edge, so one stray property turned
+	// the milestone's only fatal condition off.
+	halfWrittenCycleMember = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
+		`"status":"superseded","created_at":"2026-01-01T00:00:00Z",` +
+		`"title":"the first decision","decision":"Adopt the first approach.",` +
+		`"supersedes":["DEC-0002"],"note":"still being written"}`
+
+	// namesakeOfACycleMember is filed at DEC-0009.json, satisfies decision.v1 in
+	// full, carries DEC-0001's id and declares no "supersedes" at all.
+	//
+	// It is the record audit round 3's HIGH turned on. Under the rule that
+	// preceded decision D-52 this file "vouched" for the id DEC-0001 — it was the
+	// only claimant step 5 had accepted — which silenced the edge declared by the
+	// file actually named DEC-0001.json and deleted a real cycle. Its own bytes
+	// assert no supersede, so it could not have performed the remedy the report
+	// would have printed either.
+	namesakeOfACycleMember = `{"schema_version":1,"kind":"decision","id":"DEC-0001",` +
+		`"status":"superseded","created_at":"2026-01-02T00:00:00Z",` +
+		`"title":"a namesake filed under the wrong name","decision":"Adopt nothing in particular."}`
 )
 
 // linkKnowledgeRecordOutside puts a symbolic link where a record file belongs

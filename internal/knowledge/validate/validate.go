@@ -148,6 +148,17 @@ type subject struct {
 	// above decides what the store *is*. A record that breaks its schema still
 	// declares which record it supersedes.
 	schemaValid bool
+	// canonical says whether this record is the one filed at the path its id
+	// names — step 6's id half, `ref.ID == idFromPath(ref.Path)`. Decision D-52
+	// makes that, and nothing about the body, the test of whether a record's
+	// claim on an id is credible: file names are unique inside a directory and
+	// the loader takes a record's kind from the directory it walked it in, so at
+	// most one record in a store can be canonical for any (kind, id).
+	//
+	// It is computed here rather than at each use so that the two questions the
+	// lineage graph asks of it — who supplies a node's edges, and who may be
+	// named in a verdict about that node — read the same answer.
+	canonical bool
 }
 
 // document is the part of a record this pipeline reads.
@@ -287,12 +298,25 @@ func Check(store loader.Store, v *schema.Validator) []Finding {
 func readRecords(store loader.Store) []subject {
 	records := make([]subject, 0, store.Count())
 	for _, ref := range store.Decisions {
-		records = append(records, subject{ref: ref})
+		records = append(records, subject{ref: ref, canonical: isCanonical(ref)})
 	}
 	for _, ref := range store.Invariants {
-		records = append(records, subject{ref: ref})
+		records = append(records, subject{ref: ref, canonical: isCanonical(ref)})
 	}
 	return records
+}
+
+// isCanonical answers subject.canonical: the record is filed at the path its own
+// id names.
+//
+// There is no guard here against an id-less record, and the omission is
+// deliberate. A record carrying no id would be "canonical for the empty id" by
+// this comparison when its file is named ".json", but the graph builds no node
+// for the empty id (see newGraph), so nothing ever reads the answer. A branch
+// this package cannot falsify is the shape three audit rounds have flagged, and
+// adding one to restate an invariant enforced elsewhere would be another.
+func isCanonical(ref loader.RecordRef) bool {
+	return ref.ID == idFromPath(ref.Path)
 }
 
 // account is what this run knows about one knowledge file: whether the loader
