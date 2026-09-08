@@ -469,6 +469,76 @@ repository" and its mixed-set twin, and `TestOneConditionIsNamedTheSameWayByEver
 carries the exit-0 half — that `status`, `doctor` and `init` all agree this disk
 costs the repository one record and stops nothing.
 
+### D-52 — a supersede node is owned by the record filed at the path its id names
+
+**Added by the third remediation, after three audit rounds each flipped this seam
+the other way.** It replaces the case-by-case rules the first two remediations
+patched in, and it is written as one sentence deliberately: the previous three
+attempts were each correct about the case in front of them and silent about the
+case behind them.
+
+#### The history this decision exists to end
+
+| Round | What was wrong | Direction |
+|---|---|---|
+| 1 | An unknown property on a cycle member deleted its edges, so the cycle stopped being reported | too loose |
+| 2 | A schema-rejected draft duplicating a valid id injected its edges, manufacturing a fatal cycle against innocent files | too tight |
+| 3 | A schema-valid but **misfiled** record vouched for a node and deleted the canonical record's edge, so the cycle stopped being reported | too loose |
+
+Each fix asked "is this record credible?" and answered with a different property —
+`schemaValid`, then `schemaValid` plus whether anyone else was accepted. Neither
+property is what the question is about. **Credibility of an id claim is not a
+property of the record's contents; it is a property of where the record sits.**
+
+#### The rule
+
+Spec §95 step 6 already fixes the file an id belongs in: the record for id `X` of
+kind `k` lives at `.mindrail/knowledge/<k-dir>/X.json`. That mapping is a
+requirement, not a guess, and file names are unique within a directory — so **at
+most one record can be canonical for any id.**
+
+1. **A node's edges come from its canonical record** — the one filed at the path its
+   id names — **whether or not step 5 accepted it.** A record's claim about *what it
+   supersedes* is read from its own bytes, and a schema violation elsewhere in the
+   document does not make that field a lie. This is round 1's case.
+2. **A non-canonical claimant never supplies edges to a node it does not own, and
+   never removes them.** It is still indexed so `resolves` sees it and step 8 cannot
+   call its file absent, and it still receives its own step-6 finding. This is
+   rounds 2 and 3, which are the same case seen from two sides.
+3. **An id with no canonical record supplies no edges at all.** Nothing in the store
+   establishes which record that id is, so no cycle verdict may be built on it.
+   Step 6 already tells the reader, on every claimant, that the file name and the id
+   disagree; once they fix that, a canonical record exists and rule 1 applies.
+
+Rule 3 is deliberately the conservative arm. A genuine cycle among wholly misfiled
+records is reported in two steps rather than one — first "these files are misfiled",
+then, after the reader acts, the cycle. That costs a round trip. The alternative
+costs a **fatal** claim assembled from records whose identity the store cannot
+establish, carrying a remedy the named files may be unable to perform — which is
+precisely the defect rounds 2 and 3 produced, and D-39 makes this the one fatal
+finding in the milestone. A false fatal is worse than a true fatal discovered one
+step later.
+
+#### Why this is not a fourth patch
+
+The previous three rules were each derived from the failing input. This one is
+derived from step 6, which the pipeline already enforces and which the requirements
+already freeze. It introduces no new concept: "canonical" is just the name for the
+relationship step 6 tests.
+
+#### What holds it
+
+The implementation must be checked against **every store the three audit rounds
+constructed**, not against a new fixture set — specifically round 1's fail-open,
+round 2's over-fire, round 3's misfiled voucher, and the two-schema-valid-duplicates
+case that has been present since `8e5c2e5`. Round 3's Breaker enumerated 4,864
+stores over this state space; the rule must be evaluated against that enumeration.
+
+**If any case in that enumeration comes out wrong under this rule, the rule is
+wrong.** Report it and stop — do not add a fourth exception. A rule that needs an
+exception to survive its own state space is the thing this decision was written to
+replace.
+
 ---
 
 ## 2. Requirements
