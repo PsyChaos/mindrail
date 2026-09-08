@@ -403,3 +403,176 @@ func TestManyDeclinedRecordsAreBoundedAndCountedAsDeclinedRecords(t *testing.T) 
 		t.Errorf("15 declined records produced %d remedies: %q", len(got.NextAction), got.NextAction)
 	}
 }
+
+// TestTheDeclinedReadingDoesNotSayTheFileWasRead is the inversion of decision
+// D-51, caught by the third audit round.
+//
+// D-51 exists because the old reading said "unreadable" about a file that reads.
+// The reading that replaced it said "The file is readable", which is a claim
+// about the same file made with the same confidence and just as unfounded:
+// PATH_ESCAPES_ROOT is decided by resolving the path, and loader.recordFile
+// returns it before anything is opened. A link pointing at a target that has been
+// deleted, or that nobody may open, produces this exact reading — and the
+// reading told its reader the file reads fine and that what it holds is the
+// problem.
+//
+// The words are checked in both directions because either one alone passes on a
+// reading that says nothing at all.
+func TestTheDeclinedReadingDoesNotSayTheFileWasRead(t *testing.T) {
+	subject := healthySubject()
+	subject.Knowledge.Problems = []loader.Problem{
+		declinedRecord(loader.StoreRoot + "/decisions/DEC-0002.json"),
+	}
+
+	got := KnowledgeCheck(subject).Run(t.Context())
+	assertDiagnosable(t, got)
+
+	whole := strings.Join(append([]string{got.Summary, got.Diagnostic, got.Impact}, got.NextAction...), "\n")
+	// "readable" also catches "unreadable", which assertSaysNothingAboutAReadFailure
+	// checks; what is new here is the positive claim.
+	for _, claim := range []string{"readable", "what it holds", "what they hold"} {
+		if strings.Contains(whole, claim) {
+			t.Errorf("the reading says %q about a file this run never opened:\n%s", claim, whole)
+		}
+	}
+	if !strings.Contains(got.Diagnostic, "not opened") {
+		t.Errorf("the reading does not say what actually happened to the file:\n%s", got.Diagnostic)
+	}
+}
+
+// TestTheDeclinedImpactAgreesWithItsOwnSubject reads the field nothing in this
+// suite read.
+//
+// Impact is published verbatim by `doctor --json`. When decision D-51's branch
+// pluralised the sentence's subject its verbs stayed singular, so every store
+// with two or more declined records printed "The declined records carries no
+// decision ... so whatever they records is not in force here" — a sentence that
+// does not parse, in a field no assertion touched.
+//
+// Both sentences are matched whole rather than probed for words. A test that
+// asked whether the impact "mentions the decline" would have passed on the
+// broken sentence, which is how it survived two remediations.
+func TestTheDeclinedImpactAgreesWithItsOwnSubject(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		count int
+		want  string
+	}{
+		{
+			name:  "one declined record",
+			count: 1,
+			want: "The declined record carries no decision and no invariant into this repository, " +
+				"so whatever it records is not in force here; the rest of the store is unaffected.",
+		},
+		{
+			name:  "two declined records",
+			count: 2,
+			want: "The declined records carry no decision and no invariant into this repository, " +
+				"so whatever they record is not in force here; the rest of the store is unaffected.",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			problems := make([]loader.Problem, 0, tt.count)
+			for i := 1; i <= tt.count; i++ {
+				problems = append(problems, declinedRecord(fmt.Sprintf("%s/decisions/DEC-%05d.json", loader.StoreRoot, i)))
+			}
+
+			subject := healthySubject()
+			subject.Knowledge.Problems = problems
+
+			got := KnowledgeCheck(subject).Run(t.Context())
+			assertDiagnosable(t, got)
+
+			if got.Impact != tt.want {
+				t.Errorf("the impact reads\n\t%q\nand should read\n\t%q", got.Impact, tt.want)
+			}
+		})
+	}
+}
+
+// TestAMixedDegradedSetBelowAFatalReadingNamesBothCounts covers alsoHeading's
+// third arm, which was a mutation survivor: the sentence that introduces a
+// degraded set holding both classes under a reading the ladder gave to something
+// else had no test at all, so replacing it with either homogeneous sentence left
+// every package green.
+//
+// The heading is the only place those records are counted on this reading. A
+// fatal loader problem owns the summary, the code and the impact (D-44), so a
+// heading that called two declined links unreadable would be the reader's only
+// account of them and would be wrong about half of it.
+func TestAMixedDegradedSetBelowAFatalReadingNamesBothCounts(t *testing.T) {
+	subject := healthySubject()
+	subject.Knowledge.Problems = []loader.Problem{
+		unreadableRecord(loader.StoreRoot+"/decisions/FAT-00001.json", true),
+		unreadableRecord(loader.StoreRoot+"/decisions/DEG-00001.json", false),
+		declinedRecord(loader.StoreRoot + "/decisions/DEC-00001.json"),
+		declinedRecord(loader.StoreRoot + "/decisions/DEC-00002.json"),
+	}
+
+	got := KnowledgeCheck(subject).Run(t.Context())
+	assertDiagnosable(t, got)
+
+	if got.Code != app.CodeKnowledgeSchemaUnsupported {
+		t.Fatalf("this store does not exercise the fatal reading: code = %q", got.Code)
+	}
+
+	want := "The loader could not read 1 further record, and Mindrail declined 2 more that resolve outside the repository root:"
+	if !strings.Contains(got.Diagnostic, want) {
+		t.Errorf("the degraded block is introduced as something other than what it holds; want\n\t%q\ngot\n%s",
+			want, got.Diagnostic)
+	}
+}
+
+// TestAMixedDegradedTailDoesNotFileOneClassUnderTheOthersWords is the pair of
+// tails that count what a bounded reading did not print.
+//
+// Both were written for a homogeneous set and fall through to the unreadable
+// wording for a mixed one. On a store of fourteen degraded records the reading
+// printed ten accounts naming each record in its own class's words, then closed
+// them with "... and 4 further unreadable records" and "Fix or remove the
+// remaining 4 unreadable records" — of which two are links that were never
+// opened and have nothing in them to fix. The reader is told to edit a file
+// whose contents are not the problem, one line below ten sentences that say so.
+//
+// The records alternate so that the tail of the list is mixed too. A test whose
+// first ten entries were one class and whose tail was the other would exercise
+// the homogeneous arms twice and this defect not at all.
+func TestAMixedDegradedTailDoesNotFileOneClassUnderTheOthersWords(t *testing.T) {
+	const total = 14
+
+	problems := make([]loader.Problem, 0, total)
+	for i := 1; i <= total; i++ {
+		path := fmt.Sprintf("%s/decisions/DEC-%05d.json", loader.StoreRoot, i)
+		if i%2 == 0 {
+			problems = append(problems, declinedRecord(path))
+			continue
+		}
+		problems = append(problems, unreadableRecord(path, false))
+	}
+
+	subject := healthySubject()
+	subject.Knowledge.Problems = problems
+
+	got := KnowledgeCheck(subject).Run(t.Context())
+	assertDiagnosable(t, got)
+
+	omitted, printed := omissionIn(t, got)
+	if !printed {
+		t.Fatalf("%d degraded records printed no omission tail:\n%s", total, got.Diagnostic)
+	}
+	if omitted.noun != "unreadable or declined records" {
+		t.Errorf("the omission tail counts %q, and the set it counts is not all of that", omitted.noun)
+	}
+	if shown := accountsIn(got); shown+omitted.count != total {
+		t.Errorf("the reading accounts for %d + %d = %d records; the store holds %d",
+			shown, omitted.count, shown+omitted.count, total)
+	}
+
+	remedyTail := got.NextAction[len(got.NextAction)-1]
+	if !strings.Contains(remedyTail, "unreadable") {
+		t.Errorf("the remedy tail says nothing about the records that could not be read: %q", remedyTail)
+	}
+	if !strings.Contains(remedyTail, "outside the repository root") {
+		t.Errorf("the remedy tail tells the reader to fix links that were never opened: %q", remedyTail)
+	}
+}

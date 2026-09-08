@@ -984,14 +984,27 @@ func allEscapeRoot(problems []loader.Problem) bool {
 //
 // A set that is homogeneously escaping is not a set of records this binary could
 // not read, and "... and 5 further unreadable records" said about five files
-// that all read perfectly is the same false statement the KNOWLEDGE_UNREADABLE
-// code was making about them (decision D-51). A mixed set keeps the unreadable
-// noun for the same reason the mixed reading keeps the unreadable code.
+// that were never opened is the same false statement the KNOWLEDGE_UNREADABLE
+// code was making about them (decision D-51).
+//
+// A mixed set gets a third noun rather than borrowing one of the two. Borrowing
+// the unreadable one is what the mixed reading does with the *code*, and that is
+// sound because the code has to be a single value and KNOWLEDGE_UNREADABLE is
+// wrong about none of the set — but a noun is not a code. It appears in a
+// counting sentence directly below an impact that has just split the same set
+// into "N could not be read" and "M resolve outside the repository", so filing
+// all of them under one of those two words makes the reading contradict itself
+// about records the reader can see listed above.
 func recordNouns(problems []loader.Problem) (one, many string) {
-	if allEscapeRoot(problems) {
+	escaping := escapeRootCount(problems)
+	switch {
+	case escaping == 0:
+		return "unreadable record", "unreadable records"
+	case escaping == len(problems):
 		return "record resolving outside the repository", "records resolving outside the repository"
+	default:
+		return "unreadable or declined record", "unreadable or declined records"
 	}
-	return "unreadable record", "unreadable records"
 }
 
 func describeProblems(problems []loader.Problem) string {
@@ -1101,24 +1114,40 @@ func degradedImpact(degraded []loader.Problem) string {
 // property of another package's prose: a fixture carrying a bare message would
 // leave this reading claiming nothing at all about what happened. The per-record
 // accounts follow it, so the file names AC-06.2 requires are still there.
+//
+// It says the file was not opened, and deliberately does not say the file is
+// readable. The two sound alike and only one of them is something this binary
+// knows: PATH_ESCAPES_ROOT is decided by resolving the path, before any read is
+// attempted (loader.recordFile), so a link pointing at a target that does not
+// exist, or that cannot be opened, arrives here exactly like one pointing at a
+// perfect record. Asserting "the file is readable" about that link is the same
+// fabricated claim about a file this run never held that decision D-51 exists to
+// remove, inverted — the reading would be wrong in the other direction and just
+// as confidently.
 func escapingDiagnostic(escaping []loader.Problem) string {
 	n := len(escaping)
 	return fmt.Sprintf(
-		"Mindrail declined to treat %d %s under %s as repository content, because %s outside the repository root. %s readable; %s not this repository's to read.\n",
+		"Mindrail declined to treat %d %s under %s as repository content, because %s outside the repository root. %s not opened at all: what is wrong is where the bytes live, not what they say.\n",
 		n, plural(n, "record", "records"), loader.StoreRoot,
 		plural(n, "it resolves", "they resolve"),
-		plural(n, "The file is", "The files are"),
-		plural(n, "what it holds is", "what they hold is"),
+		plural(n, "The file was", "The files were"),
 	) + describeProblems(escaping)
 }
 
 // escapingImpact says what declining a record costs, which is the record and
 // nothing else (decision D-06). It does not say the record could not be read,
-// because it could.
+// because that is not what happened to it.
+//
+// Both verbs are pluralised with their subject. That is not fussiness: this
+// field is published verbatim in `doctor --json` and shown to a reader, and the
+// subject moved to the plural in the D-51 branch while the verbs stayed
+// singular, so every store with two or more declined records printed a sentence
+// that does not parse. It went unnoticed because no test read this field at all
+// — TestTheDeclinedImpactAgreesWithItsOwnSubject is now the one that does.
 func escapingImpact(n int) string {
-	return fmt.Sprintf("%s carries no decision and no invariant into this repository, so whatever %s records is not in force here; the rest of the store is unaffected.",
-		plural(n, "The declined record", "The declined records"),
-		plural(n, "it", "they"))
+	return fmt.Sprintf("%s no decision and no invariant into this repository, so whatever %s is not in force here; the rest of the store is unaffected.",
+		plural(n, "The declined record carries", "The declined records carry"),
+		plural(n, "it records", "they record"))
 }
 
 // invalidRecordsImpact says what a store of invalid records costs, and does not
@@ -1299,14 +1328,32 @@ func recordRemedy(problem loader.Problem) string {
 // are repaired by upgrading the binary, and counting them into an instruction to
 // fix or remove files would ask the reader to delete records that are merely too
 // new to read.
+//
+// The arms match recordRemedy's, one class at a time, because they are the same
+// instruction addressed to a group. A mixed tail earns both halves: the ten
+// remedies immediately above it were each written in their own record's words,
+// and a tail that told the reader to "fix or remove the remaining 4 unreadable
+// records" when two of them are links that were never opened asks for an edit to
+// a file with nothing in it to edit — which is the exact sentence decision D-51
+// exists to stop this package printing.
 func remainingRecordRemedy(rest []loader.Problem) string {
-	if allEscapeRoot(rest) {
+	escaping := escapeRootCount(rest)
+	unread := len(rest) - escaping
+
+	switch {
+	case escaping == 0:
+		return fmt.Sprintf("Fix or remove the remaining %d unreadable %s under %s.",
+			unread, plural(unread, "record", "records"), loader.StoreRoot)
+	case unread == 0:
 		return fmt.Sprintf("Replace or remove the remaining %d %s under %s that %s outside the repository root.",
-			len(rest), plural(len(rest), "link", "links"), loader.StoreRoot,
-			plural(len(rest), "resolves", "resolve"))
+			escaping, plural(escaping, "link", "links"), loader.StoreRoot,
+			plural(escaping, "resolves", "resolve"))
+	default:
+		return fmt.Sprintf("Fix or remove the remaining %d unreadable %s under %s, and replace or remove the %d %s there that %s outside the repository root.",
+			unread, plural(unread, "record", "records"), loader.StoreRoot,
+			escaping, plural(escaping, "link", "links"),
+			plural(escaping, "resolves", "resolve"))
 	}
-	return fmt.Sprintf("Fix or remove the remaining %d unreadable %s under %s.",
-		len(rest), plural(len(rest), "record", "records"), loader.StoreRoot)
 }
 
 // splitFindings separates the one fatal finding class from the rest, keyed on
