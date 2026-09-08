@@ -1,15 +1,22 @@
 # MR-002 — findings
 
-Two audit rounds over the knowledge validation pipeline, the remediation between
-them, and what the remediation cost. The audit budget for this session was **two
-rounds, then stop regardless**; both are spent, and this document is what they
-produced.
+Three audit rounds over the knowledge validation pipeline, the two remediations
+between them, and what each remediation cost. The session's audit budget was two
+rounds; the user extended it by one after round 2 confirmed a regression the fix
+pass had introduced.
 
 - **Round 1** graded `8e5c2e5` (the implementation) against the requirements frozen
   at `c2e81d1`. 28 proposed, **22 confirmed**, 6 refuted, 0 unsettled.
-- **Remediation** landed as `3bd453c`.
-- **Round 2** graded the remediation. 13 proposed, **11 confirmed**, 2 refuted,
-  0 unsettled. **All eleven were introduced by the remediation.**
+- **Remediation 1** landed as `3bd453c`.
+- **Round 2** graded it. 13 proposed, **11 confirmed**, 2 refuted, 0 unsettled.
+  **All eleven were introduced by the remediation.**
+- **Remediation 2** landed as `8832bfd`.
+- **Round 3** graded it. 17 proposed, **12 confirmed**, 5 refuted, 0 unsettled.
+  Nine were new; three pre-dated it. Appendix D.
+
+**Status: `NOT_VERIFIED`.** One HIGH remains open — the same seam, flipped a third
+time — and it is what decision **D-52** was written to end. The twelve round-3
+findings are unfixed; the next session fixes them under D-52.
 
 ---
 
@@ -350,3 +357,62 @@ Thirteen proposed, eleven confirmed, two refuted, none unsettled. **All eleven w
 
 - **BA-A2** — The new created_at pattern refuses non-UTC RFC 3339 offsets that both readers load as exactly the correct instant, narrowing a shipped v1 schema document beyond D-49's own stated criterion
 - **B-A4** — The new created_at pattern refuses two spellings that both readers load byte-identically while accepting one that does not, so it does not implement the criterion (AC-01.3) that was written to justify it
+
+---
+
+## Appendix D — round 3 findings, as confirmed
+
+Round 3 graded the SECOND remediation (`8832bfd`). Seventeen proposed,
+**twelve confirmed**, five refuted, none unsettled. Nine of the twelve were
+introduced by that remediation; three pre-date it.
+
+The base rate finally moved: this was the first fix pass in the repository whose
+defects are almost all in published prose rather than in a verdict. It restored
+the cost regression (5,000-record `status`: 152 ms at `3bd453c` -> 120 ms, faster
+than the original implementation), weakened containment nowhere across 21 layouts
+and four binaries, and differed from `3bd453c` on exactly four rows of an 88-shape
+upgrade corpus — every one of them a round-2 finding being closed.
+
+| ID | Severity | New in this pass | Where | What |
+|---|---|---|---|---|
+| BA-B1 | HIGH | YES | `internal/knowledge/validate/lineage.go:164-176 (newGraph: `vouched = v` | A misfiled accepted claimant vouches for a node and deletes the canonical record's supersede edge, turning a real fatal cycle into exit 0 |
+| BA-B2 | MEDIUM | NO | `internal/knowledge/validate/lineage.go:160-186 (newGraph unions the su` | The over-fire fix was scoped to schema-invalid duplicates; two schema-VALID records claiming one id still fuse and land a fatal cycle finding with an impossible remedy on an innocent file |
+| B-B1 | MEDIUM | YES | `internal/doctor/checks.go, escapingDiagnostic() and escapingImpact(); ` | D-51's new diagnostic asserts "The file is readable" about records that are not readable and hold nothing — the exact inversion of the defect D-51 exists to remove |
+| RD-01 | LOW | YES | `internal/doctor/checks.go:1052 alsoHeading, the `default:` arm (lines ` | alsoHeading's mixed arm is a green mutation survivor: the sentence that names both degraded classes under a fatal reading has no guard |
+| RD-02 | LOW | YES | `internal/doctor/checks.go:1302 remainingRecordRemedy and internal/doct` | Past the ten-record cap, escaping links are filed under "unreadable records" whenever the tail is mixed, one line below ten remedies in the other class's words |
+| RD-04 | LOW | YES | `internal/knowledge/loader/containment_test.go:605-641` | TestLoadReadsTheEntryInsideTheDirectoryItListed builds no symbolic link at all and passes against a loader that has no fast path |
+| RD-05 | LOW | YES | `internal/knowledge/loader/loader.go:375` | recordFile's `if filepath.Base(name) == name` guard is unfalsifiable: replacing it with `if true` leaves all 18 packages green |
+| BA-B3 | LOW | YES | `internal/knowledge/validate/identity_test.go:418-445, cited by interna` | TestACycleMessageIsTrueOfEveryFileItIsAttachedTo cannot fail for the defect it is named after — it passes verbatim on the pre-fix code and is falsified by a live store on the post-fix binary |
+| BA-B4 | LOW | NO | `internal/cli/agreement_test.go:559-660 and :714-747 (knowledgeConditio` | The seam's contract-layer coverage is one-sided: the over-fire arm gained two CLI rows, the fail-open arm gained none |
+| B-B2 | LOW | NO | `internal/knowledge/loader/loader.go, recordFile() fast path (os.Lstat(` | The loader's containment check is not TOCTOU-safe, contrary to the explicit guarantee restated in recordFile's new comment — measured: 40 out-of-worktree records ingested by rem2 |
+| B-B3 | LOW | YES | `internal/doctor/checks.go, escapingImpact(): the verbs "carries" and "` | escapingImpact publishes a subject-verb-disagreeing sentence for every degraded set of two or more declined records, and no test in the suite reads that field |
+| B-B4 | LOW | YES | `internal/doctor/checks.go, recordNouns() and remainingRecordRemedy() —` | A mixed degraded set produces a reading that contradicts itself: its impact counts N escaping records and its omission tail and remedy tail then call those same records unreadable |
+
+### Refuted in round 3, with produced evidence
+
+- **RD-03** — D-51's stated ground for leaving the new remedies classUnknown is false: an exit-1 error object carries the sentence
+- **RD-06** — TestACycleMessageIsTrueOfEveryFileItIsAttachedTo cannot exercise the fusion its doc-comment and a production comment both say it holds
+- **RD-07** — Step 8's new "was read and carries id X instead" condition is a new published failure condition with no row in the agreement matrix or the broken-setup matrix
+- **BA-B5** — Step 8 stays silent about a supersede pointing at a record D-51 says is not repository content, on a warrant D-51 itself denies
+- **B-B5** — recordFile's `filepath.Base(name) == name` guard is a branch nothing can falsify — the exact shape the second remediation itself reported against its predecessor
+
+### The HIGH, in full
+
+**BA-B1 — A misfiled accepted claimant vouches for a node and deletes the canonical record's supersede edge, turning a real fatal cycle into exit 0**
+
+- Violates: AC-03.6 / D-39 / D-40 — step 9 is the milestone's only fatal check; the round-1 defect this remediation's predecessor closed was 'one unknown JSON property on one member of a supersede cycle deleted the cycle'. mr-002-findings.md §'The fail-open'.
+- Location: `internal/knowledge/validate/lineage.go:164-176 (newGraph: `vouched = vouched || s.schemaValid` at :166 and `if vouched && !s.schemaValid { continue }` at :171)`
+- Expected: A store containing decisions/DEC-0001.json (schema-valid, id DEC-0001, supersedes DEC-0002) and decisions/DEC-0002.json (id DEC-0002, supersedes DEC-0001) holds a supersede cycle that a reader can trace file-to-file, each file named for the id it declares. Adding a third file that declares no `supersedes` at all must not change that verdict. Reporting must stay exit 1 / BLOCKED / KNOWLEDGE_SUPERSEDE_CYCLE.
+- Actual: The third file — decisions/DEC-0009.json, schema-valid, carrying id "DEC-0002", no `supersedes`, and itself reported by step 6 as misfiled — makes `vouched[{decision,DEC-0002}]` true. DEC-0002.json's edge DEC-0002 -> DEC-0001 is dropped, the cycle disappears, and the run reports exit 0 / DEGRADED / KNOWLEDGE_INVALID with two findings (step 5 on DEC-0002.json, step 6 on DEC-0009.json). The vouching record is the one step 6 has just said does not belong at that path; the record it silences is the one that does.
+- Control arm: Two files only — decisions/DEC-0001.json {id DEC-0001, supersedes ["DEC-0002"]}, decisions/DEC-0002.json {id DEC-0002, supersedes ["DEC-0001"], plus an unknown property "bogus"}. `mindrail status --json`: 3bd453c exit 1, readiness BLOCKED, findings 2; 8832bfd exit 1, readiness BLOCKED, findings 2. Both correct.
+- Scenario arm: The same two files plus decisions/DEC-0009.json {schema_version 1, kind decision, id "DEC-0002", status "superseded", created_at 2026-01-01T00:00:00Z, title, decision — and NO supersedes property}. `mindrail status --json`: 3bd453c exit 1, readiness BLOCKED, findings 4; 8832bfd **exit 0, readiness DEGRADED, findings 2**, knowledge code KNOWLEDGE_INVALID. Measured twice, on separate freshly-`init`-ed repositories.
+- Class sweep: Exhaustive over the 4,864-store space of 2- or 3-file decision stores (file names from {DEC-0001,DEC-0002,DEC-0003}.json, declared ids from {DEC-0001,DEC-0002}, supersedes any subset of {DEC-0001,DEC-0002}, each file schema-valid or carrying an unknown property). Oracle: a cycle traceable file-to-file among files whose name equals their declared id, with at least one schema-valid file on it — 1,169 such stores. 3bd453c misses **0**; 8832bfd misses **4**. All four were then re-run on the real binaries and every one reproduced exactly (impl exit 0, rem1 exit 1 BLOCKED KNOWLEDGE_SUPERSEDE_CYCLE, rem2 exit 0 DEGRADED KNOWLEDGE_INVALID). A random 400-store sample driven through both real binaries showed 38 stores where rem1 reports a cycle and rem2 does not, and 0 in the other direction. The same defect also fires with three claimants including a loader-unreadable one (case 10).
+
+
+This finding is what **decision D-52** in
+[mr-002-requirements.md](mr-002-requirements.md) §1 was written to end. D-52
+replaces the case-by-case rules the first two remediations patched in, and it was
+reviewed adversarially by a second model before implementation — that review
+found the decision as first written governed only who *supplies* graph edges and
+was silent about who *receives* a finding, which on this very store reproduces
+round 2's defect through a different door. Rule 4 is that review's amendment.
