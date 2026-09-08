@@ -931,8 +931,8 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1788892670.208696,
-    "ast_hash": "",
+    "seen": 1788897200.9719045,
+    "ast_hash": "4a2c9badbdc3871cb223878711a614db",
     "semantic_hash": ""
   },
   "internal/cli/representable.go": {
@@ -1230,9 +1230,9 @@
     "semantic_hash": ""
   },
   "docs/engineering/mr-002-requirements.md": {
-    "mtime": 1788892179.7341902,
-    "seen": 1788892670.208727,
-    "ast_hash": "a7e2b3685f101d1cf2bd3fae3585e79b",
+    "mtime": 1788897709.5758154,
+    "seen": 1788897718.0725527,
+    "ast_hash": "a9f087746b5e828d8f8d77dd9fa93ca4",
     "semantic_hash": ""
   },
   "internal/knowledge/schema/validator.go": {
