@@ -501,14 +501,22 @@ most one record can be canonical for any id.**
    id names — **whether or not step 5 accepted it.** A record's claim about *what it
    supersedes* is read from its own bytes, and a schema violation elsewhere in the
    document does not make that field a lie. This is round 1's case.
+   A record is canonical for the id it carries when **its own file name spells that
+   id** — step 6's id half, `ref.ID == idFromPath(ref.Path)`; a record merely sitting
+   at `X.json` while carrying another id is canonical for nothing.
 2. **A non-canonical claimant never supplies edges to a node it does not own, and
    never removes them.** It is still indexed so `resolves` sees it and step 8 cannot
-   call its file absent, and it still receives its own step-6 finding. This is
-   rounds 2 and 3, which are the same case seen from two sides.
+   call its file absent, and — when step 5 accepted it (D-40) — it still receives its
+   own step-6 finding. This is rounds 2 and 3, which are the same case seen from two
+   sides.
 3. **An id with no canonical record supplies no edges at all.** Nothing in the store
    establishes which record that id is, so no cycle verdict may be built on it.
    Step 6 already tells the reader, on every claimant, that the file name and the id
    disagree; once they fix that, a canonical record exists and rule 1 applies.
+4. **Ownership governs reporting as it governs edges.** A step-9 or step-10 finding
+   for node `X` attaches only to `X`'s canonical record, and only when step 5 accepted
+   it. **A non-canonical claimant is never named in a verdict about a node it does not
+   own.**
 
 Rule 3 is deliberately the conservative arm. A genuine cycle among wholly misfiled
 records is reported in two steps rather than one — first "these files are misfiled",
@@ -534,10 +542,37 @@ round 2's over-fire, round 3's misfiled voucher, and the two-schema-valid-duplic
 case that has been present since `8e5c2e5`. Round 3's Breaker enumerated 4,864
 stores over this state space; the rule must be evaluated against that enumeration.
 
+Two stores must be in the test set by name, because they are where the rule was
+nearly wrong:
+
+- **Round 3's own store** — a step-5-rejected canonical `DEC-0001.json` superseding
+  `DEC-0002`, a valid `DEC-0002.json` superseding `DEC-0001`, and a fully valid
+  `DEC-0009.json` carrying id `DEC-0001`. Rules 1 and 2 restore the cycle; **rule 4
+  is what stops the fatal finding landing on `DEC-0009.json`**, whose bytes assert no
+  supersede at all and which cannot perform the remedy. Assert both halves: the cycle
+  is reported, and `DEC-0009.json` is named in no step-9 finding.
+- **Two misfiled records forming a true cycle** — rule 3's cost, stated end to end.
+  The store reports two step-6 findings and no cycle at exit 0; after the reader
+  renames both files, the same store reports the cycle as fatal. Assert the two-step
+  path, not just the first step, so nobody later reads the exit 0 as a clean bill.
+
 **If any case in that enumeration comes out wrong under this rule, the rule is
-wrong.** Report it and stop — do not add a fourth exception. A rule that needs an
+wrong.** Report it and stop — do not add a fifth exception. A rule that needs an
 exception to survive its own state space is the thing this decision was written to
 replace.
+
+#### Review
+
+This decision was reviewed adversarially by a second model before implementation
+began, against the four known cases and constructed attacks. It returned
+`SOUND_WITH_AMENDMENTS`: the ownership criterion survived every attack on the **edge**
+side, but the decision as first written governed only who *supplies* edges and was
+silent about who *receives* a finding — and on round 3's own store that silence
+reproduced round 2's defect through a different door. Rule 4 and the canonical
+definition in rule 1 are that review's amendments; the `(D-40)` qualification in
+rule 2 closes a contradiction it found between rule 2's unqualified step-6 clause and
+D-40's letter. The review also endorsed rule 3's trade after arguing both sides, and
+asked for the second store above.
 
 ---
 
