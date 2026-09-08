@@ -206,7 +206,7 @@ func TestEveryRecordTheConstructorsProduceSurvivesTheWholePipeline(t *testing.T)
 		t.Fatalf("Supersede: %v", err)
 	}
 
-	bareInvariant, err := record.NewInvariant("INV-0001", createdAt, "", "The first thing stays true.",
+	bareInvariant, err := record.NewInvariant("INV-0001", createdAt, "The first thing stays true.",
 		record.WithSeverity(record.SeverityHigh),
 		record.WithScope(record.Scope{Level: record.ScopeProject}),
 	)
@@ -220,7 +220,7 @@ func TestEveryRecordTheConstructorsProduceSurvivesTheWholePipeline(t *testing.T)
 	// constructors.
 	bareInvariant.Status = record.StatusSuperseded
 
-	fullInvariant, err := record.NewInvariant("INV-0002", createdAt, "", "The second thing stays true.",
+	fullInvariant, err := record.NewInvariant("INV-0002", createdAt, "The second thing stays true.",
 		record.WithSeverity(record.SeverityCritical),
 		record.WithScope(record.Scope{Level: record.ScopeModule, Target: "internal/knowledge"}),
 		record.WithRationale("Why violating the statement is harmful."),

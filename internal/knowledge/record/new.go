@@ -93,19 +93,19 @@ func NewDecision(id string, at time.Time, title, decision string, opts ...Option
 
 // NewInvariant builds an active Invariant record (spec §54).
 //
-// The signature is the frozen one (design §3, AC-01.2) and its third parameter
-// is a problem the schema settles rather than the implementer: invariant.v1
-// declares no "title" property and sets additionalProperties:false, so there is
-// nowhere for a title to go. Inventing the field would make every record this
-// constructor produced invalid, and dropping the argument would lose the
-// caller's data in silence. So a non-empty title is refused with
-// ErrInvariantHasNoTitle, and the record's prose is the fourth parameter, which
-// becomes "statement".
-//
-// The honest signature is NewInvariant(id string, at time.Time, statement
-// string, opts ...Option). Changing it is not this task's to do — AC-01.2
-// freezes the four-parameter form and an audit grades against it — so the
-// change is recorded as owed rather than taken.
+// The third parameter is "statement", and there is no "title" parameter, which
+// is a change to the signature AC-01.2 originally froze. The reason is that the
+// frozen form contradicted the frozen document beside it. AC-01.1 says the
+// Invariant mirrors invariant.v1.schema.json; that document declares no "title"
+// property and sets additionalProperties:false, so a title has nowhere to go.
+// The first implementation resolved the contradiction by accepting the
+// parameter and then refusing every value it could hold except "", which left a
+// published constructor carrying an argument that could never be anything —
+// zero bits of information, and a compiler-enforced lie about what the caller
+// may supply. Both halves of AC-01.2 could not stand, and the half derived from
+// the schema document wins, because D-36 makes the document the contract.
+// AC-01.2 in docs/engineering/mr-002-requirements.md was amended to match, and
+// the amendment says so in its own words rather than silently.
 //
 // The rejection order matches NewDecision's: refused options first, then the
 // parameters in declaration order, then the option values.
@@ -115,7 +115,7 @@ func NewDecision(id string, at time.Time, title, decision string, opts ...Option
 // is an error rather than a default. Defaulting a severity would have this
 // constructor decide how hard validation pushes back on a change (spec §51),
 // which is the author's judgement and not a writer's.
-func NewInvariant(id string, at time.Time, title, statement string, opts ...Option) (Invariant, error) {
+func NewInvariant(id string, at time.Time, statement string, opts ...Option) (Invariant, error) {
 	settings, err := newBuilder(KindInvariant, opts)
 	if err != nil {
 		return Invariant{}, err
@@ -127,9 +127,6 @@ func NewInvariant(id string, at time.Time, title, statement string, opts ...Opti
 	createdAt, err := stampedTime(at)
 	if err != nil {
 		return Invariant{}, err
-	}
-	if title != "" {
-		return Invariant{}, fmt.Errorf("%w: %q — pass it as the statement instead", ErrInvariantHasNoTitle, title)
 	}
 	if statement == "" {
 		return Invariant{}, &EmptyFieldError{Property: "statement"}

@@ -35,11 +35,20 @@
 // has just said are wrong; every *other* record still is. A reader fixing their
 // knowledge store sees every problem in one run rather than one per run.
 //
+// D-40 governs who is reported, not what the store is. The cross-record steps
+// see every record the loader read, valid or not, because a record that breaks
+// its schema still declares which record it supersedes — and a graph built only
+// from the survivors answers a valid record's question wrongly. That was the
+// root defect of MR-002's audit: one unknown JSON property on one member of a
+// supersede cycle deleted the cycle, turning the milestone's only fatal check
+// off. What the rejected record does not get is a finding of its own.
+//
 // The cross-record steps reason only over records the loader actually read
 // (decision D-45). Where a loader Problem names the file a referenced id would
 // occupy, the reference is unverifiable and no finding is emitted for it: the
 // record exists, this binary could not read it, and publishing "it does not
 // exist" would be a fabricated claim about a file the loader has already named.
+// A file this binary read and rejected is named by that same argument.
 package validate
 
 import (
@@ -118,12 +127,27 @@ type ordered struct {
 // subject is one record the loader read, together with the fields the steps
 // after 5 need out of its body.
 //
-// The body is decoded once, after step 5 has passed, rather than per step: six
-// steps read the same handful of properties, and decoding per step would let
-// two of them disagree about what the record says.
+// The body is decoded once rather than per step: six steps read the same handful
+// of properties, and decoding per step would let two of them disagree about what
+// the record says.
 type subject struct {
 	ref loader.RecordRef
 	doc document
+	// doc is either the record's whole document or the zero value, and never
+	// something in between. That invariant is what lets every reader below treat
+	// an absent "supersedes" as "this record supersedes nothing" rather than as
+	// "this record's supersedes could not be read": encoding/json fills a struct
+	// as it goes and returns an error on the first member it cannot convert, so
+	// ["DEC-0002", 5] decodes to ["DEC-0002", ""] *and* fails — and an edge read
+	// out of that is one the repository never wrote.
+	// schemaValid says whether step 5 accepted the record, and therefore whether
+	// decision D-40 lets steps 6-11 attach a finding to it.
+	//
+	// It is not the same question as whether the body decoded, and the two are
+	// deliberately not one flag: this one decides who gets *reported*, and doc
+	// above decides what the store *is*. A record that breaks its schema still
+	// declares which record it supersedes.
+	schemaValid bool
 }
 
 // document is the part of a record this pipeline reads.
@@ -174,19 +198,42 @@ func Check(store loader.Store, v *schema.Validator) []Finding {
 	// have to add one, and TestCheckOverAnAbsentStoreFindsNothing is what refuses
 	// it.
 	records := readRecords(store)
-	problems := problemPaths(store)
+	named := filesTheLoaderNamed(store)
 
 	found := make([]ordered, 0, 8)
 
 	// Step 5, and the gate that decides who is asked the rest. A record whose
 	// schema the document rejects is not asked steps 6-11, because those steps
 	// read fields step 5 has just said are wrong; the records beside it are.
+	//
+	// The gate governs who is *reported*, and nothing else. Every record the
+	// loader read is decoded and enters the graph below, valid or not, because
+	// the cross-record steps have to answer questions about the store as it is:
+	// D-40's own words are that a rejected record is not asked steps 6-11 but
+	// "every *other* record still is", and a record whose neighbour was deleted
+	// from the graph is not being asked, it is being answered wrongly.
+	all := make([]*subject, 0, len(records))
 	judged := make([]*subject, 0, len(records))
 	for i := range records {
 		s := &records[i]
+		all = append(all, s)
 
-		if schemaFindings := stepSchema(s, v); len(schemaFindings) > 0 {
-			found = append(found, schemaFindings...)
+		schemaFindings := stepSchema(s, v)
+		found = append(found, schemaFindings...)
+
+		// Decoded into a local and adopted only on success, so that a decode
+		// which fails half way through leaves s.doc zero rather than partly
+		// populated. Unmarshalling straight into s.doc would draw a real
+		// supersede edge out of the first element of an array the schema
+		// rejected — see subject.doc, and
+		// TestASchemaInvalidRecordDoesNotManufactureAFinding's row for it.
+		var doc document
+		err := json.Unmarshal(s.ref.Body, &doc)
+		if err == nil {
+			s.doc = doc
+		}
+
+		if len(schemaFindings) > 0 {
 			continue
 		}
 
@@ -195,7 +242,7 @@ func Check(store loader.Store, v *schema.Validator) []Finding {
 		// handled rather than ignored because the alternative is dropping a
 		// record from steps 6-11 in silence, which is the same fabricated pass
 		// the nil-validator panic above refuses.
-		if err := json.Unmarshal(s.ref.Body, &s.doc); err != nil {
+		if err != nil {
 			found = append(found, ordered{finding: Finding{
 				Path:    s.ref.Path,
 				ID:      s.ref.ID,
@@ -206,18 +253,20 @@ func Check(store loader.Store, v *schema.Validator) []Finding {
 			continue
 		}
 
+		s.schemaValid = true
 		judged = append(judged, s)
 	}
 
-	// The lineage graph every cross-record step reads. It is built once, from
-	// the records that were read and passed step 5, and its edges point only at
-	// ids that resolve to such a record — which is decision D-45 expressed as a
-	// data structure rather than as a condition each step has to remember.
-	lineages := newGraph(judged)
+	// The lineage graph every cross-record step reads. It is built once, over
+	// every record the loader read, and its edges point only at ids that resolve
+	// to such a record — so a chain through an id the loader could not read
+	// still closes nothing, which is decision D-45 expressed as a data structure
+	// rather than as a condition each step has to remember.
+	lineages := newGraph(all)
 
 	found = append(found, stepFilenameConsistency(judged)...)
 	found = append(found, stepUniqueID(judged)...)
-	found = append(found, stepSupersedeTarget(judged, lineages, problems)...)
+	found = append(found, stepSupersedeTarget(judged, lineages, named)...)
 	found = append(found, stepSupersedeCycle(lineages)...)
 	found = append(found, stepDuplicateActiveLineage(lineages)...)
 	found = append(found, stepScopeSyntax(judged)...)
@@ -240,15 +289,34 @@ func readRecords(store loader.Store) []subject {
 	return records
 }
 
-// problemPaths indexes the files the loader could not read.
+// filesTheLoaderNamed indexes every knowledge file this run has an account of:
+// the ones it read, and the ones it recorded a Problem for.
 //
-// It is the input to decision D-45's suppression: a referenced id whose expected
-// file is in this set is unverifiable, because the record exists and this binary
-// could not read it. The loader spells Problem.Path repo-relative with forward
-// slashes, which is the same spelling expectedPath builds, so the two are
-// directly comparable.
-func problemPaths(store loader.Store) map[string]struct{} {
-	paths := make(map[string]struct{}, len(store.Problems))
+// It is step 8's suppression set, and both halves say the same thing for the
+// same reason — the file is there, and this report already names it, so
+// publishing "it does not exist" about it would be a fabricated claim:
+//
+//   - A Problem means the record exists and this binary could not read it. That
+//     is decision D-45 in its plainest form, and the loader has already named
+//     the file in its own voice.
+//   - A read record means this binary opened the file and has its bytes. If it
+//     is also invalid, the same report carries a step-5 finding against that
+//     exact path telling the reader to correct it — and a report that says
+//     "correct this file" one line above "this file is not there" is telling the
+//     reader to do two contradictory things about one file.
+//
+// The loader spells Problem.Path and RecordRef.Path repo-relative with forward
+// slashes, which is the spelling expectedPath builds, so all three are directly
+// comparable — TestTheExpectedPathIsTheOneTheLoaderProduces is what keeps them
+// that way.
+func filesTheLoaderNamed(store loader.Store) map[string]struct{} {
+	paths := make(map[string]struct{}, store.Count()+len(store.Problems))
+	for _, ref := range store.Decisions {
+		paths[ref.Path] = struct{}{}
+	}
+	for _, ref := range store.Invariants {
+		paths[ref.Path] = struct{}{}
+	}
 	for _, problem := range store.Problems {
 		paths[problem.Path] = struct{}{}
 	}

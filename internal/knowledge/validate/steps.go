@@ -10,6 +10,36 @@ import (
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
 )
 
+// maxNamedRecords bounds how many sibling records one message lists by name.
+//
+// It is internal/doctor's recordRemedies cap, for the same reason and with the
+// same "the remaining N" tail: a store with more broken records than this has a
+// systemic problem, and a next_action longer than a screen is one nobody reads.
+//
+// It is also what keeps three steps linear. Steps 7, 9 and 10 each attach a
+// message to every member of a group and name that member's siblings in it, so
+// an uncapped list costs O(n) bytes per record and O(n^2) for the group. That is
+// not a theoretical bound: 1000 records in one lineage produced 56 MB of message
+// text and 2000 produced 224 MB, against a 150 ms p95 SLO for `mindrail status`.
+const maxNamedRecords = 10
+
+// nameList renders a group's members for a message: the first maxNamedRecords of
+// them, and a count of the rest.
+//
+// total is passed rather than taken from len(shown) because a caller that has
+// already bounded its slice — step 7 walks a sorted list and stops early — still
+// has to say how many records it did not name. A message that silently listed
+// ten of a hundred would be worse than one that listed all hundred.
+func nameList(shown []string, total int) string {
+	if len(shown) > maxNamedRecords {
+		shown = shown[:maxNamedRecords]
+	}
+	if remaining := total - len(shown); remaining > 0 {
+		return fmt.Sprintf("%s and the remaining %d", strings.Join(shown, ", "), remaining)
+	}
+	return strings.Join(shown, ", ")
+}
+
 // invalid builds the finding every step but 9 produces. Sharing the constructor
 // is what keeps the code and the fatality of a finding a property of its step
 // rather than of whoever wrote the step: decision D-39 says only a supersede
@@ -126,15 +156,24 @@ func stepUniqueID(subjects []*subject) []ordered {
 		slices.Sort(paths)
 
 		for _, s := range group {
-			others := make([]string, 0, len(paths)-1)
+			// Bounded rather than filtered: paths is sorted, so taking the first
+			// maxNamedRecords entries that are not this record's own is the same
+			// prefix the full list would have produced, at a cost that does not
+			// grow with the group. A hundred files under one id would otherwise
+			// cost a hundred messages of a hundred paths each.
+			others := make([]string, 0, maxNamedRecords)
 			for _, other := range paths {
-				if other != s.ref.Path {
-					others = append(others, other)
+				if other == s.ref.Path {
+					continue
+				}
+				others = append(others, other)
+				if len(others) == maxNamedRecords {
+					break
 				}
 			}
 			found = append(found, invalid(s, StepUniqueID, fmt.Sprintf(
 				"%s carries id %q, which is also carried by %s; an id names one record",
-				s.ref.Path, id, strings.Join(others, ", "))))
+				s.ref.Path, id, nameList(others, len(paths)-1))))
 		}
 	}
 	return found
@@ -143,13 +182,28 @@ func stepUniqueID(subjects []*subject) []ordered {
 // stepSupersedeTarget is spec §95 step 8: every id in "supersedes" names a
 // record that exists.
 //
-// Decision D-45 lives here in its plainest form. When the loader recorded a
-// Problem for the file the referenced id would occupy, the record exists and
-// this binary could not read it — reporting "it does not exist" would be a
-// fabricated claim, and it would give one condition two diagnoses when the
-// loader has already named that file. The expected file for id X of kind k is
-// exactly what step 6 requires, so the mapping is not a guess.
-func stepSupersedeTarget(subjects []*subject, lineages *graph, problems map[string]struct{}) []ordered {
+// Decision D-45 lives here in its plainest form, and this step publishes "there
+// is no such record" only when nothing in this run knows of the file:
+//
+//   - The id resolves to a record the graph holds. That record was read. It may
+//     also have failed step 5, and then the same report names it in a step-5
+//     finding — which is the report telling the reader to correct a file it has
+//     just called absent. This is the second half of MR-002's root defect, and
+//     it is why the graph holds every record read rather than every record that
+//     survived step 5.
+//   - The file the id would occupy is one the loader named, either as a record
+//     it read or as a Problem it could not. Either way the file is there.
+//
+// The two conditions are not redundant. A record carrying id DEC-0001 may live
+// at decisions/DEC-0009.json — step 6's condition — so it resolves without its
+// expected path having been read; and a record at decisions/DEC-0001.json whose
+// own id property is missing or not a string carries no id at all, so its file
+// was read without anything resolving. Dropping either check publishes "it is
+// not there" about a file this run has in its hands.
+//
+// The expected file for id X of kind k is exactly what step 6 requires, so the
+// mapping is not a guess.
+func stepSupersedeTarget(subjects []*subject, lineages *graph, named map[string]struct{}) []ordered {
 	found := make([]ordered, 0, 1)
 	for _, s := range subjects {
 		for _, target := range s.doc.Supersedes {
@@ -164,7 +218,7 @@ func stepSupersedeTarget(subjects []*subject, lineages *graph, problems map[stri
 				// direction D-45 points.
 				continue
 			}
-			if _, unreadable := problems[expected]; unreadable {
+			if _, accounted := named[expected]; accounted {
 				continue
 			}
 
@@ -188,23 +242,36 @@ func stepSupersedeTarget(subjects []*subject, lineages *graph, problems map[stri
 // only has edges between records that were read, so a chain through an id the
 // loader could not read has no way back and closes nothing.
 //
-// Every member of the cycle is reported, at its own path, carrying the same
-// rotated member list, because breaking the cycle means editing one of them and
-// the reader has to see which ones are on the table.
+// The group is a strongly connected component, not a walk's back edge, and every
+// member of it is named. A record that breaks its schema is a member like any
+// other, because D-39's reason — no lineage has an end, so every answer about
+// which record is current is wrong — does not become less true when a member
+// also has an unknown property. What such a member does not get is a finding
+// against its own path: decision D-40 did not ask it step 9. A group whose every
+// member failed step 5 therefore reports nothing here, and the reader is told to
+// correct those records first; the cycle surfaces the moment they are readable
+// against the schema. That boundary is D-40's, not this step's, and
+// TestAClosedGroupOfOnlyInvalidRecordsIsLeftToStepFive is where it is recorded.
+//
+// Every reported member carries the same member list, because breaking the group
+// means editing one of them and the reader has to see which ones are on the
+// table. The list is built once per group rather than once per member: it is the
+// same string for all of them, and rebuilding it inside the loop is O(n^2) bytes
+// for a lineage this project has already measured at 224 MB.
 func stepSupersedeCycle(lineages *graph) []ordered {
 	found := make([]ordered, 0, 1)
-	for _, cycle := range lineages.cycles() {
-		chain := strings.Join(append(slices.Clone(cycle), cycle[0]), " -> ")
-		for _, id := range cycle {
-			for _, s := range lineages.subjectsFor(id) {
+	for _, group := range lineages.closedGroups() {
+		members := nameList(group, len(group))
+		for _, id := range group {
+			for _, s := range lineages.askedFor(id) {
 				found = append(found, ordered{finding: Finding{
 					Path: s.ref.Path,
 					ID:   s.ref.ID,
 					Step: StepSupersedeCycle,
 					Code: app.CodeKnowledgeSupersedeCycle,
 					Message: fmt.Sprintf(
-						"%s is part of a supersede cycle: %s. A lineage that closes on itself has no newest record, so no answer about which record is current is correct",
-						s.ref.Path, chain),
+						"%s is part of a closed supersede group of %d records: %s. Each of them is reachable from every other by following \"supersedes\", so no lineage among them has a newest record and no answer about which record is current is correct",
+						s.ref.Path, len(group), members),
 					Fatal: true,
 				}})
 			}
@@ -229,13 +296,24 @@ func stepSupersedeCycle(lineages *graph) []ordered {
 // Activity is counted per id rather than per file. Two files carrying one id are
 // step 7's condition and step 7 names both; counting them here as well would
 // give one condition two diagnoses.
+//
+// A record step 5 rejected joins the lineage but is never counted active and
+// never reported. Its "supersedes" is what puts two records in one lineage, and
+// that relation holds whatever else is wrong with it — but "active" is read out
+// of its "status", which is one of the fields step 5 may have just said is
+// wrong, and decision D-40 did not ask it step 10 either way.
+//
+// The member list is built once per lineage rather than once per member, and
+// capped. It is the same string for every finding in the group, and building it
+// inside the loop is what made 1000 records in one lineage cost 56 MB of message
+// text and 2000 cost 224 MB — quadratic, against a 150 ms p95 SLO.
 func stepDuplicateActiveLineage(lineages *graph) []ordered {
 	found := make([]ordered, 0, 1)
 	for _, members := range lineages.lineages() {
 		active := make([]*subject, 0, len(members))
 		activeIDs := 0
 		for _, id := range members {
-			carrying := activeSubjects(lineages.subjectsFor(id))
+			carrying := activeSubjects(lineages.askedFor(id))
 			if len(carrying) == 0 {
 				continue
 			}
@@ -251,11 +329,12 @@ func stepDuplicateActiveLineage(lineages *graph) []ordered {
 			named = append(named, fmt.Sprintf("%s (%s)", s.ref.Path, s.ref.ID))
 		}
 		slices.Sort(named)
+		listed := nameList(named, len(named))
 
 		for _, s := range active {
 			found = append(found, invalid(s, StepDuplicateActiveLineage, fmt.Sprintf(
 				"%s is one of %d active records in a single supersede lineage: %s. A lineage has one current record and the rest carry status %q",
-				s.ref.Path, len(named), strings.Join(named, ", "), record.StatusSuperseded)))
+				s.ref.Path, len(named), listed, record.StatusSuperseded)))
 		}
 	}
 	return found

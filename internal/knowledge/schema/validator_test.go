@@ -2,7 +2,10 @@ package schema_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -103,20 +106,151 @@ func TestValidatorAcceptsARecordThatSatisfiesItsSchema(t *testing.T) {
 // declares the format-assertion vocabulary, and the shipped documents do not:
 // deleting the AssertFormat() call in NewValidator makes created_at accept
 // literally any string, and this test is the only thing that notices.
+//
+// Both rows matter, and the second was added when decision D-49 put a "pattern"
+// beside the "format" on created_at. "yesterday" now breaks both keywords, and
+// this library reports one finding per instance location, so the row below is
+// only still a D-48 witness because it asserts the keyword rather than the
+// existence of a finding — delete AssertFormat() and it reads "/created_at
+// pattern" instead. That is a guard standing on a tie-break, and a tie-break is
+// not a contract. The second row is a date only "format" can refuse: the
+// spelling is canonical, so "pattern" is satisfied, and February's length is
+// something no regular expression knows. It fails if and only if format
+// assertion is on, whatever the reporting order does.
 func TestValidatorAssertsTheDateTimeFormat(t *testing.T) {
-	validator := embeddedValidator(t)
-
-	document := strings.Replace(validDecision, `"created_at":"2026-01-02T03:04:05Z"`, `"created_at":"yesterday"`, 1)
-	if document == validDecision {
-		t.Fatal("fixture rewrite did not fire; the test would have asserted nothing")
+	tests := map[string]struct {
+		stamp string
+		why   string
+	}{
+		"a string that is no kind of timestamp": {
+			stamp: "yesterday",
+			why:   "D-48's original witness; it breaks pattern too, so it asserts the keyword",
+		},
+		"a date the calendar does not have": {
+			stamp: "2026-02-30T00:00:00Z",
+			why:   "canonically spelled, so only format can refuse it — the tie-break-free witness",
+		},
 	}
 
-	findings := validator.Validate(schema.KindDecision, 1, []byte(document))
-	if got := located(findings); !slices.Equal(got, []string{"/created_at format"}) {
-		t.Fatalf("Validate() = %v, want exactly the format finding on /created_at", got)
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			validator := embeddedValidator(t)
+
+			document := strings.Replace(validDecision,
+				`"created_at":"2026-01-02T03:04:05Z"`, `"created_at":"`+tt.stamp+`"`, 1)
+			if document == validDecision {
+				t.Fatal("fixture rewrite did not fire; the test would have asserted nothing")
+			}
+
+			findings := validator.Validate(schema.KindDecision, 1, []byte(document))
+			if got := located(findings); !slices.Equal(got, []string{"/created_at format"}) {
+				t.Fatalf("Validate() = %v, want exactly the format finding on /created_at — %s", got, tt.why)
+			}
+			if !strings.Contains(findings[0].Message, "created_at") {
+				t.Errorf("Validate() message = %q, want it to name the offending field", findings[0].Message)
+			}
+		})
 	}
-	if !strings.Contains(findings[0].Message, "created_at") {
-		t.Errorf("Validate() message = %q, want it to name the offending field", findings[0].Message)
+}
+
+// TestBothDocumentsStateTheSameCreatedAtRule is decision D-49's drift guard,
+// and it exists because a mutation proved it was needed: deleting the pattern
+// from invariant.v1 alone broke nothing, because every other test in this area
+// is written over a decision.
+//
+// It reads the rule out of the shipped documents rather than restating it, for
+// the same reason TestIDPatternsAreTheOnesTheSchemaDocumentsDeclare does — the
+// documents are the contract (D-36), so a test that spelled the pattern out
+// would be a second copy of the thing it is guarding. It asserts only that both
+// documents carry the same non-empty rule, so tightening or loosening it is a
+// one-place edit that this test never obstructs and never sleeps through.
+func TestBothDocumentsStateTheSameCreatedAtRule(t *testing.T) {
+	rules := make(map[string]map[string]string, 2)
+	for _, name := range []string{schema.DecisionSchemaName, schema.InvariantSchemaName} {
+		raw, err := schemas.KnowledgeFS.ReadFile(path.Join(schema.Dir, name))
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		var document struct {
+			Properties struct {
+				CreatedAt map[string]string `json:"created_at"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &document); err != nil {
+			t.Fatalf("decoding %s: %v", name, err)
+		}
+		rules[name] = document.Properties.CreatedAt
+	}
+
+	for name, rule := range rules {
+		if rule["format"] != "date-time" {
+			t.Errorf("%s declares created_at format = %q, want \"date-time\" (D-48 asserts it)", name, rule["format"])
+		}
+		if rule["pattern"] == "" {
+			t.Errorf("%s declares no created_at pattern; D-49 put one there and finding B-05 is reopened without it", name)
+		}
+	}
+
+	decision := rules[schema.DecisionSchemaName]["pattern"]
+	invariant := rules[schema.InvariantSchemaName]["pattern"]
+	if decision != invariant {
+		t.Fatalf("the two documents declare different created_at patterns:\n\t%s: %q\n\t%s: %q",
+			schema.DecisionSchemaName, decision, schema.InvariantSchemaName, invariant)
+	}
+}
+
+// TestValidatorAssertsTheCreatedAtPattern is the other half of the pair above,
+// and it is what makes decision D-49 falsifiable.
+//
+// The pattern is the only thing refusing a timestamp that is a perfectly valid
+// RFC 3339 instant but not the UTC spelling this project persists — "format"
+// accepts every one of these. Removing the pattern from a shipped document
+// would otherwise be silent here and would reopen finding B-05.
+func TestValidatorAssertsTheCreatedAtPattern(t *testing.T) {
+	tests := map[string]string{
+		"a lowercase zone designator":     "2026-01-01T00:00:00z",
+		"a lowercase date-time separator": "2026-01-01t00:00:00Z",
+		"a leap second":                   "2026-12-31T23:59:60Z",
+		"a western offset":                "2026-01-01T00:00:00-05:00",
+		"more precision than Go holds":    "2026-01-01T00:00:00.1234567890123Z",
+	}
+
+	for name, stamp := range tests {
+		t.Run(name, func(t *testing.T) {
+			validator := embeddedValidator(t)
+
+			document := strings.Replace(validDecision,
+				`"created_at":"2026-01-02T03:04:05Z"`, `"created_at":"`+stamp+`"`, 1)
+			if document == validDecision {
+				t.Fatal("fixture rewrite did not fire; the test would have asserted nothing")
+			}
+
+			if got := located(validator.Validate(schema.KindDecision, 1, []byte(document))); !slices.Equal(got, []string{"/created_at pattern"}) {
+				t.Fatalf("Validate() with created_at %q = %v, want exactly the pattern finding on /created_at",
+					stamp, got)
+			}
+		})
+	}
+
+	// The over-fire guard, in the same test so it cannot be deleted separately:
+	// the two offsets that denote UTC are not the spelling the writer emits, but
+	// they are the same instant, and a pattern that refused them would take down
+	// every repository whose records came from an ISO-8601 library.
+	for name, stamp := range map[string]string{
+		"the canonical spelling": "2026-01-02T03:04:05Z",
+		"a plus-zero offset":     "2026-01-02T03:04:05+00:00",
+		"a minus-zero offset":    "2026-01-02T03:04:05-00:00",
+		"nine fractional digits": "2026-01-02T03:04:05.123456789Z",
+	} {
+		t.Run("accepted: "+name, func(t *testing.T) {
+			validator := embeddedValidator(t)
+
+			document := strings.Replace(validDecision,
+				`"created_at":"2026-01-02T03:04:05Z"`, `"created_at":"`+stamp+`"`, 1)
+			if findings := validator.Validate(schema.KindDecision, 1, []byte(document)); len(findings) != 0 {
+				t.Fatalf("Validate() with created_at %q = %v, want no findings", stamp, located(findings))
+			}
+		})
 	}
 }
 
@@ -374,7 +508,78 @@ func TestValidatorReportsAKindOrVersionItCompiledNoSchemaFor(t *testing.T) {
 			if findings[0].Keyword != schema.KeywordNoSchema {
 				t.Errorf("Validate() Keyword = %q, want %q", findings[0].Keyword, schema.KeywordNoSchema)
 			}
+			// The keyword says "no document governed this"; the message is the
+			// only place the reader learns *which* pair was refused, and both
+			// halves matter — the same keyword is also returned for an
+			// unexpected library failure. Finding BA-09 caught this: rewriting
+			// the message to a constant left the assertions above green.
+			if !strings.Contains(findings[0].Message, string(tt.kind)) {
+				t.Errorf("Validate() Message = %q, want it to name the kind %q", findings[0].Message, tt.kind)
+			}
+			if !strings.Contains(findings[0].Message, fmt.Sprintf("schema_version %d", tt.version)) {
+				t.Errorf("Validate() Message = %q, want it to name schema_version %d", findings[0].Message, tt.version)
+			}
+			if !strings.Contains(findings[0].Message, "was not validated") {
+				t.Errorf("Validate() Message = %q, want it to say the record was not validated; "+
+					"a finding that does not say so reads as a verdict about the record", findings[0].Message)
+			}
 		})
+	}
+}
+
+// TestValidatorRefusesTwoDocumentsClaimingOneIdentity reaches the AddResource
+// refusal, which is the third way a shipped document can be wrong: not absent
+// (the registry catches that), not malformed (the compiler catches that), but
+// claiming an identity another document already claimed.
+//
+// Finding BA-09 found this guard unkilled. Deleting it is silent in the happy
+// case, because the compiler keeps whichever document registered first and
+// compiles it perfectly well — so the binary would ship two documents, validate
+// every record against one of them, and say nothing about the other. Which one
+// wins is registration order, which is Names() order, which is alphabetical:
+// a v2 document that copied v1's $id would be ignored in favour of v1, and every
+// v2 record would be judged by the v1 rules.
+func TestValidatorRefusesTwoDocumentsClaimingOneIdentity(t *testing.T) {
+	impostor := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema",` +
+		`"$id":"https://mindrail.dev/schemas/knowledge/decision.v1.schema.json","type":"object"}`)
+
+	registry, err := registryFrom(t, map[string][]byte{
+		schema.DecisionSchemaName:  mustReadEmbedded(t, schema.DecisionSchemaName),
+		schema.InvariantSchemaName: mustReadEmbedded(t, schema.InvariantSchemaName),
+		"decision.v2.schema.json":  impostor,
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v, want nil; the impostor is valid JSON", err)
+	}
+
+	validator, err := schema.NewValidator(registry)
+	if err == nil {
+		t.Fatalf("NewValidator() error = nil, want a failure; validator = %v", validator)
+	}
+	if !strings.Contains(err.Error(), "decision.v2.schema.json") {
+		t.Fatalf("NewValidator() error = %q, want it to name the document that could not be registered", err)
+	}
+}
+
+// TestValidatorRefusesADocumentClaimingTheMetaschemasIdentity is the second
+// input that reaches only the AddResource refusal, and it reaches it down the
+// other branch: the library refuses a document that names a draft metaschema
+// rather than one that repeats a sibling's $id.
+func TestValidatorRefusesADocumentClaimingTheMetaschemasIdentity(t *testing.T) {
+	impostor := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema",` +
+		`"$id":"https://json-schema.org/draft/2020-12/schema","type":"object"}`)
+
+	registry, err := registryFrom(t, map[string][]byte{
+		schema.DecisionSchemaName:  mustReadEmbedded(t, schema.DecisionSchemaName),
+		schema.InvariantSchemaName: mustReadEmbedded(t, schema.InvariantSchemaName),
+		"decision.v2.schema.json":  impostor,
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v, want nil", err)
+	}
+
+	if _, err := schema.NewValidator(registry); err == nil {
+		t.Fatal("NewValidator() error = nil, want a failure for a document claiming the metaschema's identity")
 	}
 }
 

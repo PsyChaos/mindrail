@@ -4,11 +4,23 @@
 // Scope is deliberately narrow. Spec §95 defines a fourteen-step validation
 // pipeline; this package performs steps 1-4 only — read the file, parse its
 // JSON syntax, read schema_version, check it against the reader window
-// (decision D-27). Steps 5-14 (JSON Schema validation, filename/id agreement,
-// unique ids, supersede targets and DAG, duplicate lineage, scope syntax and
-// resolution, validation-profile and evidence references) belong to MR-002.
-// Performing any of them here would put a diagnostic in the wrong milestone
-// and would reject records this one has no authority to judge.
+// (decision D-27). Performing any later step here would put a diagnostic in the
+// wrong milestone and would reject records this package has no authority to
+// judge.
+//
+// Steps 5-11 belong to MR-002 and live in internal/knowledge/validate: JSON
+// Schema validation, filename/id agreement, unique ids, supersede targets,
+// supersede cycles, duplicate active lineage, and scope *syntax*.
+//
+// Steps 12, 13 and 14 are deferred, not forgotten, and each names the milestone
+// that unblocks it (AC-12.2). Step 12 resolves a scope target against the
+// repository's structure and needs MR-005's index; step 13 follows a referenced
+// validation profile and needs MR-010; step 14 checks evidence and test-mapping
+// syntax and needs MR-011/MR-012. That list is stated once, authoritatively, in
+// internal/knowledge/validate's package doc; it is repeated here only far enough
+// to keep a reader of this file from concluding that MR-002 covered all ten
+// remaining steps, which an earlier wording of this comment said and which was
+// never true.
 package loader
 
 import (
@@ -19,7 +31,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -199,7 +210,7 @@ func (l *Loader) Load(ctx context.Context) (Store, error) {
 				continue
 			}
 
-			ref, problem := l.readRecord(bucket.kind, dir, rel, entry.Name())
+			ref, problem := l.readRecord(bucket.kind, rel, entry.Name())
 			switch {
 			case problem != nil:
 				store.Problems = append(store.Problems, *problem)
@@ -230,11 +241,40 @@ func recordPath(relDir, name string) string {
 
 // readRecord performs steps 1-4 for one file. Exactly one of the two returns
 // is non-nil.
-func (l *Loader) readRecord(kind RecordKind, absDir, relDir, name string) (*RecordRef, *Problem) {
+func (l *Loader) readRecord(kind RecordKind, relDir, name string) (*RecordRef, *Problem) {
 	rel := recordPath(relDir, name)
 
 	// Step 1: file read.
-	data, err := os.ReadFile(filepath.Join(absDir, name))
+	//
+	// The path goes through the containment boundary rather than being joined
+	// onto the already-resolved bucket directory. Resolving the directory proves
+	// the directory is inside the repository; it proves nothing about an entry
+	// inside it, and a record file that is a symbolic link out of the worktree
+	// was therefore read and counted as repository content (finding BA-10). That
+	// mattered little while the loader only counted records; MR-002 derives
+	// verdicts from these bytes, so an unvetted file now supplies the evidence a
+	// report reasons from.
+	//
+	// It is Root.Resolve rather than a symlink check on the directory entry
+	// because decision D-32's policy is "links inside the root are allowed,
+	// links that leave it are refused", not "no links". A repository may
+	// legitimately hold a record behind a link, and refusing every link would
+	// also refuse every ordinary layout that reaches the worktree through one.
+	// One boundary answers the question for the file exactly as it already
+	// answers it for the directory.
+	//
+	// The canonical path Resolve returns is what is opened, so the final open
+	// follows no link at all: a link swapped in after the check cannot redirect
+	// the read that follows it.
+	abs, err := l.root.Resolve(rel)
+	if err != nil {
+		if errors.Is(err, filesystem.ErrEscapesRoot) {
+			return nil, escapingRecord(rel)
+		}
+		return nil, unreadableRecord(rel, "cannot be read: "+readFailureReason(err))
+	}
+
+	data, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, unreadableRecord(rel, "cannot be read: "+readFailureReason(err))
 	}
@@ -336,6 +376,37 @@ func unreadableRecord(rel, message string) *Problem {
 		Code:    app.CodeKnowledgeUnreadable,
 		Message: rel + " " + message,
 		Fatal:   false,
+	}
+}
+
+// escapingRecord builds the problem for a record that resolves outside the
+// repository.
+//
+// It is a Problem and not an error because decision D-06 prices one bad record
+// at one record: a single planted or mistaken link must not make every decision
+// and invariant beside it invisible. That is the difference from
+// unreadableStore, which does return an error — a bucket that leaves the
+// repository cannot be walked at all, so there is no store left to report.
+//
+// The code is PATH_ESCAPES_ROOT and deliberately not KNOWLEDGE_UNREADABLE.
+// KNOWLEDGE_UNREADABLE means "this binary could not read the record", and this
+// record reads perfectly; Mindrail declines to treat it as repository content.
+// Conflating the two is the mistake unreadableStore below stopped making for the
+// directory case, where it produced the remedy "check that it is a readable
+// directory" for a link that was already perfectly readable.
+//
+// The message is built from the repo-relative path rather than from the
+// containment error's prose, because that prose quotes the machine-local
+// absolute path of the escaping component and Problem.Message is persisted and
+// printed, where only the slash-spelled repository-relative form belongs
+// (tech-stack §74).
+func escapingRecord(rel string) *Problem {
+	return &Problem{
+		Path: rel,
+		Code: app.CodePathEscapesRoot,
+		Message: rel + " resolves outside the repository root, so Mindrail will not read it as" +
+			" repository content; replace the link with the record itself or remove it",
+		Fatal: false,
 	}
 }
 

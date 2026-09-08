@@ -2,6 +2,7 @@ package validate
 
 import (
 	"context"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
@@ -87,6 +88,156 @@ func TestTheExpectedPathIsTheOneTheLoaderProduces(t *testing.T) {
 	}
 	if len(kindDirs) != len(seen) {
 		t.Errorf("kindDirs holds %d kinds, the loader produces %d", len(kindDirs), len(seen))
+	}
+}
+
+// TestEveryOneOfTheFourSortKeysDecidesAnOrder is decision D-47 asserted key by
+// key.
+//
+// D-47 sorts by (Path, Step, InstanceLocation, Message), and two of those four
+// could be deleted with the whole suite staying green. The end-to-end
+// determinism test compares runs only against each other, so it is satisfied by
+// any order that is stable within one process — including one that ignores three
+// of the keys entirely.
+//
+// Each row differs in exactly one key and is fed in the wrong order, so deleting
+// that key from sorted() turns exactly that row red and names it. The rows are
+// built here rather than produced by Check because the instance location is
+// carried beside the finding and never published: from outside the package it
+// cannot be set, and a key nobody can construct a case for is a key nobody can
+// test.
+func TestEveryOneOfTheFourSortKeysDecidesAnOrder(t *testing.T) {
+	at := func(path string, step Step, instance, message string) ordered {
+		return ordered{
+			instance: instance,
+			finding:  Finding{Path: path, Step: step, Message: message},
+		}
+	}
+
+	for _, tt := range []struct {
+		key   string
+		first ordered
+		later ordered
+	}{
+		{
+			key:   "Path",
+			first: at("a.json", StepScopeSyntax, "/z", "z"),
+			later: at("b.json", StepSchema, "/a", "a"),
+		},
+		{
+			key:   "Step",
+			first: at("a.json", StepSchema, "/z", "z"),
+			later: at("a.json", StepScopeSyntax, "/a", "a"),
+		},
+		{
+			key:   "InstanceLocation",
+			first: at("a.json", StepSchema, "/a", "z"),
+			later: at("a.json", StepSchema, "/z", "a"),
+		},
+		{
+			key:   "Message",
+			first: at("a.json", StepSchema, "/a", "a"),
+			later: at("a.json", StepSchema, "/a", "z"),
+		},
+	} {
+		t.Run(tt.key, func(t *testing.T) {
+			// Every row's lower-priority keys are set so that they would order the
+			// pair the other way round. A sort that had lost this key would
+			// therefore not merely fail to reorder the pair, it would reverse it —
+			// which is what stops the assertion from passing on a stable sort that
+			// happens to leave the input alone.
+			got := sorted([]ordered{tt.later, tt.first})
+			if len(got) != 2 {
+				t.Fatalf("sorted returned %d findings, want 2", len(got))
+			}
+			if got[0] != tt.first.finding {
+				t.Errorf("the %s key did not decide the order: got %+v first, want %+v",
+					tt.key, got[0], tt.first.finding)
+			}
+		})
+	}
+}
+
+// TestSortedIsStableWhenEveryKeyAgrees is the over-fire guard for the test
+// above: the sort must not reorder findings it has no key to distinguish.
+//
+// D-47 chose a stable sort so that two findings agreeing on all four keys keep
+// the order they were produced in, which is itself deterministic. A sort that
+// reached for some fifth tie-break — a pointer, a map address, a struct
+// comparison — would satisfy every row above and still publish two different
+// reports for one store.
+func TestSortedIsStableWhenEveryKeyAgrees(t *testing.T) {
+	same := func(id string) ordered {
+		return ordered{
+			instance: "/a",
+			finding:  Finding{Path: "a.json", ID: id, Step: StepSchema, Message: "identical"},
+		}
+	}
+
+	got := sorted([]ordered{same("second"), same("first")})
+	if len(got) != 2 {
+		t.Fatalf("sorted returned %d findings, want 2", len(got))
+	}
+	if got[0].ID != "second" || got[1].ID != "first" {
+		t.Errorf("sorted reordered two findings its keys cannot tell apart: %q then %q",
+			got[0].ID, got[1].ID)
+	}
+}
+
+// TestSortedIsStableAtASizeWhereAnUnstableSortWouldShow is the test above at a
+// size where the claim can actually fail.
+//
+// Two elements cannot fail it, and nor can forty identical ones. Go's
+// slices.SortFunc is pdqsort: below thirteen elements it runs insertion sort,
+// which is stable, and on an all-equal input it detects the run and leaves the
+// order alone — so replacing SortStableFunc with SortFunc was measured to move
+// zero elements at n = 2, 8, 13, 20, 40, 100 and 300 when every key agreed.
+// Reordering appears only with enough elements AND more than one key group: at
+// twenty elements in two groups it moved eighteen of them.
+//
+// So the shape below is the shape that can fail: two paths, ten findings each,
+// every finding within a path agreeing on all four keys and distinguishable only
+// by an ID the sort never looks at. This is the sort's contract as D-47 states
+// it — findings the keys cannot separate keep the order they were produced in —
+// and the previous form of this test could not have caught its loss.
+func TestSortedIsStableAtASizeWhereAnUnstableSortWouldShow(t *testing.T) {
+	const perPath = 10
+
+	// Interleaved on the way in, so the sort has real work to do and the
+	// within-path order is not already the input order.
+	input := make([]ordered, 0, perPath*2)
+	for i := range perPath {
+		for _, path := range []string{"b.json", "a.json"} {
+			input = append(input, ordered{
+				instance: "/created_at",
+				finding: Finding{
+					Path:    path,
+					ID:      fmt.Sprintf("%s#%d", path, i),
+					Step:    StepSchema,
+					Message: "identical for every finding on this path",
+				},
+			})
+		}
+	}
+
+	got := sorted(input)
+	if len(got) != perPath*2 {
+		t.Fatalf("sorted returned %d findings, want %d", len(got), perPath*2)
+	}
+
+	// The one key that differs still decides: a.json before b.json.
+	wantIDs := make([]string, 0, perPath*2)
+	for _, path := range []string{"a.json", "b.json"} {
+		for i := range perPath {
+			wantIDs = append(wantIDs, fmt.Sprintf("%s#%d", path, i))
+		}
+	}
+	gotIDs := make([]string, 0, len(got))
+	for _, finding := range got {
+		gotIDs = append(gotIDs, finding.ID)
+	}
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Errorf("sorted() = %v,\nwant %v — findings agreeing on all four keys must keep the order they were produced in", gotIDs, wantIDs)
 	}
 }
 

@@ -93,7 +93,7 @@ func WithRationale(rationale string) Option {
 
 // WithSeverity sets an Invariant's "severity". It is not optional in the
 // schema's sense — invariant.v1 requires the property — but it arrives as an
-// option because the frozen NewInvariant signature has no parameter for it, and
+// option because NewInvariant's signature has no parameter for it, and
 // NewInvariant fails when it is absent rather than inventing a default. A
 // Decision's schema has no such property and refuses this option.
 func WithSeverity(severity Severity) Option {

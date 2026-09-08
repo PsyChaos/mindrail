@@ -1,13 +1,16 @@
 package record_test
 
 import (
+	"encoding/json"
 	"errors"
+	"path"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/knowledge/record"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/schemas"
 )
 
 // propertyOf extracts the JSON property name a typed construction error names.
@@ -182,9 +185,14 @@ func TestNewDecisionRefusesWhatItsSchemaWouldReject(t *testing.T) {
 }
 
 // TestNewInvariantRefusesWhatItsSchemaWouldReject is NewInvariant's half, and
-// carries the three refusals that exist only because invariant.v1 differs from
-// decision.v1: a required severity, a required scope, and a title with nowhere
-// to go.
+// carries the two refusals that exist only because invariant.v1 differs from
+// decision.v1: a required severity and a required scope.
+//
+// It carried a third until finding F-R9 — a title with nowhere to go. That row
+// is gone because the parameter is gone: invariant.v1 declares no "title", so
+// the constructor no longer offers one to refuse. The rule it protected is now
+// held by TestNewInvariantHasNoParameterForAPropertyItsSchemaDoesNotDeclare,
+// which asserts the signature rather than a runtime error.
 func TestNewInvariantRefusesWhatItsSchemaWouldReject(t *testing.T) {
 	fileScope := record.WithScope(record.Scope{Level: record.ScopeFile, Target: "internal/app/code.go"})
 	high := record.WithSeverity(record.SeverityHigh)
@@ -193,7 +201,6 @@ func TestNewInvariantRefusesWhatItsSchemaWouldReject(t *testing.T) {
 		name         string
 		id           string
 		at           time.Time
-		title        string
 		statement    string
 		opts         []record.Option
 		wantErr      error
@@ -206,10 +213,6 @@ func TestNewInvariantRefusesWhatItsSchemaWouldReject(t *testing.T) {
 		{
 			name: "zero created_at", id: "INV-0001", at: time.Time{}, statement: "s",
 			opts: []record.Option{high, fileScope}, wantErr: record.ErrZeroCreatedAt,
-		},
-		{
-			name: "a title the schema has nowhere to put", id: "INV-0001", at: createdAt, title: "A title", statement: "s",
-			opts: []record.Option{high, fileScope}, wantErr: record.ErrInvariantHasNoTitle,
 		},
 		{
 			name: "empty statement", id: "INV-0001", at: createdAt, statement: "",
@@ -260,7 +263,7 @@ func TestNewInvariantRefusesWhatItsSchemaWouldReject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			built, err := record.NewInvariant(tt.id, tt.at, tt.title, tt.statement, tt.opts...)
+			built, err := record.NewInvariant(tt.id, tt.at, tt.statement, tt.opts...)
 			if err == nil {
 				t.Fatalf("NewInvariant() error = nil, want %v (built %+v)", tt.wantErr, built)
 			}
@@ -341,7 +344,7 @@ func TestConstructorsAcceptEveryShapeTheirSchemasAllow(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				built, err := record.NewInvariant(tt.id, createdAt, "", "A statement.", tt.opts...)
+				built, err := record.NewInvariant(tt.id, createdAt, "A statement.", tt.opts...)
 				if err != nil {
 					t.Fatalf("NewInvariant() error = %v, want nil", err)
 				}
@@ -351,32 +354,72 @@ func TestConstructorsAcceptEveryShapeTheirSchemasAllow(t *testing.T) {
 	})
 }
 
-// TestNewInvariantRefusesATitleItHasNowhereToPut is the resolution of the one
-// place the frozen signature and the frozen schema disagree, written as a test
-// so the resolution is visible rather than buried in a doc comment.
+// TestNewInvariantHasNoParameterForAPropertyItsSchemaDoesNotDeclare is finding
+// F-R9's regression test, and it replaces
+// TestNewInvariantRefusesATitleItHasNowhereToPut.
 //
-// invariant.v1 declares no "title" and sets additionalProperties:false. Storing
-// the argument would make every record this constructor produced fail step 5;
-// dropping it would lose the caller's data in silence. The constructor refuses,
-// and the fourth parameter — the statement — is where the prose belongs.
-func TestNewInvariantRefusesATitleItHasNowhereToPut(t *testing.T) {
-	severity := record.WithSeverity(record.SeverityHigh)
-	scope := record.WithScope(record.Scope{Level: record.ScopeProject})
+// The defect: AC-01.2 froze a four-string signature whose third parameter was a
+// title, while AC-01.1 froze the Invariant as a mirror of invariant.v1, which
+// declares no "title" and sets additionalProperties:false. The first
+// implementation honoured both by accepting the argument and refusing every
+// value it could hold except "" — a published parameter whose domain was a
+// single point, and a run-time error standing in for a compile-time fact.
+//
+// The resolution is asserted here rather than described: the two prose
+// properties invariant.v1 does declare are read out of the shipped document, and
+// the one the old signature named is required to be absent from it. So this test
+// goes red from either direction. If a future invariant.v2 adds a "title", it
+// says the signature now owes a parameter; if someone restores the title
+// parameter without the document changing, the signature assertion at the top of
+// record_test.go stops the package building.
+func TestNewInvariantHasNoParameterForAPropertyItsSchemaDoesNotDeclare(t *testing.T) {
+	properties := invariantProperties(t)
 
-	if _, err := record.NewInvariant("INV-0001", createdAt, "A title", "A statement.", severity, scope); !errors.Is(err, record.ErrInvariantHasNoTitle) {
-		t.Fatalf("NewInvariant() with a title: error = %v, want one matching ErrInvariantHasNoTitle", err)
+	if _, ok := properties["title"]; ok {
+		t.Fatalf("invariant.v1 now declares a \"title\" property, so NewInvariant owes it a parameter again; " +
+			"F-R9 removed the parameter precisely because the document did not declare one")
+	}
+	if _, ok := properties["statement"]; !ok {
+		t.Fatalf("invariant.v1 declares no \"statement\", so NewInvariant's third parameter has nowhere to go")
 	}
 
-	// The over-fire guard: an empty title is the normal call, and the fourth
-	// parameter reaches "statement" rather than being swallowed with the third.
-	built, err := record.NewInvariant("INV-0001", createdAt, "", "A statement.", severity, scope)
+	// The over-fire guard for the removal: dropping a parameter must not shift
+	// the remaining arguments onto the wrong properties. The third argument has
+	// to reach Statement, and the record it builds has to survive step 5 — a
+	// signature that compiled while writing the statement into the wrong field
+	// would pass a shape check and fail here.
+	built, err := record.NewInvariant("INV-0001", createdAt, "A statement.",
+		record.WithSeverity(record.SeverityHigh),
+		record.WithScope(record.Scope{Level: record.ScopeProject}))
 	if err != nil {
-		t.Fatalf("NewInvariant() without a title: error = %v, want nil", err)
+		t.Fatalf("NewInvariant() error = %v, want nil", err)
 	}
 	if built.Statement != "A statement." {
-		t.Errorf("Statement = %q, want the fourth argument", built.Statement)
+		t.Errorf("Statement = %q, want the third argument", built.Statement)
 	}
 	requireValid(t, schema.KindInvariant, built)
+}
+
+// invariantProperties reads invariant.v1's declared property set out of the
+// shipped document. The document is the contract (D-36), so a test about what
+// the constructor owes it must ask the document rather than restate it.
+func invariantProperties(t *testing.T) map[string]json.RawMessage {
+	t.Helper()
+
+	raw, err := schemas.KnowledgeFS.ReadFile(path.Join(schema.Dir, schema.InvariantSchemaName))
+	if err != nil {
+		t.Fatalf("reading %s: %v", schema.InvariantSchemaName, err)
+	}
+	var document struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatalf("decoding %s: %v", schema.InvariantSchemaName, err)
+	}
+	if len(document.Properties) == 0 {
+		t.Fatalf("%s declares no properties at all, so this test would pass vacuously", schema.InvariantSchemaName)
+	}
+	return document.Properties
 }
 
 // TestOptionsAreRefusedByTheKindWhoseSchemaLacksTheProperty pairs each refusal
@@ -409,7 +452,7 @@ func TestOptionsAreRefusedByTheKindWhoseSchemaLacksTheProperty(t *testing.T) {
 				return err
 			}()
 			invariantErr := func() error {
-				_, err := record.NewInvariant("INV-0001", createdAt, "", "s", tt.option,
+				_, err := record.NewInvariant("INV-0001", createdAt, "s", tt.option,
 					record.WithSeverity(record.SeverityLow), record.WithScope(record.Scope{Level: record.ScopeProject}))
 				return err
 			}()

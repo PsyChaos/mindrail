@@ -3,7 +3,17 @@
 - **Frozen at:** commit `79716a9`, branch `mr-002-knowledge-lifecycle`
 - **Contract this refines:** [mr-002-design.md](mr-002-design.md). Where the two
   disagree, the design wins on intent and this document wins on the detail the
-  design left open — every such gap is recorded below as a decision D-42…D-48.
+  design left open — every such gap is recorded below as a decision D-42…D-50.
+- **Amended after freezing.** Two remediation waves edited this document, each
+  edit marked in the text where it stands.
+  - **FIX-D**: **AC-01.2** (finding F-R9, a frozen signature that contradicted
+    the frozen schema beside it) and the new **D-49** (finding B-05,
+    `created_at`'s spelling). AC-01.3 gained a read-side clause under D-49.
+  - **FIX-E**: **AC-02.1** (finding F-R4, a frozen signature that cannot compile
+    because it closes an import cycle) and the new **D-50** carrying its
+    argument. F-R4's text asks for this to be recorded as "D-49"; that number
+    was already taken by FIX-D in the same round, so it is D-50 and D-50 says so.
+  - Nothing in D-36…D-48 was reinterpreted by either wave.
 - **Task:** [mindrail-0.1-task-list.md](mindrail-0.1-task-list.md) MR-002
 - **Tier:** 3 (Program). Not for its size — for its surface. It adds a
   compile-time dependency, a JSON Schema contract evaluated against
@@ -139,6 +149,144 @@ constraint on `created_at` **enforces nothing** — verified empirically:
 non-timestamp `created_at` and requires a finding. Without that test the schema
 would claim a rule it does not have.
 
+### D-49 — `created_at`'s spelling is stated in the schema documents, not in the Go decoder
+
+**Added after MR-002 shipped, by the FIX-D remediation wave, in response to
+finding B-05. It adds a rule; it does not reinterpret D-36…D-48.**
+
+`format: "date-time"` is RFC 3339, and RFC 3339 is wider than the timestamp this
+project writes. Measured against both readers, four spellings were accepted by
+step 5 and could not be loaded by `record.Decision`: a lowercase `z` and a
+lowercase `t` (RFC 3339 §5.6 makes the literals case-insensitive; Go's
+`time.RFC3339` layout does not), a leap second `23:59:60` (§5.7 permits it; Go's
+`time.Time` has no representation for it), and a non-UTC offset such as
+`-05:00`, which both readers accept and which the property's own `description`
+and tech-stack §42 both forbid. A fifth was found while measuring: more than
+nine fractional digits, which Go accepts and silently truncates, loading a
+different instant than the document names.
+
+Both schema documents therefore gain a `pattern` beside the existing `format`,
+and the Go decoder is left alone.
+
+The two keywords divide one rule rather than restating it. `format` owns
+calendar validity — no regular expression knows how long February is, and
+`2026-02-30T00:00:00Z` is refused by `format` alone. `pattern` owns the
+spelling and the offset, which `format` is deliberately permissive about. Two
+keywords, two questions, one authority each.
+
+Why the document and not the decoder. D-36 makes the document the contract, and
+a `pattern` in the document is the document stating its own rule — not the
+second Go implementation D-36 forbids. Widening the decoder instead would put a
+hand-rolled RFC 3339 parser in `record`, and it **cannot** close the finding:
+`time.Time` has no representation for a leap second, so the decoder would have
+to either keep rejecting `23:59:60` (the split survives) or smear it to the next
+day (the record loads as an instant it does not name, and AC-01.6's byte
+round-trip breaks). The document has to narrow for that row whatever else is
+done, and narrowing it once and coherently is simpler than narrowing it partly
+and widening Go partly.
+
+Why this is not a silent break of a shipped v1 document. The measured
+enumeration of spellings that were valid before and are not now is: lowercase
+`z`, lowercase `t`, a leap second, any offset other than `+00:00`/`-00:00`/`Z`,
+and more than nine fractional digits. **No record any Mindrail binary has ever
+written is in that set** — the constructors force `.UTC()` and `time.Time`
+marshals `Z` with at most nine digits — and neither golden fixture nor any
+fixture in the suite is either. Every one of the newly-refused spellings was
+already a record this binary could not load or could not load faithfully, so the
+change converts a silent failure downstream into a step-5 finding that names the
+file. What is deliberately still accepted, because it is currently valid, parses
+identically and denotes the same instant, is `+00:00` and `-00:00`: a pattern
+anchored on `Z$` would have refused what most ISO-8601 libraries emit for UTC,
+and that would have been a fresh over-fire wearing a fix's clothes.
+
+No `schema_version` bump: the window is `[1]`, bumping would mean shipping a v2
+document and widening the reader, which orphans every v1 record to fix a rule
+the v1 document's own `description` already stated.
+
+`TestNoTimestampIsAcceptedByTheSchemaAndRejectedByTheTypesThatLoadIt` asserts
+the property one-directionally — the schema being stricter than Go is harmless,
+the reverse is the defect — and
+`TestTheTimestampSpellingsTheContractAcceptsAreExactlyTheOnesItShould` is its
+over-fire guard. Both documents are held together by
+`TestBothDocumentsStateTheSameCreatedAtRule`, which exists because a mutation
+proved that deleting the pattern from `invariant.v1` alone was otherwise silent.
+
+One consequence for D-48: `created_at: "yesterday"` now breaks both keywords,
+and this library reports one finding per instance location. AC-02.3's guard
+still fails when `AssertFormat()` is deleted — it asserts the keyword, and the
+finding becomes `/created_at pattern` — but that made the guard depend on a
+tie-break. `TestValidatorAssertsTheDateTimeFormat` gained a second row,
+`2026-02-30T00:00:00Z`, which only `format` can refuse, so D-48's guard no
+longer rests on which keyword wins.
+
+### D-50 — `Validator.Validate` takes `schema.RecordKind`, because `loader.RecordKind` cannot compile
+
+**Added after MR-002 shipped, by the FIX-E remediation wave, in response to
+finding F-R4. It records a change the implementation had already made and this
+document had not; it does not reinterpret D-36…D-49.**
+
+**This is D-50 and not D-49 because D-49 was taken first.** The FIX-D wave
+landed `created_at`'s spelling rule as D-49 in the same remediation round, and
+renumbering a decision that is already cited from
+`internal/knowledge/schema/validator_test.go`,
+`schemas/knowledge/*.schema.json` and §1 of this document would be worse than
+the gap in the finding's own numbering. A reader following F-R4 to "D-49" lands
+here.
+
+Design §3 and AC-02.1 both froze:
+
+```go
+func (v *Validator) Validate(kind loader.RecordKind, version int, document []byte) []Finding
+```
+
+That signature **cannot exist in this binary**, and the reason is structural
+rather than a matter of taste. `internal/knowledge/loader` imports
+`internal/knowledge/schema` — it holds a `*schema.Validator` and calls
+`schema.NewRegistry` — so `schema` naming `loader.RecordKind` closes an import
+cycle, and Go refuses to build it. No ordering of the two packages fixes this
+while step 5's mechanism lives in `schema` and the loader is the thing that
+calls it.
+
+The resolution, taken during implementation and recorded only in
+`mr-002-audit-package-appendix.md` until now:
+
+```go
+type RecordKind string
+const (
+	KindDecision  RecordKind = "decision"
+	KindInvariant RecordKind = "invariant"
+)
+
+func (v *Validator) Validate(recordKind RecordKind, version int, document []byte) []Finding
+```
+
+`schema` declares its own `RecordKind` with the two values spelled identically,
+and a caller converts at the call site with `schema.RecordKind(ref.Kind)`.
+Arity, parameter order, parameter meaning and return type are all unchanged;
+only the named type of the first parameter differs, and it differs by a
+conversion that is free at run time.
+
+The alternative considered and rejected was a plain `string` first parameter.
+It compiles too, and it throws away the one place type safety is worth having:
+the boundary where two same-shaped string types meet.
+
+What the change costs, and what pays for it. A conversion between two named
+string types is silent when the strings themselves drift, so the compiler stops
+being the thing that holds them together.
+`TestSchemaKindsAreSpeltTheSameWayAsTheLoaders` asserts
+`schema.RecordKind(loader.KindDecision) == schema.KindDecision` for both kinds
+and drives a `Validate` call through the converted value — an *external* test
+package may import `loader` without closing the cycle, which is why the
+assertion is possible at all.
+`TestKindConstantsAgreeWithTheDocumentsTheLoaderAndTheSchemaPackage` extends the
+same equality to `record`'s constants and to the `const` in each shipped schema
+document, so all four spellings fail together or not at all.
+
+**AC-02.1 is corrected below to the signature the binary has.** The frozen form
+was not a choice that was later revisited; it was a form that never compiled,
+and leaving it in the contract would make a reader grade a working binary
+against an impossible one.
+
 ---
 
 ## 2. Requirements
@@ -157,12 +305,45 @@ New package. Depends on nothing else in `internal/knowledge/`.
   (`/* mirrors the invariant.v1 schema */`) is resolved here, not by the
   implementer's memory.
 - **AC-01.2** `NewDecision(id string, at time.Time, title, decision string, opts ...Option) (Decision, error)`
-  and `NewInvariant(id string, at time.Time, title, statement string, opts ...Option) (Invariant, error)`
+  and `NewInvariant(id string, at time.Time, statement string, opts ...Option) (Invariant, error)`
   exist with those exact signatures, stamp `SchemaVersion: 1`, stamp `Kind`, and
   default `Status` to `StatusActive`.
+
+  > **Amended after MR-002 shipped, by the FIX-D remediation wave, in response
+  > to finding F-R9.** As originally frozen, this criterion gave `NewInvariant`
+  > a fourth string parameter, `title`, placed before `statement`. That
+  > contradicted AC-01.1 immediately above it: AC-01.1 freezes the `Invariant`
+  > as a mirror of `invariant.v1.schema.json`, and that document declares no
+  > `title` property and sets `additionalProperties: false`, so a title had
+  > nowhere to go. The implementation honoured both halves by accepting the
+  > parameter and then refusing every value it could hold except `""` —
+  > measured, the parameter's domain was the single point `{""}` — which left a
+  > published constructor carrying an argument that could never be anything and
+  > a run-time error standing in for a compile-time fact.
+  >
+  > The two halves could not both stand. The half backed by the schema document
+  > wins, because D-36 makes the document the contract, and a signature is not
+  > entitled to promise a field the contract does not define. So the parameter
+  > is removed rather than the document changed, and `ErrInvariantHasNoTitle`
+  > goes with it: a sentinel no input can produce is a guard no mutation can
+  > falsify. `TestNewInvariantHasNoParameterForAPropertyItsSchemaDoesNotDeclare`
+  > reads the property set back out of the shipped document, so if a future
+  > `invariant.v2` does declare a `title`, that test says the signature owes a
+  > parameter again.
+  >
+  > This is a source-breaking change to an exported constructor. It had no
+  > non-test caller in the repository at the time of the amendment.
+
 - **AC-01.3** `created_at` is emitted as UTC RFC 3339 (tech-stack §42). A
   constructor given a non-UTC `time.Time` produces a UTC timestamp; a test
   asserts the serialized string, not the `time.Time`.
+
+  Read side (**added by the FIX-D wave for finding B-05; see D-49**): no
+  `created_at` accepted by step 5 may be one `record.Decision`, `record.Invariant`
+  or `app.ParseTime` cannot load, or loads as a different instant. This is the
+  dual of AC-01.5 and is asserted in that one direction only — a contract
+  stricter than the decoder is harmless, because nothing reaches a decoder
+  without passing step 5 first.
 - **AC-01.4** `Supersede(prior, replacement Decision) (Decision, Decision, error)`
   returns the replacement carrying `prior.ID` in `Supersedes` and the prior with
   `Status` moved to `StatusSuperseded`. It writes nothing and touches no
@@ -178,8 +359,21 @@ New package. Depends on nothing else in `internal/knowledge/`.
 ### REQ-02 — `internal/knowledge/schema.Validator`: step 5's mechanism
 
 - **AC-02.1** `NewValidator(reg *Registry) (*Validator, error)` and
-  `(*Validator) Validate(kind loader.RecordKind, version int, document []byte) []Finding`
-  exist with those exact signatures (design §3).
+  `(*Validator) Validate(recordKind RecordKind, version int, document []byte) []Finding`
+  exist with those exact signatures (design §3), where `RecordKind` is
+  `schema.RecordKind` and `Finding` is `schema.Finding`.
+
+  > **Amended after MR-002 shipped, by the FIX-E remediation wave, in response
+  > to finding F-R4; see D-50.** As frozen, this criterion and design §3 both
+  > spelled the first parameter `loader.RecordKind`. That form does not compile:
+  > `internal/knowledge/loader` imports `internal/knowledge/schema`, so naming
+  > `loader.RecordKind` here closes an import cycle. The implementation shipped
+  > `schema.RecordKind` from the start and this document had not caught up, so
+  > the criterion was grading the binary against a signature no binary can have.
+  > Arity, order, parameter meaning and return type are unchanged; the two
+  > `RecordKind` types are held to the same strings by
+  > `TestSchemaKindsAreSpeltTheSameWayAsTheLoaders`. D-50 carries the full
+  > argument, including why a plain `string` was rejected.
 - **AC-02.2** Every document in the registry is registered with
   `AddResource($id, doc)` where `doc` came from `jsonschema.UnmarshalJSON`, and
   compiled with `Compile($id)` using the **same** `$id` string. Passing raw

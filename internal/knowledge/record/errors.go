@@ -78,16 +78,13 @@ var (
 	// declares.
 	ErrSeverityUnknown = errors.New("knowledge record: severity is not one of the four the schema declares")
 
-	// ErrInvariantHasNoTitle reports a non-empty title handed to NewInvariant.
-	//
-	// invariant.v1 declares no "title" property and sets
-	// additionalProperties:false, so there is nowhere to put the value: writing
-	// it would make every such record invalid, and dropping it would lose the
-	// caller's data without saying so. The frozen signature (design §3,
-	// AC-01.2) keeps the parameter, so the constructor refuses instead. What
-	// the caller almost always means is the statement, which is the fourth
-	// parameter.
-	ErrInvariantHasNoTitle = errors.New("knowledge record: invariant.v1 declares no title property, so NewInvariant has nowhere to put one")
+	// Deliberately absent: an ErrInvariantHasNoTitle. It existed to refuse the
+	// non-empty title NewInvariant's third parameter could never carry, and it
+	// went when that parameter did (finding F-R9). A sentinel no input can
+	// produce is a guard no mutation can falsify, which is the shape MR-001's
+	// second audit round was spent removing; invariant.v1 declaring no "title"
+	// is now carried by the signature itself, where a caller meets it at compile
+	// time instead of at run time.
 
 	// ErrSupersedesSelf reports a record that supersedes itself, whether
 	// through Supersede or through WithSupersedes.

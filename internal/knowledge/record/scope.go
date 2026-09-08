@@ -109,8 +109,30 @@ func checkRepoRelative(target string) error {
 // survives the backslash refusal above. "C:\x" is already caught, but a caller
 // that helpfully converted the separators would otherwise smuggle a
 // machine-local root into repository content.
+//
+// All three bytes are load-bearing, and the third is the one this function
+// spent a release without. A letter and a colon alone describe "a:b/c.go" just
+// as exactly as they describe "C:/x", and "a:b/c.go" is a legal POSIX
+// repository-relative path — refusing it took a working repository down for a
+// colon in a file name. The rooting slash is the only byte that tells the two
+// apart, because the drive letter cannot: 'a' names a drive as readily as 'C'
+// does, and "C:x" is the identical shape to "a:b/c.go" with a different letter.
+//
+// So the rule is the rooted form only, which is also the form that is actually
+// absolute. Windows calls "C:/x" absolute and "C:x" drive-*relative* (it means
+// "x, from the current directory on C:"), and a drive-relative spelling names
+// nothing outside a repository the way a rooted one does. "C:" and "C:x" are
+// therefore accepted here as the ordinary relative paths they are on the
+// platform this project's paths are spelled for — see
+// TestTheDriveLetterBoundaryIsPinnedFromBothSides, which holds every one of
+// these spellings from both directions.
+//
+// Nothing in MR-002 opens a scope target: step 11 is syntax only (AC-03.5), and
+// resolution is MR-005's. This is a spelling rule for stored content, not a
+// containment boundary; the loader's containment check is where escape is
+// refused for paths that are actually read.
 func isWindowsDriveRooted(target string) bool {
-	if len(target) < 2 || target[1] != ':' {
+	if len(target) < 3 || target[1] != ':' || target[2] != '/' {
 		return false
 	}
 	drive := target[0]

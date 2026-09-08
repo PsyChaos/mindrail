@@ -517,15 +517,52 @@ func TestEveryFindingCarriesARegisteredCodeAndNamesItsRecord(t *testing.T) {
 // reports as such, never a repository condition. Failing in the binary's own
 // voice is the honest remaining option, and this test is what makes it a
 // decision rather than an accident.
+//
+// The panic *value* is asserted, not merely that one happened. Deleting the
+// guard outright left this test green: Check went on to call a method on the nil
+// validator, the runtime raised a nil-pointer dereference, and `recovered !=
+// nil` was satisfied by it. A test a fix's own deletion cannot fail is not
+// testing the fix — and the two panics are not interchangeable, because one is
+// the binary saying what it needs and the other is a stack trace out of a
+// library the reader did not call.
 func TestCheckRefusesANilValidator(t *testing.T) {
 	defer func() {
-		if recovered := recover(); recovered == nil {
-			t.Error("Check(store, nil) returned instead of panicking, so an unvalidated store would read as clean")
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("Check(store, nil) returned instead of panicking, so an unvalidated store would read as clean")
+		}
+
+		reason, deliberate := recovered.(string)
+		if !deliberate {
+			t.Fatalf("Check(store, nil) panicked with %T (%v), not with its own explanation; "+
+				"a nil-pointer dereference further down is the failure this guard exists to replace",
+				recovered, recovered)
+		}
+		if !strings.Contains(reason, "validator") {
+			t.Errorf("the panic does not say what was missing: %q", reason)
 		}
 	}()
 
 	store := storeOf(t, []testRecord{decisionAt("DEC-0001.json", decisionDoc("DEC-0001", nil))})
 	_ = validate.Check(store, nil)
+}
+
+// TestCheckRefusesANilValidatorEvenWithNothingToValidate is the half the test
+// above cannot reach.
+//
+// The guard is a precondition on the call, not on the records: an empty store
+// never enters the step-5 loop, so a Check that had lost its guard would return
+// an empty finding list and publish "we looked and it is clean" about a store
+// nothing validated. That is the exact failure the guard's comment describes,
+// and it is the one case where deleting the guard does not panic at all.
+func TestCheckRefusesANilValidatorEvenWithNothingToValidate(t *testing.T) {
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Error("Check(emptyStore, nil) returned instead of panicking, so an unvalidated store read as clean")
+		}
+	}()
+
+	_ = validate.Check(storeOf(t, nil), nil)
 }
 
 // everyConditionStore carries one record for each of steps 5-11 so that a test

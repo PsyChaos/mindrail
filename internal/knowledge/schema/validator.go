@@ -162,9 +162,18 @@ func NewValidator(reg *Registry) (*Validator, error) {
 	compiler.AssertFormat()
 
 	for _, name := range reg.Names() {
+		// The two halves of a Registry have to agree, and this is where a
+		// disagreement is caught. A Registry built by NewRegistry always does —
+		// names is derived from docs and neither is mutable afterwards — so the
+		// only producer of a name with no document is a struct literal, which is
+		// what this package's own test helpers build. It is therefore an
+		// invariant check on the type rather than a guard against a race, and it
+		// is not unreachable: TestNewValidatorNamesADocumentItWasListedButNotGiven
+		// reaches it, and without it the nil bytes below are blamed on the
+		// decoder as "unexpected end of JSON input".
 		raw, ok := reg.Document(name)
 		if !ok {
-			return nil, fmt.Errorf("knowledge schema validator: %s vanished from the registry between listing and reading", name)
+			return nil, fmt.Errorf("knowledge schema validator: the registry lists %s but holds no document for it", name)
 		}
 
 		// jsonschema.UnmarshalJSON rather than encoding/json, twice over.

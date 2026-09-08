@@ -334,6 +334,106 @@ func TestEveryStepHasAnOverFireGuard(t *testing.T) {
 	}
 }
 
+// TestStepEightNeverSaysAFileThisRunReadIsNotThere is the regression for the
+// other direction of the graph split.
+//
+// Step 8 resolved its targets through the graph, which held only step 5's
+// survivors, while its suppression was keyed on the loader's Problems. The two
+// sets disagree on exactly the records that were read and then rejected, so one
+// report carried both "correct .../DEC-0001.json so it satisfies the knowledge
+// schema" and ".../DEC-0001.json is not there" — telling the reader to fix a
+// file it had just called absent, one line apart. Decision D-45's stated
+// principle is that publishing "it does not exist" about a file the binary
+// cannot verify is a fabricated claim; here the file was read and is named in
+// the same report.
+//
+// The two rows are the two ways a read record can fail to resolve. The first
+// carries an id, so it is in the graph; the second's id property is missing, so
+// it is not a node at all and only the file the loader named can suppress the
+// claim. A fix that repaired one and not the other would pass half of this.
+func TestStepEightNeverSaysAFileThisRunReadIsNotThere(t *testing.T) {
+	validator := shippedValidator(t)
+
+	for _, tt := range []struct {
+		name    string
+		invalid testRecord
+	}{
+		{
+			name:    "the target was read and rejected by step 5",
+			invalid: decisionAt("DEC-0001.json", decisionDoc("DEC-0001", map[string]any{"title": ""})),
+		},
+		{
+			name:    "the target was read and carries no id to resolve",
+			invalid: decisionAt("DEC-0001.json", decisionDoc("DEC-0001", nil, "id")),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := storeOf(t, []testRecord{
+				tt.invalid,
+				decisionAt("DEC-0002.json", decisionDoc("DEC-0002", map[string]any{
+					"supersedes": []any{"DEC-0001"},
+				})),
+			})
+
+			findings := validate.Check(store, validator)
+
+			if got := findingsAt(findings, validate.StepSupersedeTarget); len(got) != 0 {
+				t.Errorf("step 8 claimed a file this run read is not there:\n\t%s", describe(got))
+			}
+			// The contradiction is what a reader actually meets, so it is asserted
+			// as text: no message may say the file is absent while another names it
+			// as one to correct.
+			for _, finding := range findings {
+				if strings.Contains(finding.Message, "is not there") {
+					t.Errorf("a finding says a file this run read is not there: %q", finding.Message)
+				}
+			}
+			// And the row has to have contained a rejected record, or it is a
+			// store with nothing to suppress.
+			if len(findingsAt(findings, validate.StepSchema)) == 0 {
+				t.Errorf("no record failed step 5, so this row guards nothing:\n\t%s", describe(findings))
+			}
+		})
+	}
+}
+
+// TestStepEightStillReportsATargetNothingInThisRunNamed is the over-fire guard
+// for the test above.
+//
+// Widening step 8's suppression from "the loader recorded a Problem" to "this
+// run named the file at all" is exactly the direction that turns a real dangling
+// reference into silence. DEC-0001 is referenced, and no record, no Problem and
+// no file in this run mentions it — so the claim that it is not there is one
+// this binary can make.
+//
+// The second row is the case that keeps the id half of the suppression honest:
+// the record carrying id DEC-0001 lives at DEC-0009.json, so it resolves without
+// its expected file having been read. Nothing may be said about it either.
+func TestStepEightStillReportsATargetNothingInThisRunNamed(t *testing.T) {
+	validator := shippedValidator(t)
+
+	absent := storeOf(t, []testRecord{
+		decisionAt("DEC-0002.json", decisionDoc("DEC-0002", map[string]any{
+			"supersedes": []any{"DEC-0001"},
+		})),
+	})
+	want := []string{".mindrail/knowledge/decisions/DEC-0002.json"}
+	if got := pathsAt(validate.Check(absent, validator), validate.StepSupersedeTarget); !slices.Equal(got, want) {
+		t.Errorf("step 8 reported %v for a genuinely absent target, want %v", got, want)
+	}
+
+	misfiled := storeOf(t, []testRecord{
+		decisionAt("DEC-0002.json", decisionDoc("DEC-0002", map[string]any{
+			"supersedes": []any{"DEC-0001"},
+		})),
+		decisionAt("DEC-0009.json", decisionDoc("DEC-0001", map[string]any{"status": "superseded"})),
+	})
+	if got := findingsAt(validate.Check(misfiled, validator), validate.StepSupersedeTarget); len(got) != 0 {
+		t.Errorf("step 8 fired on a target whose record was read under another file name:\n\t%s",
+			describe(got))
+	}
+}
+
 // TestARecordThatFailsStepFiveIsNotAskedTheLaterSteps is decision D-40's first
 // half.
 //
@@ -592,19 +692,21 @@ func TestTwoFilesCarryingOneIdAreNotAlsoADuplicateActiveLineage(t *testing.T) {
 	}
 }
 
-// TestACycleIsReportedFromItsSmallestMemberNotFromWhereTheWalkEnteredIt pins the
-// rotation decision D-47's determinism rests on for step 9.
+// TestAClosedGroupIsNamedTheSameWayWhicheverRecordTheWalkEnteredItFrom pins the
+// canonical member list decision D-47's determinism rests on for step 9.
 //
-// DEC-0001 is not in the cycle; it points into it. The traversal therefore
-// enters the cycle at DEC-0003 and closes it at DEC-0002, so an unrotated chain
-// would read "DEC-0003 -> DEC-0002 -> DEC-0003" — a correct description of the
-// same cycle, spelled differently depending on which record happened to be
-// walked first. Rotation makes the message a property of the cycle.
+// DEC-0001 is not in the closed group; it points into it. The traversal
+// therefore reaches DEC-0003 first and closes the loop at DEC-0002, so a member
+// list that was a property of the walk rather than of the group would read
+// "DEC-0003, DEC-0002" here and "DEC-0002, DEC-0003" in a store whose files
+// happened to be named the other way round — two spellings of one condition,
+// which is a report no consumer can diff.
 //
-// It is also the over-fire guard for the cycle detection itself: a record that
-// merely references a cycle is not part of one, and DEC-0001 must not be
-// reported.
-func TestACycleIsReportedFromItsSmallestMemberNotFromWhereTheWalkEnteredIt(t *testing.T) {
+// It is also the over-fire guard for the detection itself: a record that merely
+// references a closed group is not in one, and DEC-0001 must not be reported.
+// Strong connectivity is what makes that distinction — DEC-0001 reaches
+// DEC-0002 and DEC-0003, and neither of them reaches it back.
+func TestAClosedGroupIsNamedTheSameWayWhicheverRecordTheWalkEnteredItFrom(t *testing.T) {
 	store := storeOf(t, []testRecord{
 		decisionAt("DEC-0001.json", decisionDoc("DEC-0001", map[string]any{
 			"supersedes": []any{"DEC-0003"},
@@ -624,16 +726,17 @@ func TestACycleIsReportedFromItsSmallestMemberNotFromWhereTheWalkEnteredIt(t *te
 		".mindrail/knowledge/decisions/DEC-0003.json",
 	}
 	if got := pathsAt(findings, validate.StepSupersedeCycle); !slices.Equal(got, want) {
-		t.Fatalf("step 9 reported %v, want only the two records in the cycle\n\t%s", got, describe(findings))
+		t.Fatalf("step 9 reported %v, want only the two records in the closed group\n\t%s",
+			got, describe(findings))
 	}
 
-	// Every member carries the same chain, so a reader comparing two findings
-	// sees one cycle rather than two rotations of it.
-	wantChain := "DEC-0002 -> DEC-0003 -> DEC-0002"
+	// Every member carries the same list, so a reader comparing two findings sees
+	// one group rather than two orderings of it.
+	const wantMembers = "DEC-0002, DEC-0003"
 	for _, finding := range findings {
-		if !strings.Contains(finding.Message, wantChain) {
-			t.Errorf("the finding on %s does not carry the rotated chain %q: %q",
-				finding.Path, wantChain, finding.Message)
+		if !strings.Contains(finding.Message, wantMembers) {
+			t.Errorf("the finding on %s does not carry the canonical member list %q: %q",
+				finding.Path, wantMembers, finding.Message)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package schema
 
 import (
 	"bytes"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -41,14 +42,25 @@ func registryWith(t *testing.T, names ...string) *Registry {
 // report every invariant in the repository as clean while nothing had looked at
 // one, and "nobody looked" published as "we looked and it is clean" is the
 // reading this project keeps paying to separate.
+// Each row also asserts which document was named and that the refusal is not a
+// fetch attempt. Finding BA-09 is why: without the "ships no" check the compile
+// below still fails, because nothing registered that $id and the denied loader
+// turns it into ErrSchemaNotShipped — so a row asking only "err != nil" left the
+// check deletable. The two conditions are different and get different answers:
+// "this binary was never given the file" is a build problem, while "a $ref went
+// looking for a document nothing registered" is a renamed $id (D-37), and
+// TestValidatorRejectsARegistryWhoseSchemaIDWasRenamed owns that one.
 func TestNewValidatorFailsWhenARequiredDocumentIsAbsent(t *testing.T) {
 	tests := []struct {
 		name    string
 		present []string
+		// named is the document the diagnosis has to point at: the loop runs
+		// validatedKinds in order, so the first absent one is the one reported.
+		named string
 	}{
-		{name: "invariant document absent", present: []string{DecisionSchemaName}},
-		{name: "decision document absent", present: []string{InvariantSchemaName}},
-		{name: "both absent", present: nil},
+		{name: "invariant document absent", present: []string{DecisionSchemaName}, named: InvariantSchemaName},
+		{name: "decision document absent", present: []string{InvariantSchemaName}, named: DecisionSchemaName},
+		{name: "both absent", present: nil, named: DecisionSchemaName},
 	}
 
 	for _, tt := range tests {
@@ -57,7 +69,30 @@ func TestNewValidatorFailsWhenARequiredDocumentIsAbsent(t *testing.T) {
 			if err == nil {
 				t.Fatalf("NewValidator() error = nil, want a failure; validator holds %d schemas", len(validator.schemas))
 			}
+			if !strings.Contains(err.Error(), "ships no "+tt.named) {
+				t.Fatalf("NewValidator() error = %q, want it to say the binary ships no %s", err, tt.named)
+			}
+			if errors.Is(err, ErrSchemaNotShipped) {
+				t.Fatalf("NewValidator() error = %q, want a missing-document refusal rather than a fetch attempt; "+
+					"a document this binary never shipped must be reported before the compiler turns it into a $ref nobody registered", err)
+			}
 		})
+	}
+}
+
+// TestNewValidatorAcceptsARegistryCarryingEveryDocumentItReads is the over-fire
+// guard for the table above. "Ships no document for this pair" must fire only
+// when the pair really has none: a registry holding both required documents
+// constructs, and the resulting validator is one that actually validates rather
+// than one that holds an empty map.
+func TestNewValidatorAcceptsARegistryCarryingEveryDocumentItReads(t *testing.T) {
+	validator, err := NewValidator(registryWith(t, DecisionSchemaName, InvariantSchemaName))
+	if err != nil {
+		t.Fatalf("NewValidator() error = %v, want nil", err)
+	}
+	want := len(validatedKinds) * len(ReadableVersions())
+	if got := len(validator.schemas); got != want {
+		t.Fatalf("NewValidator() compiled %d schemas, want %d", got, want)
 	}
 }
 
@@ -154,15 +189,28 @@ func TestShippedSchemaDocumentsDeclareThePinnedID(t *testing.T) {
 // TestDocumentIDRefusesADocumentThatNamesItselfNothing keeps the constructor
 // from registering a document under an invented URL, which would create a
 // resource no "$ref" could name.
+//
+// Each row asserts *which* refusal it got, not merely that one arrived, and that
+// is the whole point of the table. Finding BA-09 showed why: deleting the
+// "is not a JSON object" type assertion and keeping `object, _ := ...` leaves a
+// nil map, the `object["$id"]` lookup below then misses, and the function still
+// returns an error — so a row that only asked "err != nil" published a deleted
+// guard as a live one. A JSON array is not a document with no $id; it is not a
+// schema document at all, and a reader sent looking for a missing "$id" member
+// in `["not","an","object"]` has been told the wrong thing.
 func TestDocumentIDRefusesADocumentThatNamesItselfNothing(t *testing.T) {
 	tests := []struct {
 		name string
 		doc  string
+		// want is a distinguishing fragment of the diagnosis: no two rows may
+		// share one, or the table stops separating the conditions.
+		want string
 	}{
-		{name: "no $id member", doc: `{"$schema":"https://json-schema.org/draft/2020-12/schema"}`},
-		{name: "empty $id", doc: `{"$id":""}`},
-		{name: "$id is not a string", doc: `{"$id":42}`},
-		{name: "document is not an object", doc: `["not","an","object"]`},
+		{name: "no $id member", doc: `{"$schema":"https://json-schema.org/draft/2020-12/schema"}`, want: "declares no $id"},
+		{name: "empty $id", doc: `{"$id":""}`, want: "not a non-empty string"},
+		{name: "$id is not a string", doc: `{"$id":42}`, want: "not a non-empty string"},
+		{name: "document is not an object", doc: `["not","an","object"]`, want: "is not a JSON object"},
+		{name: "document is a bare true", doc: `true`, want: "is not a JSON object"},
 	}
 
 	for _, tt := range tests {
@@ -171,10 +219,86 @@ func TestDocumentIDRefusesADocumentThatNamesItselfNothing(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decoding fixture: %v", err)
 			}
-			if id, err := documentID(doc); err == nil {
+			id, err := documentID(doc)
+			if err == nil {
 				t.Fatalf("documentID() = %q, nil; want an error", id)
 			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("documentID() error = %q, want it to say %q — a refusal that names the wrong condition sends the reader to the wrong fix", err, tt.want)
+			}
 		})
+	}
+}
+
+// TestDocumentIDAcceptsAnOrdinaryDocument is the over-fire guard for the table
+// above. The rows there are all refusals, so a documentID that refused
+// everything would satisfy every one of them; the shipped documents are the
+// adjacent healthy case and must still be readable.
+func TestDocumentIDAcceptsAnOrdinaryDocument(t *testing.T) {
+	for _, name := range []string{DecisionSchemaName, InvariantSchemaName} {
+		raw, err := schemas.KnowledgeFS.ReadFile("knowledge/" + name)
+		if err != nil {
+			t.Fatalf("reading embedded %q: %v", name, err)
+		}
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("decoding %s: %v", name, err)
+		}
+		id, err := documentID(doc)
+		if err != nil {
+			t.Fatalf("documentID(%s) error = %v, want nil", name, err)
+		}
+		if id == "" {
+			t.Fatalf("documentID(%s) = %q, want a non-empty $id", name, id)
+		}
+	}
+}
+
+// TestNewValidatorNamesADocumentItWasListedButNotGiven reaches the one guard in
+// NewValidator that nothing outside this package can reach: the read-back of a
+// name Names() just produced.
+//
+// A Registry built by NewRegistry always agrees with itself — names is derived
+// from docs and neither is mutable afterwards — so the only way to a disagreeing
+// pair is a struct literal, which is exactly what this package's own helpers
+// build. That makes the guard an invariant check on the type rather than a
+// concurrency guard, and this test is what stops it from being deleted as dead
+// code: without it the loop reads a nil document, hands it to
+// jsonschema.UnmarshalJSON, and the constructor blames "unexpected end of JSON
+// input" on a file that is merely absent from one half of the registry.
+func TestNewValidatorNamesADocumentItWasListedButNotGiven(t *testing.T) {
+	registry := registryWith(t, DecisionSchemaName, InvariantSchemaName)
+	// The listing grows a name the document map does not carry. Nothing but a
+	// literal can produce this, and a literal is how the tests above build one.
+	registry.names = append(registry.names, "decision.v9.schema.json")
+
+	_, err := NewValidator(registry)
+	if err == nil {
+		t.Fatal("NewValidator() error = nil, want a failure for a name the registry lists but cannot produce")
+	}
+	if !strings.Contains(err.Error(), "decision.v9.schema.json") {
+		t.Fatalf("NewValidator() error = %q, want it to name decision.v9.schema.json", err)
+	}
+	// The wording is asserted because it is the only observable there is: with
+	// the check gone the constructor still fails, on nil bytes, at the decoder —
+	// same name, wrong diagnosis, and a reader sent to look at the contents of a
+	// file the registry never held. Asserting "an error happened" is what let
+	// this check be deleted silently in the first place.
+	if !strings.Contains(err.Error(), "holds no document") {
+		t.Fatalf("NewValidator() error = %q, want the registry's own diagnosis; "+
+			"a decode failure on nil bytes blames the file's contents for its absence", err)
+	}
+	if strings.Contains(err.Error(), "decoding") {
+		t.Fatalf("NewValidator() error = %q, want the absence reported before anything tried to decode it", err)
+	}
+}
+
+// TestNewValidatorAcceptsARegistryWhoseTwoHalvesAgree is the over-fire guard for
+// the test above: the check must fire on a disagreeing pair and on nothing else,
+// so the same helper without the extra name has to construct.
+func TestNewValidatorAcceptsARegistryWhoseTwoHalvesAgree(t *testing.T) {
+	if _, err := NewValidator(registryWith(t, DecisionSchemaName, InvariantSchemaName)); err != nil {
+		t.Fatalf("NewValidator() error = %v, want nil for a registry whose names and documents agree", err)
 	}
 }
 

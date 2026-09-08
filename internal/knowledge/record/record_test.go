@@ -20,10 +20,18 @@ import (
 // reordered or a type widened, because the call site would have been updated in
 // the same edit. A declared function type cannot be updated in passing: the
 // package stops building, which is the loudest failure available.
+//
+// NewInvariant takes three strings, not four. AC-01.2 froze a fourth — a title —
+// and AC-01.1 froze the Invariant as a mirror of invariant.v1, which declares no
+// title; the two halves contradicted each other and the half the schema document
+// backs won (finding F-R9). AC-01.2 in docs/engineering/mr-002-requirements.md
+// was amended to the three-string form, so this line and that document agree
+// again. TestNewInvariantHasNoParameterForAPropertyItsSchemaDoesNotDeclare is
+// the half of the pair that reads the document.
 var (
-	_ func(string, time.Time, string, string, ...record.Option) (record.Decision, error)  = record.NewDecision
-	_ func(string, time.Time, string, string, ...record.Option) (record.Invariant, error) = record.NewInvariant
-	_ func(record.Decision, record.Decision) (record.Decision, record.Decision, error)    = record.Supersede
+	_ func(string, time.Time, string, string, ...record.Option) (record.Decision, error) = record.NewDecision
+	_ func(string, time.Time, string, ...record.Option) (record.Invariant, error)        = record.NewInvariant
+	_ func(record.Decision, record.Decision) (record.Decision, record.Decision, error)   = record.Supersede
 )
 
 // createdAt is the instant every fixture in this package is stamped with. It is
@@ -174,7 +182,7 @@ func TestNewDecisionStampsWhatTheSchemaRequires(t *testing.T) {
 // options.
 func TestNewInvariantStampsWhatTheSchemaRequires(t *testing.T) {
 	scope := record.Scope{Level: record.ScopeFile, Target: "internal/knowledge/schema/validator.go"}
-	invariant, err := record.NewInvariant("INV-0001", createdAt, "", "Every record validates against its schema.",
+	invariant, err := record.NewInvariant("INV-0001", createdAt, "Every record validates against its schema.",
 		record.WithSeverity(record.SeverityHigh), record.WithScope(scope))
 	if err != nil {
 		t.Fatalf("NewInvariant() error = %v, want nil", err)
@@ -222,7 +230,7 @@ func TestConstructorsSerializeCreatedAtAsUTCRFC3339(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDecision() error = %v, want nil", err)
 	}
-	invariant, err := record.NewInvariant("INV-0001", at, "", "s",
+	invariant, err := record.NewInvariant("INV-0001", at, "s",
 		record.WithSeverity(record.SeverityLow), record.WithScope(record.Scope{Level: record.ScopeProject}))
 	if err != nil {
 		t.Fatalf("NewInvariant() error = %v, want nil", err)

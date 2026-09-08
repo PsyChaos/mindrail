@@ -178,7 +178,7 @@ func TestGoldensAreRecordsTheConstructorsWouldAlsoProduce(t *testing.T) {
 			t.Fatalf("decoding %s: %v", invariantGolden, err)
 		}
 
-		built, err := record.NewInvariant(want.ID, want.CreatedAt, "", want.Statement,
+		built, err := record.NewInvariant(want.ID, want.CreatedAt, want.Statement,
 			record.WithRationale(want.Rationale),
 			record.WithSeverity(want.Severity),
 			record.WithSupersedes(want.Supersedes...),

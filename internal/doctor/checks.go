@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/config"
@@ -682,18 +683,22 @@ func knowledgeResult(s Subject) Result {
 
 	fatal, degraded := splitProblems(s.Knowledge.Problems)
 	if len(fatal) > 0 {
-		result := failure(StateError, "Knowledge store not fully readable by this binary", diagnosis{
-			code: app.CodeKnowledgeSchemaUnsupported,
-			// The reader window belongs in the diagnostic, not among the
-			// remedies: "This binary reads schema 1." is a fact about the
-			// binary, and a next_action that cannot be carried out is not a
-			// next action (finding R8).
-			diagnostic: describeProblems(fatal) + "\nThis binary reads schema " + window + ".",
+		reading := unreadableAlso(diagnosis{
+			code:       app.CodeKnowledgeSchemaUnsupported,
+			diagnostic: describeProblems(fatal),
 			impact:     "This binary sees only part of the store, and acting on a partial view of the invariants is worse than refusing to act.",
 			next: []string{
 				"Upgrade Mindrail to a version whose reader window covers these records.",
 			},
-		})
+		}, degraded)
+		// The reader window belongs in the diagnostic, not among the remedies:
+		// "This binary reads schema 1." is a fact about the binary, and a
+		// next_action that cannot be carried out is not a next action (finding
+		// R8). It is appended last so it closes the account whether or not the
+		// loader also reported records it could not read for another reason.
+		reading.diagnostic += "\nThis binary reads schema " + window + "."
+
+		result := failure(StateError, "Knowledge store not fully readable by this binary", reading)
 		result.Details = details
 		return result
 	}
@@ -710,23 +715,23 @@ func knowledgeResult(s Subject) Result {
 	// on itself makes "which decision is current" unanswerable for every record
 	// in it.
 	if len(cycles) > 0 {
-		result := failure(StateError, "Knowledge store has a supersede cycle", diagnosis{
+		result := failure(StateError, "Knowledge store has a supersede cycle", unreadableAlso(diagnosis{
 			code:       app.CodeKnowledgeSupersedeCycle,
 			diagnostic: describeFindings(cycles),
 			impact:     "No record in the cycle has a newest version, so every answer about which decision is current is wrong rather than merely incomplete.",
 			next:       findingRemedies(cycles),
-		})
+		}, degraded))
 		result.Details = details
 		return result
 	}
 
 	if len(invalid) > 0 {
-		result := failure(StateDegraded, "Knowledge store has invalid records", diagnosis{
+		result := failure(StateDegraded, "Knowledge store has invalid records", unreadableAlso(diagnosis{
 			code:       app.CodeKnowledgeInvalid,
 			diagnostic: describeFindings(invalid),
-			impact:     "The reported records are readable but wrong, so anything derived from them rests on a record that breaks the contract this repository declares; the rest of the store is unaffected.",
+			impact:     invalidRecordsImpact(degraded),
 			next:       findingRemedies(invalid),
-		})
+		}, degraded))
 		result.Details = details
 		return result
 	}
@@ -922,7 +927,127 @@ func describeProblems(problems []loader.Problem) string {
 	for _, problem := range problems {
 		lines = append(lines, problem.Path+": "+problem.Message)
 	}
-	return strings.Join(lines, "\n")
+	return describeBounded(lines, "unreadable record")
+}
+
+// unreadableAlso names the records the loader could not read on a reading the
+// precedence ladder has already given to something else.
+//
+// AC-06.1 fixes that ladder — a fatal loader problem outranks every finding, a
+// cycle outranks every other finding, and any finding outranks a merely
+// unreadable record — so this function changes no State, no Code and no Summary.
+// The ladder decides which condition names the reading. It does not license
+// silence about the others, and silence is what was there: a store carrying both
+// an unreadable record and a finding reported KNOWLEDGE_INVALID and named the
+// unreadable file in no diagnostic and no next_action on any command. `status`
+// published the count without the name, `doctor` published neither, so the file
+// the reader had to open appeared nowhere at all.
+//
+// The name goes in both fields because neither is sufficient alone.
+// status.componentFrom keeps next_action and drops Diagnostic and Impact (MR-001
+// finding R6), so a file named only in the diagnostic is invisible exactly where
+// status prints the reading; and a remedy with no account behind it does not say
+// why the file is named. recordRemedies supplies the sentence rather than a new
+// one, so the phrasing stays the one the CLI's remedy classifier already reads
+// and the two renderings of an unreadable record do not drift apart.
+func unreadableAlso(d diagnosis, degraded []loader.Problem) diagnosis {
+	if len(degraded) == 0 {
+		return d
+	}
+
+	d.diagnostic += fmt.Sprintf("\nThe loader could not read %d further %s:\n",
+		len(degraded), plural(len(degraded), "record", "records")) + describeProblems(degraded)
+	d.next = slices.Concat(d.next, recordRemedies(degraded))
+	return d
+}
+
+// invalidRecordsImpact says what a store of invalid records costs, and does not
+// say the rest of it is intact when part of it could not be read.
+//
+// The clause is computed rather than constant because it is a claim: "the rest
+// of the store is unaffected" is true of a store whose only defect is records
+// that break their schema, and false of one that also holds records no command
+// can see. Asserting it on both was the same shape as the finding above — the
+// reading told the reader about one condition and quietly denied the other.
+func invalidRecordsImpact(degraded []loader.Problem) string {
+	const wrong = "The reported records are readable but wrong, so anything derived from them rests on a record that breaks the contract this repository declares"
+	if len(degraded) == 0 {
+		return wrong + "; the rest of the store is unaffected."
+	}
+	return fmt.Sprintf("%s, and the rest of the store is not intact either: %d %s could not be read at all and %s invisible to every command.",
+		wrong, len(degraded), plural(len(degraded), "record", "records"), plural(len(degraded), "is", "are"))
+}
+
+// maxDiagnosticLines and maxDiagnosticLineBytes bound the account a knowledge
+// reading prints. maxNamedRecords bounds the remedies beside it.
+//
+// AC-06.4 asked for that remedy cap and it was applied where it was asked for;
+// this pair is not an extension of it but the bound the diagnostic never had.
+// The diagnostic was unbounded in two independent directions, and closing either
+// alone leaves the other open.
+//
+// The first direction is how many accounts are printed: describeProblems and
+// describeFindings joined every problem and every finding in the store, so the
+// report grew with the repository. Measured on this tree, `doctor --json` over a
+// healthy store is 2,164 / 2,175 / 2,186 bytes at 10 / 100 / 1000 records — flat
+// — and was 6,009 / 28,140 / 248,652 bytes over the same counts of records
+// carrying one short finding each.
+//
+// The second is how long one account is. The message comes from the package that
+// detected the condition, and a finding that names every record it collides with
+// is a single line that grows with the store on its own: 1000 records sharing
+// one id produced a 45,386,439-byte report from 1,999 lines, 1,000 of which were
+// 45,134 bytes each. Capping the number of lines alone would still have printed
+// 451 KB of it.
+//
+// Both bounds sit far above anything this binary writes for a store that is
+// merely broken — the longest real account measured is 240 bytes — so an
+// ordinary failing repository renders exactly as it did before, and only a
+// report that has stopped being readable is abbreviated.
+const (
+	maxDiagnosticLines     = 10
+	maxDiagnosticLineBytes = 1000
+)
+
+// describeBounded renders the accounts a reading can print and counts the ones
+// it cannot.
+//
+// Nothing is dropped in silence. Accounts past the line cap are counted in a
+// tail that says where they are, and an account past the byte cap keeps its
+// head and carries the number of bytes it lost. Keeping the head is what makes
+// the truncation safe to do here: both callers write the record path first and
+// the rule second, so the part a cut can reach is the end of the prose and never
+// the file name AC-06.2 requires the reading to carry.
+func describeBounded(lines []string, noun string) string {
+	shown := min(len(lines), maxDiagnosticLines)
+
+	out := make([]string, 0, shown+1)
+	for _, line := range lines[:shown] {
+		out = append(out, truncateAccount(line))
+	}
+	if omitted := len(lines) - shown; omitted > 0 {
+		out = append(out, fmt.Sprintf("... and %d further %s under %s, not listed here.",
+			omitted, plural(omitted, noun, noun+"s"), loader.StoreRoot))
+	}
+	return strings.Join(out, "\n")
+}
+
+// truncateAccount cuts one account to maxDiagnosticLineBytes and says how much
+// it cut.
+//
+// The cut lands on a rune boundary: a diagnostic is carried through a JSON
+// envelope, and half a rune there is a byte sequence the encoder has to replace
+// rather than a shorter sentence.
+func truncateAccount(line string) string {
+	if len(line) <= maxDiagnosticLineBytes {
+		return line
+	}
+
+	cut := maxDiagnosticLineBytes
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut] + fmt.Sprintf("... (%d further bytes not shown)", len(line)-cut)
 }
 
 // maxNamedRecords bounds how many offending files a remedy lists by name. A
@@ -1018,7 +1143,7 @@ func describeFindings(findings []validate.Finding) string {
 	for _, finding := range findings {
 		lines = append(lines, finding.Path+": "+knowledgeStep(finding.Step)+": "+finding.Message)
 	}
-	return strings.Join(lines, "\n")
+	return describeBounded(lines, "finding")
 }
 
 // findingRemedyByStep is the action each rule asks of the reader.

@@ -66,6 +66,15 @@ closes an import cycle, and `schema.Validate` returning `[]validate.Finding`
 closes another. The implementers changed both and reported the changes. Whether
 their resolutions are correct is for the audit to decide.
 
+**Resolved by the FIX-E wave (finding F-R4).** The audit accepted the first
+resolution, and the design and requirements documents have been amended to the
+signature the binary has: `mr-002-design.md` §3 and **AC-02.1** now spell
+`schema.RecordKind`, and **D-50** in `mr-002-requirements.md` §1 carries the
+import-cycle reasoning and the rejected alternative. Both amendments are marked
+in place, so a later reader can tell a considered change from a drift. The
+second — two distinct `Finding` types — is now stated in the design sketch
+itself rather than only here.
+
 ## 5. Implementation summary
 
 | Package | Change |
@@ -98,21 +107,37 @@ fixtures.
 Measured by the orchestrator on the committed tree, not reported by an
 implementer.
 
-| Command | Result |
-|---|---|
-| `make verify` | **exit 0.** gofmt, `go vet`, all 16 packages `ok`, race detector all `ok` (`internal/cli` 44.3s), smoke `ok` 1.53s |
-| `make tidy-check` | **exit 0** |
-| `gofmt -l .` (excluding `testdata/`) | no output |
-| `go test ./... -list '.*'` top-level test functions | **619**, against a baseline of **507** at `79716a9` — 112 added |
-| `go list ./...` | 16 packages, up from 16 (two new `internal/knowledge/*` packages, `migrations`/`schemas` unchanged) |
+The `at 8e5c2e5` column is the tree the audit graded. The `after remediation`
+column is the same command re-run by the FIX-E wave on the tree carrying the
+FIX-A…FIX-E fixes, and it is here because §7 is read as a live checklist rather
+than as a transcript — finding F-R10 was raised against a stale number in it.
+
+| Command | at `8e5c2e5` | after remediation |
+|---|---|---|
+| `make verify` | **exit 0.** gofmt, `go vet`, every package `ok`, race detector all `ok` (`internal/cli` 44.3s), smoke `ok` 1.53s | **exit 0**, same shape |
+| `make tidy-check` | **exit 0** | **exit 0** |
+| `gofmt -l .` (excluding `testdata/`) | no output | no output |
+| `go test ./... -list '.*'` top-level test functions | **619**, against a baseline of **507** at `79716a9` — 112 added | **674** — 55 more, all of them regression tests, over-fire guards, or inputs pointed at a check no mutation could previously reach |
+| `go list ./...` | **18** packages, up from **16** at `79716a9` (two new `internal/knowledge/*` packages, `migrations`/`schemas` unchanged) | **18**, unchanged — no wave added a package |
+
+The "all 16 packages `ok`" and "16 packages, up from 16" readings that stood
+here until the FIX-E wave were both wrong, and finding F-R10 is about the second
+of them. `go list ./...` reports **18**: the row had carried the pre-MR-002
+count while its own parenthetical said two packages were added, so the sentence
+contradicted itself. Three of the eighteen — `cmd/mindrail`, `migrations`,
+`schemas` — carry no test files, so `go test ./...` prints 15 `ok` lines and 3
+`[no test files]` lines; "all 16 packages ok" was neither the package count nor
+the `ok` count.
 
 Baseline for comparison is recorded in §0 of the requirements document, captured
 before implementation began.
 
 ## 8. Decision log
 
-D-42…D-48 in `docs/engineering/mr-002-requirements.md` §1, in full, with
-reasoning. D-36…D-41 in `docs/engineering/mr-002-design.md` §4.
+D-42…D-50 in `docs/engineering/mr-002-requirements.md` §1, in full, with
+reasoning. D-36…D-41 in `docs/engineering/mr-002-design.md` §4. D-49 and D-50
+were added after MR-002 shipped, by the FIX-D and FIX-E remediation waves
+respectively; each says so in its own first line.
 
 ## 9. Reported deviations from the frozen requirements
 
@@ -126,9 +151,11 @@ The deviations that change a frozen signature, add unfrozen exported API, or
 introduce a runtime failure mode:
 
 - **W1/1** — `schema.Validate` takes `schema.RecordKind`, not `loader.RecordKind`
-  (import cycle).
+  (import cycle). *Accepted and folded into the contract by the FIX-E wave: see
+  D-50 and the amended AC-02.1.*
 - **W1/2** — `Finding` lives in `schema` as a narrower type
   (`{InstanceLocation, Keyword, Message}`) than the design's `validate.Finding`.
+  *The design sketch now names both types where they are declared.*
 - **W1/3, W2/4** — new exported API not named in the frozen design: in `schema`,
   `RecordKind`/`Finding`/`ErrSchemaNotShipped`/`SchemaNameFor` and two keyword
   constants; in `record`, `Severity`, `ScopeLevel`, `Option` and seven `With*`
