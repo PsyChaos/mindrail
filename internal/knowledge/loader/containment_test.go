@@ -602,24 +602,54 @@ func TestLoadReadsAnOrdinaryRecordWithoutReresolvingTheStorePath(t *testing.T) {
 	}
 }
 
-// TestLoadReadsTheEntryInsideTheDirectoryItListed pins the guarantee the cheap
-// branch has to keep and that no test named before this one: the bytes a record
-// contributes are the bytes of the entry inside the bucket the loader walked,
-// and not of anything a link on the entry's name points at.
+// TestLoadReadsTheEntryInsideTheDirectoryItListed pins what a record's bytes and
+// its reported path are when the bucket itself is a link and a file of the same
+// name exists somewhere else in the repository.
 //
-// It is the same record name reachable two ways — a real file in a linked
-// bucket, and a link of that name beside it in another bucket — and the two must
-// carry their own contents, not each other's.
+// The version of this test written for the fast path built two ordinary records
+// in two ordinary directories and asserted their bodies. That store has no link
+// in it at all, so it holds on a loader with no fast path, on a loader with only
+// the fast path, and on any loader that reads a file and returns its bytes — it
+// could not fail for the guarantee its name states (finding RD-04).
+//
+// This store can. The decisions bucket is a link to a directory elsewhere in the
+// worktree; the file the loader must read is the entry inside it, not the
+// same-named decoy sitting in the repository's own records directory. The
+// invariant beside it goes the other way — a real bucket holding a link — so the
+// two branches of recordFile are both exercised, and both have to report the
+// repository-relative path of the entry rather than the path of whatever the
+// link resolved to.
 func TestLoadReadsTheEntryInsideTheDirectoryItListed(t *testing.T) {
 	requireSymlinks(t)
 
 	worktree := t.TempDir()
-	makeKnowledgeDirs(t, worktree)
+	mustMkdirAll(t, filepath.Join(worktree, ".mindrail", "knowledge"))
+	mustMkdirAll(t, filepath.Join(worktree, ".mindrail", "knowledge", "invariants"))
 
+	// The record the loader must read, in the directory the decisions bucket
+	// points at.
 	decision := decisionJSON("DEC-0002", schema.WriteVersion)
+	linked := filepath.Join(worktree, "store-decisions")
+	mustMkdirAll(t, linked)
+	mustWriteFile(t, filepath.Join(linked, "DEC-0002.json"), decision)
+	mustSymlink(t, linked, filepath.Join(worktree, ".mindrail", "knowledge", "decisions"))
+
+	// The decoy: the same record name, inside the repository, holding different
+	// bytes. Nothing may reach it.
+	decoy := strings.Replace(decision, "Test decision", "The decoy beside the store", 1)
+	if decoy == decision {
+		t.Fatal("the decoy is byte-identical to the record, so it discriminates nothing")
+	}
+	mustMkdirAll(t, filepath.Join(worktree, "records"))
+	mustWriteFile(t, filepath.Join(worktree, "records", "DEC-0002.json"), decoy)
+
+	// The other branch: a real bucket whose entry is a link to a record inside
+	// the repository.
 	invariant := invariantJSON("INV-0002", schema.WriteVersion)
-	writeRecord(t, worktree, "decisions", "DEC-0002.json", decision)
-	writeRecord(t, worktree, "invariants", "INV-0002.json", invariant)
+	mustWriteFile(t, filepath.Join(worktree, "records", "INV-0002.json"), invariant)
+	mustSymlink(t,
+		filepath.Join(worktree, "records", "INV-0002.json"),
+		filepath.Join(worktree, ".mindrail", "knowledge", "invariants", "INV-0002.json"))
 
 	store, err := newLoader(t, worktree).Load(context.Background())
 	if err != nil {
@@ -628,12 +658,28 @@ func TestLoadReadsTheEntryInsideTheDirectoryItListed(t *testing.T) {
 	if len(store.Decisions) != 1 || len(store.Invariants) != 1 {
 		t.Fatalf("store = %+v, want one record in each bucket", store)
 	}
+
 	if got := string(store.Decisions[0].Body); got != decision {
-		t.Errorf("decision Body = %q, want %q", got, decision)
+		t.Errorf("decision Body = %q, want the entry inside the linked bucket %q", got, decision)
 	}
 	if got := string(store.Invariants[0].Body); got != invariant {
 		t.Errorf("invariant Body = %q, want %q", got, invariant)
 	}
+
+	// The path is the repository's spelling of where the record sits, on both
+	// branches. A record reported at the path its link resolved to would name a
+	// file the repository does not contain — and step 6 of the validation
+	// pipeline reads exactly this field to decide whether a record is filed
+	// where its id says.
+	wantDecision := ".mindrail/knowledge/decisions/DEC-0002.json"
+	if store.Decisions[0].Path != wantDecision {
+		t.Errorf("decision Path = %q, want %q", store.Decisions[0].Path, wantDecision)
+	}
+	wantInvariant := ".mindrail/knowledge/invariants/INV-0002.json"
+	if store.Invariants[0].Path != wantInvariant {
+		t.Errorf("invariant Path = %q, want %q", store.Invariants[0].Path, wantInvariant)
+	}
+
 	if store.Decisions[0].Kind != loader.KindDecision || store.Invariants[0].Kind != loader.KindInvariant {
 		t.Errorf("kinds = %q/%q, want decision/invariant",
 			store.Decisions[0].Kind, store.Invariants[0].Kind)

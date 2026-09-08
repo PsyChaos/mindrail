@@ -355,12 +355,22 @@ func (l *Loader) readRecord(kind RecordKind, absDir, relDir, name string) (*Reco
 // that. A fresh stat of the entry about to be opened is what the remaining cost
 // buys.
 //
-// The path handed to os.ReadFile stays canonical in both branches, which is the
-// guarantee the previous code stated and this one has to keep: the final open
-// follows no link, so a link swapped in after the check cannot redirect the read
-// that follows it. In the second branch it is canonical because Resolve returns
-// it that way; in the first because a non-link leaf on a canonical parent is
-// already canonical.
+// The path handed to os.ReadFile is canonical in both branches — in the second
+// because Resolve returns it that way, in the first because a non-link leaf on a
+// canonical parent is already canonical — and that is a statement about the
+// filesystem as it was when the check ran, not a lock on it.
+//
+// It is worth being exact about what that does not buy, because the sentence
+// this replaces claimed the opposite and an audit measured it wrong. os.ReadFile
+// follows symbolic links. A link substituted for the entry between the Lstat
+// above and the open below is followed, and a record outside the worktree is
+// ingested — the containment check is point-in-time, not time-of-use. The window
+// is the same one every earlier version of this function had, including the one
+// that called Root.Resolve per record, since Resolve likewise answers about the
+// disk it saw; the fast path narrows it to one syscall pair and does not close
+// it. Closing it means opening the entry without following links and stating
+// what the loader does when that fails, which is a containment policy in
+// internal/filesystem and a decision no MR-002 requirement asked for.
 //
 // Reading from absDir rather than re-deriving the directory from the root also
 // means the record is read out of the very directory os.ReadDir enumerated. A
@@ -372,6 +382,11 @@ func (l *Loader) recordFile(absDir, rel, name string) (string, *Problem) {
 	// The equivalence above rests on name being a single path component, which
 	// is all os.ReadDir yields. Anything else is not reasoned about here: it
 	// goes to the boundary, which is written to reason about whole paths.
+	//
+	// No caller can violate that today, which is why this branch went two
+	// remediations without a test that could turn it red (finding RD-05).
+	// TestTheFastPathIsNotTakenForANameThatIsNotOneComponent calls this function
+	// directly and is the one thing holding it.
 	if filepath.Base(name) == name {
 		candidate := filepath.Join(absDir, name)
 		info, err := os.Lstat(candidate)
