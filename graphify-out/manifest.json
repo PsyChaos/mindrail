@@ -931,8 +931,8 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1788681641.778629,
-    "ast_hash": "",
+    "seen": 1788685104.4082527,
+    "ast_hash": "4a2c9badbdc3871cb223878711a614db",
     "semantic_hash": ""
   },
   "internal/cli/representable.go": {
@@ -1221,6 +1221,12 @@
     "mtime": 1788684641.0590312,
     "seen": 1788685022.160831,
     "ast_hash": "d93166d1547e502e62d3761637f4a763",
+    "semantic_hash": ""
+  },
+  "docs/engineering/mr-002-design.md": {
+    "mtime": 1788688855.753634,
+    "seen": 1788688872.0415845,
+    "ast_hash": "3d7fd38d31d66da7641e4bdd1d97ac48",
     "semantic_hash": ""
   }
 }
