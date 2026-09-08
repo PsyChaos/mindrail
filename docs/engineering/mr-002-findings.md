@@ -13,10 +13,15 @@ pass had introduced.
 - **Remediation 2** landed as `8832bfd`.
 - **Round 3** graded it. 17 proposed, **12 confirmed**, 5 refuted, 0 unsettled.
   Nine were new; three pre-dated it. Appendix D.
+- **Remediation 3** landed as `aa5ec9e..0cee59b`, closing all twelve under decision
+  **D-52**. Appendix E.
 
-**Status: `NOT_VERIFIED`.** One HIGH remains open — the same seam, flipped a third
-time — and it is what decision **D-52** was written to end. The twelve round-3
-findings are unfixed; the next session fixes them under D-52.
+**Status: `NOT_VERIFIED`.** Not because a finding is open — all twelve are closed
+and each fix has a test that a mutation of the fix turns red. It is `NOT_VERIFIED`
+because **no audit round has graded remediation 3**, and this repository's measured
+base rate for an ungraded fix pass is the whole subject of §1: remediation 1
+introduced eleven defects out of eleven. A fourth round is what would change this
+verdict.
 
 ---
 
@@ -181,21 +186,25 @@ directions.
 
 ## 4. Status
 
-**`NOT_VERIFIED`.** The consensus gate is not met: one HIGH finding, confirmed by two
-independent auditors and surviving refutation, remains open, along with one MEDIUM
-performance regression and nine LOW findings.
+**`NOT_VERIFIED`.** *Amended after remediation 3; the paragraph this replaces
+recorded the state after round 2, when one HIGH was still open.*
 
-The audit budget of two rounds is spent. What MR-002 has:
+No finding is open. What is missing is a grade: the twelve findings of round 3 were
+closed by a fix pass that no auditor has read, and §1 is the measurement that says
+what that is worth. The last two fix passes introduced 11 and 9 defects
+respectively.
 
-- `make verify` green, `make tidy-check` green, 674 top-level test functions against
-  a baseline of 507.
-- Both round-1 headline defects closed and guarded, verified by reversion.
+What MR-002 has:
+
+- `make verify` green, `make tidy-check` green, **726** top-level test functions
+  against a baseline of 507 (507 → 619 → 674 → 711 → 726).
 - Steps 5–11 implemented, wired into `status` and `doctor`, with the pipeline pure
   and the schema documents as the contract.
+- The identity seam decided once, by decision D-52, rather than patched three times,
+  and graded against the whole 4,864-store space round 3's Breaker enumerated
+  (Appendix E).
 
-What it does not have: a clean audit. The remaining findings are documented above
-with reproductions; none requires a further audit round to be believed, and all of
-them require one to be *fixed safely* — which is the whole content of §1.
+What it does not have: a fourth audit round.
 
 ---
 
@@ -416,3 +425,88 @@ reviewed adversarially by a second model before implementation — that review
 found the decision as first written governed only who *supplies* graph edges and
 was silent about who *receives* a finding, which on this very store reproduces
 round 2's defect through a different door. Rule 4 is that review's amendment.
+
+---
+
+## Appendix E — what the third remediation did
+
+Four commits, `aa5ec9e..0cee59b`, closing all twelve round-3 findings. Every fix
+was mutated afterwards and the mutation turned a test red; the mutation is named
+in each row below, because a fix whose test cannot fail is not a fix.
+
+### The rule, in two lines of code
+
+Decision D-52 is one idea and it lands in two places, which is the point — the
+previous three attempts each governed one of them and were silent about the other.
+
+| Where | What it now says |
+|---|---|
+| `newGraph` (`internal/knowledge/validate/lineage.go`) | A node's edges come from its canonical record — `s.canonical`, which is `ref.ID == idFromPath(ref.Path)` — whatever step 5 made of it. An id no file is named after supplies no edges at all. |
+| `askedFor` (same file) | A step-9 or step-10 finding names the canonical record, and only when step 5 accepted it. |
+
+`subject.canonical` is computed once, in `readRecords`, so the two questions
+cannot read different answers. Nothing else in the pipeline changed.
+
+Three mutations, each caught:
+
+| Mutation | Which rule it removes | What went red |
+|---|---|---|
+| every claimant supplies edges | rules 2 and 3 | 6 tests, including round 2's over-fire regression |
+| only schema-valid canonical records supply edges | rule 1 | 5 tests, including round 1's fail-open regression **and the new CLI row** |
+| `askedFor` drops the canonical condition | rule 4 | 3 tests, including round 3's own store |
+
+### Graded against the whole state space, not a fixture set
+
+D-52 requires the rule to be evaluated against round 3's enumeration rather than
+against new fixtures, and to be reported and abandoned if any case comes out wrong.
+`TestTheOwnershipRuleAgreesWithAnIndependentOracleOverEveryStore` is that
+enumeration, reproduced exactly: every 2- or 3-file decision store over file names
+`{DEC-0001,DEC-0002,DEC-0003}.json`, declared ids `{DEC-0001,DEC-0002}`, supersedes
+any subset of those two, each file schema-valid or carrying an unknown property —
+3 × 16² + 16³ = **4,864 stores**.
+
+The oracle is written from D-52's four rules and shares no line with the code it
+grades: with two ids a closed walk is one file superseding itself or two
+superseding each other, so it is four comparisons rather than a second graph. It
+finds **1,169** stores holding a reportable cycle — the same population round 3's
+Breaker reported for the same space — and the implementation agrees with it on the
+exact reported file set in all 4,864. No case came out wrong, so no fifth exception
+was needed.
+
+Both stores D-52 names are in the suite by name:
+`TestRoundThreesMisfiledVoucherDoesNotDeleteTheCycle` asserts both halves of round
+3's own store, and `TestTwoMisfiledRecordsReportTheirCycleOnceTheyAreRenamed`
+states rule 3's cost end to end — two step-6 findings at exit 0, then the fatal
+cycle once the reader renames the files.
+
+### The twelve, and what each one took
+
+| ID | What was done | Mutation that turns it red |
+|---|---|---|
+| BA-B1 | D-52 in `newGraph` and `askedFor` | any of the three above |
+| BA-B2 | closed by the same rule — the answer no longer depends on the document's contents, so the two-valid-claimants store and the rejected-claimant store must now agree, and the test asserts both | `if false` in place of the canonical check |
+| BA-B3 | the test that could not fail was rewritten to derive its assertion: each row declares what each file supersedes, and every step-9 finding must name a file declaring a target the same message lists | any rule mutation |
+| BA-B4 | a CLI row for the fail-open arm — round 3's store in `agreementConditions()`, `broken: true`, remedy `classSupersedeCycle` | the fail-open mutation, which previously left `internal/cli` green |
+| B-B1 | `escapingDiagnostic` no longer says "The file is readable" about a file the loader never opened; it says the file was not opened and why | restoring the readability claim |
+| B-B3 | `escapingImpact`'s verbs agree with its subject, and a test reads the field for one and two records | either verb back to singular |
+| B-B4, RD-02 | a mixed degraded set gets its own noun ("unreadable or declined records") in the omission tail, and a remedy tail that asks for both actions instead of telling the reader to fix links | either tail falling back to the unreadable wording |
+| RD-01 | `alsoHeading`'s mixed arm is now covered, under a fatal reading where the heading is the reader's only account of those records | the mixed arm replaced by either homogeneous sentence |
+| RD-04 | the containment test builds the store its name describes: a linked bucket whose entry must be read rather than a same-named decoy elsewhere in the repository, plus a linked entry in a real bucket, both reported at their repository-relative paths | — (the old test had no link in it at all) |
+| RD-05 | one in-package test calls `recordFile` directly with a name that is not a single component, and asserts both arms | `if true` in place of the guard, which previously left all 18 packages green |
+| B-B2 | the comment now states what the check is — point-in-time, not time-of-use — and what closing the window would cost | — (prose) |
+
+### What was deliberately not done
+
+**B-B2's behaviour is unchanged.** `os.ReadFile` follows symbolic links, so a link
+swapped into a record's name between the `Lstat` and the open is followed and a
+record outside the worktree is ingested. That window is not new — every earlier
+version of `recordFile` had it, including the one that called `Root.Resolve` per
+record — and closing it means opening the entry without following links and
+deciding what the loader does when that fails, which is a containment policy in
+`internal/filesystem` that no MR-002 requirement asked for. The finding was that
+the comment claimed an immunity the code does not have; the comment is what was
+wrong, and the comment is what changed.
+
+The residual cost regression (Appendix D) and the accepted containment gap around
+`filesystem.Root.Resolve` are likewise untouched, for the same reason: both are
+outside what a finding asked for.

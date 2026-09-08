@@ -574,6 +574,18 @@ rule 2 closes a contradiction it found between rule 2's unqualified step-6 claus
 D-40's letter. The review also endorsed rule 3's trade after arguing both sides, and
 asked for the second store above.
 
+#### Outcome
+
+*Added after implementation.* The rule was implemented in `newGraph` (edges) and
+`askedFor` (reporting) and graded against the enumeration this decision demands.
+All 4,864 stores agree with an oracle written from the four rules above and sharing
+no line with the implementation, on the exact set of files step 9 reports — not
+merely on whether it reported anything. The oracle finds 1,169 stores holding a
+reportable cycle, the same population round 3's Breaker reported for the same space.
+**No case came out wrong, so no fifth exception was added.** Both named stores are
+in the test set. `docs/engineering/mr-002-findings.md` Appendix E records the whole
+of it.
+
 ---
 
 ## 2. Requirements
