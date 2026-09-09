@@ -356,6 +356,37 @@ would tell the arriving agent anything.
   existing ones do: `WORKSPACE_NOT_INITIALIZED` with the `mindrail init` remedy,
   never a panic and never a half-written row.
 
+  *Amended during TASK-05.* The code is `COORDINATION_UNAVAILABLE`, not
+  `WORKSPACE_NOT_INITIALIZED`. Reusing the existing code would have made one
+  value mean two things a caller has to tell apart — "this repository has no
+  runtime state" and "the operation you asked for could not be performed" — and
+  the reasoning is recorded in §2 of `mr-003-findings.md`.
+
+  *Amended during the round-1 remediation (finding F13).* The exit code differs
+  from the reporting commands' on this one condition, deliberately, and the
+  conflict has to be a decision rather than a silence.
+
+  Decision D-03 puts a repository that has never been initialised at **exit 0**:
+  nothing is wrong with it, it is simply not set up, and `status`, `doctor` and
+  `init` all report it and exit 0. A coordination command asked to read or write
+  state that does not exist has **failed to do what it was asked**, so it exits
+  1 with `COORDINATION_UNAVAILABLE`. The two answers are about different
+  questions — "what is the state of this repository?" and "did my operation
+  happen?" — and collapsing them would mean either a reporting command that
+  calls an ordinary uninitialised repository broken, or a `task open` that
+  reports success having written nothing.
+
+  The consequence for AC-09.1 is recorded rather than worked around: the
+  never-initialised row of the MR-001 agreement matrix cannot simply take the
+  coordination commands as further members, because
+  `assertExemptionsAreStillEarned` refuses to let an exemption cover a different
+  exit class — correctly, since that is the disagreement the matrix exists to
+  catch. The coordination commands therefore have a matrix of their own
+  (`internal/cli/coordination_agreement_test.go`), which asserts the same three
+  things and, for the conditions that are about the repository rather than about
+  the operation, takes `status` on the same bytes as its reference so the two
+  cannot drift apart.
+
 ### REQ-07 — `internal/status` publishes the coordination state
 
 - **AC-07.1** The additive `coordination` block of design §8, with `observation`
@@ -380,6 +411,18 @@ would tell the arriving agent anything.
   the human rendering, the JSON envelope and the exit code are asserted together
   for each: unknown task, unknown session, illegal transition, uninitialised
   repository.
+
+  *Amended during the round-1 remediation (finding F13).* Implemented as a
+  coordination matrix of its own rather than as further members of
+  `commandsUnderTest`, for the exit-class reason recorded under AC-06.7. Two
+  invariants that also drive `commandsUnderTest` —
+  `TestNoDocumentContradictsItsOwnErrorObject` and
+  `TestEveryRemedyAboutAFileNamesThatFileAbsolutely` — still do not cover the
+  coordination commands. Neither is vacuous there for a reason of its own: the
+  first compares a published document against its own error object, and a
+  coordination refusal publishes no document; the second is about remedies that
+  name a file, and these name tasks, sessions and states. Recorded here so the
+  next milestone decides rather than inherits.
 - **AC-09.2** For every row, carrying out the printed `next_action` clears the
   condition. A remedy that cannot be performed by the reader of the file it names
   is a defect (both milestones have produced one).
