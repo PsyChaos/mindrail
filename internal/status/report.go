@@ -265,11 +265,22 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 
 // coordinationInfo grades the coordination block.
 //
-// There is no doctor check behind it, so the observation is the flag bootstrap
-// set rather than a reading's code: either the summary was read or the sequence
-// never got that far. Both arms leave the counts at zero, which is precisely why
-// the flag has to be published.
+// There is no doctor check behind it, so the observation comes from what
+// bootstrap left behind rather than from a reading's code. Three answers, not
+// two: the summary was read, the sequence never got that far, or the read ran
+// and failed. All three leave the counts at zero, which is precisely why the
+// observation has to be published.
+//
+// The third was missing. Every failure was folded into the same false flag, so
+// a damaged `created_at` — a row the database holds and cannot answer for —
+// was published as "not observed: startup stopped before this subsystem was
+// read", about a startup that completed and a query that ran (finding F46). The
+// adjacent Runtime block has had `indeterminate` since MR-001 and means exactly
+// this: the subsystem was read and could not answer.
 func coordinationInfo(s doctor.Subject) CoordinationInfo {
+	if s.CoordinationErr != nil {
+		return CoordinationInfo{Observation: Indeterminate}
+	}
 	if !s.CoordinationObserved {
 		return CoordinationInfo{Observation: NotObserved}
 	}

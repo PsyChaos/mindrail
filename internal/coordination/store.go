@@ -43,7 +43,7 @@ func NewStore(db *sql.DB, clock app.Clock) *Store {
 // the caller wants to recognise itself by later and is never interpreted.
 func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Session, error) {
 	if workspaceID == "" {
-		return Session{}, fmt.Errorf("opening a session: %w", errors.New("no workspace id"))
+		return Session{}, noWorkspace("a session")
 	}
 
 	session := Session{
@@ -76,6 +76,7 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 // Passed as a value here, the mint happens inside the transaction that carries
 // the write, so a refusal anywhere in that transaction takes it back with
 // everything else.
+//
 // mint is carried explicitly rather than inferred from an empty handle, so that
 // NamedSession("") is a lookup of nothing — ErrSessionNotFound — rather than a
 // silent request to mint.
@@ -119,7 +120,7 @@ func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution) (Writ
 	}
 
 	if by.workspaceID == "" {
-		return Write{}, fmt.Errorf("minting a session: %w", errors.New("no workspace id"))
+		return Write{}, noWorkspace("a session minted for a write")
 	}
 
 	session := Session{
@@ -279,7 +280,7 @@ func (s *Store) FindTask(ctx context.Context, id string) (Task, error) {
 	case errors.Is(err, sql.ErrNoRows):
 		return Task{}, taskNotFound(id)
 	case err != nil:
-		return Task{}, fmt.Errorf("look up task %q: %w", id, err)
+		return Task{}, readFailed("the task", id, err)
 	}
 	return task, nil
 }
@@ -300,7 +301,7 @@ func (s *Store) ListTasks(ctx context.Context, projectID string, state State) ([
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
+		return nil, readFailed("this project's tasks", projectID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -308,12 +309,12 @@ func (s *Store) ListTasks(ctx context.Context, projectID string, state State) ([
 	for rows.Next() {
 		task, scanErr := scanTask(rows)
 		if scanErr != nil {
-			return nil, fmt.Errorf("scan task row: %w", scanErr)
+			return nil, readFailed("this project's tasks", projectID, scanErr)
 		}
 		tasks = append(tasks, task)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
+		return nil, readFailed("this project's tasks", projectID, err)
 	}
 	return tasks, nil
 }
@@ -409,7 +410,7 @@ func (s *Store) LastCheckpoint(ctx context.Context, taskID string) (Checkpoint, 
 	case errors.Is(err, sql.ErrNoRows):
 		return Checkpoint{}, checkpointNotFound(taskID)
 	case err != nil:
-		return Checkpoint{}, fmt.Errorf("look up the last checkpoint of %q: %w", taskID, err)
+		return Checkpoint{}, readFailed("the last checkpoint of this task", taskID, err)
 	}
 	return checkpoint, nil
 }
@@ -444,7 +445,7 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT state, count(*) FROM tasks WHERE project_id = ? GROUP BY state`, projectID)
 	if err != nil {
-		return Summary{}, fmt.Errorf("count tasks: %w", err)
+		return Summary{}, readFailed("the task counts of this project", projectID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -454,7 +455,7 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 			count int
 		)
 		if err := rows.Scan(&state, &count); err != nil {
-			return Summary{}, fmt.Errorf("scan task count: %w", err)
+			return Summary{}, readFailed("the task counts of this project", projectID, err)
 		}
 		switch State(state) {
 		case StateOpen:
@@ -466,7 +467,7 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return Summary{}, fmt.Errorf("count tasks: %w", err)
+		return Summary{}, readFailed("the task counts of this project", projectID, err)
 	}
 
 	var (
@@ -484,12 +485,12 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 	case errors.Is(err, sql.ErrNoRows):
 		return summary, nil
 	case err != nil:
-		return Summary{}, fmt.Errorf("read the newest checkpoint: %w", err)
+		return Summary{}, readFailed("the newest checkpoint of this project", projectID, err)
 	}
 
 	at, err := app.ParseTime(createdAt)
 	if err != nil {
-		return Summary{}, fmt.Errorf("checkpoint of task %s created_at: %w", taskID, err)
+		return Summary{}, readFailed("the newest checkpoint of this project", taskID, err)
 	}
 	summary.LastCheckpoint = &CheckpointRef{TaskID: taskID, SessionID: sessionID, At: at}
 	return summary, nil

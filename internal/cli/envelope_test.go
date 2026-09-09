@@ -60,10 +60,18 @@ var exitForCode = map[app.Code]int{
 	app.CodeConfigUnknownEnvVar:         app.ExitSuccess,
 	app.CodeKnowledgeInvalid:            app.ExitSuccess,
 
-	// MR-003's five, all ExitFailed (requirement AC-05.3). Every one of them is
-	// an operation that ran, found the repository healthy, and could not do what
-	// it was asked: the id names nothing, or the move is not available from
-	// where the task is.
+	// MR-003's seven, all ExitFailed (requirement AC-05.3). Five were added by
+	// the milestone; COORDINATION_UNAVAILABLE was the sixth, added during
+	// TASK-05 and recorded under AC-06.7, and COORDINATION_READ_FAILED the
+	// seventh, added by the round-1 remediation and recorded under AC-05.1.
+	//
+	// Not all of them are "the id names nothing" — the class description used
+	// to say so, and two of the rows are not that. Four are operations that ran
+	// against a healthy repository and could not do what they were asked: the
+	// id names nothing, or the move is not available from where the task is.
+	// COORDINATION_UNAVAILABLE is the repository having no coordination state
+	// to operate on at all. The two write/read failures are the runtime
+	// database refusing a row for a reason the storage layer does not name.
 	//
 	// None is ExitUsage. The command line was well formed — `task state TSK-…
 	// --to COMPLETED` is a sentence this binary understands — and the refusal
@@ -71,16 +79,17 @@ var exitForCode = map[app.Code]int{
 	// arguments would meet the same answer. The spelling mistakes are caught
 	// earlier and still exit 2 through COMMAND_LINE_INVALID.
 	//
-	// None is ExitUnavailable either, including COORDINATION_WRITE_FAILED: the
+	// None is ExitUnavailable either, including the two failure codes: the
 	// storage conditions that really are "come back later" are named by
-	// storage.WriteFailure before this code is reached, and the generic one that
-	// survives is a write that failed for a reason retrying will not fix.
+	// storage.WriteFailure before either code is reached, and what survives is
+	// a read or write that failed for a reason retrying will not fix.
 	app.CodeSessionNotFound:         app.ExitFailed,
 	app.CodeTaskNotFound:            app.ExitFailed,
 	app.CodeTaskStateInvalid:        app.ExitFailed,
 	app.CodeCheckpointNotFound:      app.ExitFailed,
 	app.CodeCoordinationUnavailable: app.ExitFailed,
 	app.CodeCoordinationWriteFailed: app.ExitFailed,
+	app.CodeCoordinationReadFailed:  app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

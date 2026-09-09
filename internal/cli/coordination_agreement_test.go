@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -174,6 +175,45 @@ func TestTheCoordinationRefusalStillFiresWhereItIsTrue(t *testing.T) {
 			t.Errorf("`status` exits %d over a repository that has never been initialised, want %d",
 				reference.exit, app.ExitSuccess)
 		}
+	}
+}
+
+// TestNoCoordinationFailureReachesTheWireUncoded is the guard the brief asked
+// emit for, kept where it can be checked.
+//
+// The rule is that an envelope whose `ok` is false carries a code this binary
+// owns. app.WriteJSON deliberately does not drop an uncoded error — dropping it
+// would be worse than reporting it — so the rule is enforced by driving the
+// commands over every condition the suite can build rather than by a runtime
+// branch that should be unreachable.
+//
+// The sweep is the auditor's probe from round 1: `task list --json` over all of
+// the MR-001 agreement matrix's rows. That is how finding F09 was found, and
+// how finding F44's empty code would have been.
+func TestNoCoordinationFailureReachesTheWireUncoded(t *testing.T) {
+	for _, tc := range agreementConditions() {
+		repo := tc.setup(t)
+		got := runWith(t, repo, tc.options, "task", "list", "--json")
+
+		var envelope struct {
+			OK    bool              `json:"ok"`
+			Error *app.ErrorPayload `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(got.stdout), &envelope); err != nil {
+			t.Fatalf("%s: stdout is not a JSON envelope: %v\n%s", tc.name, err, got.stdout)
+		}
+		if envelope.OK {
+			continue
+		}
+		if envelope.Error == nil {
+			t.Errorf("%s: the envelope reports failure and carries no error object:\n%s", tc.name, got.stdout)
+			continue
+		}
+		if !app.IsRegistered(envelope.Error.Code) {
+			t.Errorf("%s: `task list` failed with code %q, which this binary does not own:\n%s",
+				tc.name, envelope.Error.Code, got.stdout)
+		}
+		assertFourErrorKeys(t, got.stdout)
 	}
 }
 

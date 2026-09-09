@@ -332,6 +332,20 @@ would tell the arriving agent anything.
 - **AC-05.1** Five values are added to `app.Code` and to the registry:
   `SESSION_NOT_FOUND`, `TASK_NOT_FOUND`, `TASK_STATE_INVALID`,
   `CHECKPOINT_NOT_FOUND`, `COORDINATION_WRITE_FAILED`.
+
+  *Amended during TASK-05.* Six: `COORDINATION_UNAVAILABLE` was added for the
+  reason recorded under AC-06.7.
+
+  *Amended during the round-1 remediation (finding F44).* Seven:
+  `COORDINATION_READ_FAILED`. The five above are all about an operation that ran
+  and could not be done, and the sixth about there being nothing to operate on
+  — none of them covers a row the database holds and cannot answer for. Every
+  write path in `internal/coordination` was wrapped in a domain error and every
+  read path returned a bare `fmt.Errorf`, so one unparseable timestamp reached
+  the wire as `{"code":"","why":"…parsing time \"yesterday\" as \"2006\"…"}`,
+  which AC-04.6 forbids and which a caller cannot branch on. It is the read
+  counterpart of `COORDINATION_WRITE_FAILED` and takes the same exit class for
+  the same reason.
 - **AC-05.2** No existing `app.Code` value changes spelling or meaning.
 - **AC-05.3** Each new code maps to exit 1 (`ExitFailed`) except where the
   command line itself is wrong, which stays exit 2 through the existing usage

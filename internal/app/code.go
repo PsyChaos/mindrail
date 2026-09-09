@@ -124,6 +124,23 @@ const (
 	// that really are about the rows being written, and the named storage
 	// conditions carry remedies that can succeed.
 	CodeCoordinationWriteFailed Code = "COORDINATION_WRITE_FAILED"
+
+	// CodeCoordinationReadFailed marks a coordination row the runtime database
+	// holds and could not answer for: a timestamp column that does not parse, a
+	// query that failed for a reason the storage layer does not name.
+	//
+	// It exists because the read paths had no code at all. Every write in
+	// internal/coordination was wrapped in a domain error and every read
+	// returned a bare fmt.Errorf, so one damaged `created_at` reached the user
+	// as `{"code":"","why":"look up the last checkpoint of \"TSK-…\": parsing
+	// time \"yesterday\" as \"2006\"…","impact":"","next_action":[]}` — a Go
+	// parser message with a format string in it, and nothing a caller can
+	// branch on (finding F44).
+	//
+	// The counterpart of COORDINATION_WRITE_FAILED, and ExitFailed for the same
+	// reason: the storage conditions that really are "come back later" are
+	// named by the storage layer before this code is reached.
+	CodeCoordinationReadFailed Code = "COORDINATION_READ_FAILED"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -157,6 +174,7 @@ var allCodes = sortedCodes([]Code{
 	CodeCheckpointNotFound,
 	CodeCoordinationUnavailable,
 	CodeCoordinationWriteFailed,
+	CodeCoordinationReadFailed,
 })
 
 var codeSet = indexCodes(allCodes)

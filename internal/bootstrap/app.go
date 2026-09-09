@@ -970,6 +970,10 @@ func (a *App) schemaHasWorkspaceTable() bool {
 func (a *App) readCoordination(ctx context.Context) {
 	summary, err := coordination.NewStore(a.db.DB, a.clock).Summarize(ctx, a.subject.Workspace.ProjectID)
 	if err != nil {
+		// Kept, not only logged. A read that ran and failed is a different
+		// answer from a read that never happened, and folding both into the
+		// flag published "nobody looked" about a query that did (finding F46).
+		a.subject.CoordinationErr = err
 		a.logger.Debug("coordination summary unavailable", slog.String("error", err.Error()))
 		return
 	}

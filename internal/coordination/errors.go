@@ -124,6 +124,45 @@ func blockedReasonMissing(taskID string) error {
 // 1 with the remedy "run doctor", and doctor — which only ever reads — called
 // that same database healthy. A generic remedy is only correct for the failures
 // that really are about the rows.
+// noWorkspace reports a session asked for without a worktree to attribute it to.
+//
+// It is not reachable from today's CLI — coordinationScope refuses an
+// unregistered worktree before either call site is reached — and it was a bare
+// fmt.Errorf for exactly that reason: nothing could see it, so nothing made it
+// answerable (finding F26). AC-11.4 makes this package the surface MR-014's MCP
+// tools call directly, with no coordinationScope in front of it, so the guard is
+// coded rather than deleted.
+func noWorkspace(what string) error {
+	return app.NewError(
+		app.CodeCoordinationUnavailable,
+		app.KindFailed,
+		what+" needs a worktree to belong to, and none was given",
+		"Nothing was read and nothing was written.",
+		"Pass the id of a worktree registered in this repository's runtime database.",
+		"Run `mindrail init` in the worktree if it has never been registered.",
+	)
+}
+
+// readFailed reports a row the runtime database holds and could not answer for.
+//
+// The read paths had no error of their own: every write was wrapped and every
+// read returned a bare fmt.Errorf, which `emit` published verbatim, so one
+// unparseable timestamp reached the user as a Go parser message with a format
+// string in it and an empty code, impact and next_action (finding F44). The
+// contrast that decides it is internal/workspace, which has the same bare read
+// errors and still reaches the user coded, because its caller wraps them —
+// MR-003's commands have no such caller.
+func readFailed(what, id string, cause error) error {
+	return app.NewError(
+		app.CodeCoordinationReadFailed,
+		app.KindFailed,
+		fmt.Sprintf("%s could not be read from the runtime database", what),
+		"Nothing was written. What the repository holds could not be reported, "+
+			"so this answer says nothing about the work in flight.",
+		"Run `mindrail doctor` to check the runtime database, then re-run the command.",
+	).WithMetadata("subject_id", id).WithCause(cause)
+}
+
 func writeFailed(what, id string, cause error) error {
 	return app.NewError(
 		app.CodeCoordinationWriteFailed,

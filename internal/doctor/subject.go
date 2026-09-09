@@ -86,8 +86,16 @@ type Subject struct {
 	// different answer from "nobody asked". No doctor check reads either — a
 	// blocked task is a fact about work, not about the installation (decision
 	// D-62) — so this is carried for `status` alone.
+	// CoordinationErr is the third answer, and the report had only two. A read
+	// that ran and failed — a damaged timestamp, a query the database could not
+	// serve — was folded into the same false flag as a read that never
+	// happened, and published as "not observed — startup stopped before this
+	// subsystem was read" about a sequence that had not stopped (finding F46).
+	// The Runtime block has had the distinction since MR-001; this is the pair
+	// WorkspaceErr already forms with Workspace.
 	Coordination         coordination.Summary
 	CoordinationObserved bool
+	CoordinationErr      error
 
 	// Probes holds what doctor established for itself; see Probe.
 	Probes Probes
