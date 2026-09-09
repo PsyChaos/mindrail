@@ -68,6 +68,13 @@ func (r Report) RenderHuman(w io.Writer, color bool) error {
 		{"Workspace id", r.Workspace.ID},
 		{"Project id", r.Workspace.ProjectID},
 	})
+	writeSection(&b, "Coordination", []field{
+		{"Observation", observationNote(r.Coordination.Observation)},
+		{"Tasks open", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.TasksOpen))},
+		{"Tasks in progress", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.TasksInProgress))},
+		{"Tasks blocked", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.TasksBlocked))},
+		{"Last checkpoint", lastCheckpointNote(r.Coordination)},
+	})
 
 	b.WriteString("\nComponents\n")
 	for _, name := range componentOrder {
@@ -377,4 +384,19 @@ func paintReadiness(readiness Readiness, text string, color bool) string {
 	default:
 		return text
 	}
+}
+
+// lastCheckpointNote renders the newest handover note's provenance for a human.
+//
+// It names the task and the session rather than quoting the note. status is a
+// fixed-size report and an agent's free text is the one value in it with no
+// bound on its length; `mindrail task show` is where the note itself belongs.
+func lastCheckpointNote(info CoordinationInfo) string {
+	if !info.Observation.Known() {
+		return observed(info.Observation, "")
+	}
+	if info.LastCheckpoint == nil {
+		return "none"
+	}
+	return info.LastCheckpoint.TaskID + " by " + info.LastCheckpoint.SessionID
 }

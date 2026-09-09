@@ -81,6 +81,13 @@
       "workspace_id": "WS-01JQ8N6X5T0000000000000000",
       "project_id": "PRJ-01JQ8N6X5T0000000000000000"
     },
+    "coordination": {
+      "observation": "observed",
+      "tasks_open": 0,
+      "tasks_in_progress": 0,
+      "tasks_blocked": 0,
+      "last_checkpoint": null
+    },
     "duration_ms": 3
   },
   "duration_ms": 12

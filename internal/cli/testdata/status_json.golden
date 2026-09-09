@@ -12,6 +12,11 @@ data.components.semantic.state
 data.components.semantic.summary
 data.components.syntax.state
 data.components.syntax.summary
+data.coordination.last_checkpoint
+data.coordination.observation
+data.coordination.tasks_blocked
+data.coordination.tasks_in_progress
+data.coordination.tasks_open
 data.duration_ms
 data.knowledge.decisions
 data.knowledge.findings

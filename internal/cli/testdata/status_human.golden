@@ -30,6 +30,12 @@ Workspace
   Workspace id: <REDACTED>
   Project id: <REDACTED>
 
+Coordination
+  Tasks open:        0
+  Tasks in progress: 0
+  Tasks blocked:     0
+  Last checkpoint:   none
+
 Components
   ✓ knowledge                     Knowledge store readable (0 decisions, 0 invariants)
   · inventory     NOT_APPLICABLE  File inventory is not built by this version.

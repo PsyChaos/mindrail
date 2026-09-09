@@ -78,9 +78,9 @@
     "semantic_hash": ""
   },
   "internal/cli/root.go": {
-    "mtime": 1788684041.9848213,
-    "seen": 1788685022.1607406,
-    "ast_hash": "7408449c4201d43d8fd0c6054aa8a049",
+    "mtime": 1788947791.998243,
+    "seen": 1788948028.1754267,
+    "ast_hash": "52607a56eda6c7246739e21f2db30278",
     "semantic_hash": ""
   },
   ".claude/CLAUDE.md": {
@@ -300,9 +300,9 @@
     "semantic_hash": ""
   },
   "internal/app/code.go": {
-    "mtime": 1788946821.38832,
-    "seen": 1788947089.4271538,
-    "ast_hash": "eecae36890d19adac547a09a8b89a356",
+    "mtime": 1788947700.2971773,
+    "seen": 1788948028.175401,
+    "ast_hash": "854c48344f381238c5d5b118a8f7579b",
     "semantic_hash": ""
   },
   "internal/app/code_test.go": {
@@ -336,9 +336,9 @@
     "semantic_hash": ""
   },
   "internal/bootstrap/app.go": {
-    "mtime": 1788867456.5164196,
-    "seen": 1788867647.226216,
-    "ast_hash": "f5ebc8b303b48cf0c2e27c8b008d9bae",
+    "mtime": 1788947852.7036798,
+    "seen": 1788948028.175408,
+    "ast_hash": "ff483896a4a6f31e7aded041c2a0f615",
     "semantic_hash": ""
   },
   "internal/bootstrap/app_test.go": {
@@ -852,9 +852,9 @@
     "semantic_hash": ""
   },
   "internal/cli/envelope_test.go": {
-    "mtime": 1788946954.5298643,
-    "seen": 1788947089.4274626,
-    "ast_hash": "cca76ad8d30c30cedc42c51231ef61bf",
+    "mtime": 1788947700.300023,
+    "seen": 1788948028.175422,
+    "ast_hash": "eb5cd7feba2296875d28ab5db69082a8",
     "semantic_hash": ""
   },
   "internal/doctor/verdict_test.go": {
@@ -1653,6 +1653,30 @@
     "mtime": 1788946789.9451377,
     "seen": 1788947582.9575155,
     "ast_hash": "fa66d745092e8384e004eecdcb1efc9b",
+    "semantic_hash": ""
+  },
+  "internal/cli/checkpoint.go": {
+    "mtime": 1788947787.029371,
+    "seen": 1788948028.175416,
+    "ast_hash": "6e35260517ed98504fce9f02b63620a5",
+    "semantic_hash": ""
+  },
+  "internal/cli/coordination.go": {
+    "mtime": 1788948004.9159155,
+    "seen": 1788948028.17542,
+    "ast_hash": "2110fde882a4d24092b9e12e84a153c3",
+    "semantic_hash": ""
+  },
+  "internal/cli/coordination_test.go": {
+    "mtime": 1788947987.059483,
+    "seen": 1788948028.1754208,
+    "ast_hash": "995fac934d066a42fed028c072e88df8",
+    "semantic_hash": ""
+  },
+  "internal/cli/task.go": {
+    "mtime": 1788947772.8677359,
+    "seen": 1788948028.1754282,
+    "ast_hash": "4b38d3bd1d8a5d2c166712f0cbd93f9d",
     "semantic_hash": ""
   }
 }

@@ -465,6 +465,12 @@ func healthySubject() doctor.Subject {
 			RegisteredAt: fixedInstant,
 			LastSeenAt:   fixedInstant,
 		},
+		// A healthy repository is one where the coordination summary was read,
+		// and the counts being zero is the reading rather than the absence of
+		// one. Leaving the flag false published `not_observed` on a report the
+		// observation tests require to carry no caveat at all — which is exactly
+		// what those tests are for, and they caught it.
+		CoordinationObserved: true,
 		// Declaring the probe answers keeps this fixture a value: doctor.Probe
 		// passes an already-probed subject through, so no test here needs the
 		// /repo tree to exist on the machine running it.

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/doctor"
 )
 
@@ -115,6 +116,27 @@ type WorkspaceInfo struct {
 	ProjectID   string      `json:"project_id,omitempty"`
 }
 
+// CoordinationInfo is MR-003's block: what work is in flight and what the last
+// agent said about it.
+//
+// It is additive beside Knowledge and Workspace rather than a seventh component,
+// and it cannot move Readiness (decision D-62). A blocked task is a fact about
+// work, not about the installation; a tool that reported BLOCKED — the value
+// reserved for "this repository cannot be verified" — because an agent parked a
+// task would be unusable in exactly the situation the task was parked for.
+//
+// The three counts are the states a reader can act on. COMPLETED and ABANDONED
+// are deliberately absent: they only grow, so a number that never goes down
+// would say nothing about the repository now and would make the block look
+// busier every week.
+type CoordinationInfo struct {
+	Observation     Observation                 `json:"observation"`
+	TasksOpen       int                         `json:"tasks_open"`
+	TasksInProgress int                         `json:"tasks_in_progress"`
+	TasksBlocked    int                         `json:"tasks_blocked"`
+	LastCheckpoint  *coordination.CheckpointRef `json:"last_checkpoint"`
+}
+
 // Report is one `mindrail status` answer.
 //
 // StoppedAtStep is the one field that says the rest of the report is partial:
@@ -132,6 +154,7 @@ type Report struct {
 	Runtime           RuntimeInfo                 `json:"runtime"`
 	Knowledge         KnowledgeInfo               `json:"knowledge"`
 	Workspace         WorkspaceInfo               `json:"workspace"`
+	Coordination      CoordinationInfo            `json:"coordination"`
 	DurationMS        int64                       `json:"duration_ms"`
 }
 
@@ -235,7 +258,27 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 			ID:          s.Workspace.ID,
 			ProjectID:   s.Workspace.ProjectID,
 		},
-		DurationMS: elapsed.Milliseconds(),
+		Coordination: coordinationInfo(s),
+		DurationMS:   elapsed.Milliseconds(),
+	}
+}
+
+// coordinationInfo grades the coordination block.
+//
+// There is no doctor check behind it, so the observation is the flag bootstrap
+// set rather than a reading's code: either the summary was read or the sequence
+// never got that far. Both arms leave the counts at zero, which is precisely why
+// the flag has to be published.
+func coordinationInfo(s doctor.Subject) CoordinationInfo {
+	if !s.CoordinationObserved {
+		return CoordinationInfo{Observation: NotObserved}
+	}
+	return CoordinationInfo{
+		Observation:     Observed,
+		TasksOpen:       s.Coordination.Open,
+		TasksInProgress: s.Coordination.InProgress,
+		TasksBlocked:    s.Coordination.Blocked,
+		LastCheckpoint:  s.Coordination.LastCheckpoint,
 	}
 }
 

@@ -31,6 +31,12 @@ Knowledge
 Workspace
   Registered: false
 
+Coordination
+  Tasks open:        0
+  Tasks in progress: 0
+  Tasks blocked:     0
+  Last checkpoint:   none
+
 Components
   ✓ knowledge                     Knowledge store readable (2 decisions, 1 invariant)
   · inventory     NOT_APPLICABLE  File inventory is not built by this version.

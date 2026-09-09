@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"github.com/PsyChaos/mindrail/internal/config"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
@@ -75,6 +76,18 @@ type Subject struct {
 
 	Workspace    workspace.Workspace
 	WorkspaceErr error
+
+	// Coordination is MR-003's session/task/checkpoint summary, and
+	// CoordinationObserved says whether anybody looked.
+	//
+	// The two are separate for the reason every other pair in this struct is: a
+	// project with no tasks and a startup that never reached the coordination
+	// store both leave the counts at zero, and "there is no work in flight" is a
+	// different answer from "nobody asked". No doctor check reads either — a
+	// blocked task is a fact about work, not about the installation (decision
+	// D-62) — so this is carried for `status` alone.
+	Coordination         coordination.Summary
+	CoordinationObserved bool
 
 	// Probes holds what doctor established for itself; see Probe.
 	Probes Probes

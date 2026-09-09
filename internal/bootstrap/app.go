@@ -921,7 +921,31 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 	}
 	a.subject.Workspace = ws
 
+	a.readCoordination(ctx)
 	return nil
+}
+
+// readCoordination fills the summary `status` publishes.
+//
+// It sits at the end of step 7 rather than in a step of its own because it has
+// exactly step 7's prerequisite — a registered workspace, and therefore a
+// project to count tasks in — and because tech-stack §87's sequence is the
+// contract every later milestone slots into: a step added for a read that
+// nothing gates on would have to be argued back out again when MR-004 wants the
+// slot.
+//
+// Every failure here is swallowed into "nobody looked". Coordination cannot move
+// readiness (decision D-62), so a summary that could not be read has nothing to
+// block, and turning it into a startup failure would let a task count take down
+// a report about the repository.
+func (a *App) readCoordination(ctx context.Context) {
+	summary, err := coordination.NewStore(a.db.DB, a.clock).Summarize(ctx, a.subject.Workspace.ProjectID)
+	if err != nil {
+		a.logger.Debug("coordination summary unavailable", slog.String("error", err.Error()))
+		return
+	}
+	a.subject.Coordination = summary
+	a.subject.CoordinationObserved = true
 }
 
 // --- seams ------------------------------------------------------------------

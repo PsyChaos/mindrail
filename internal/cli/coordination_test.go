@@ -419,3 +419,94 @@ func sessionCount(t *testing.T, repo string) int {
 func remedyMentions(actions []string, needle string) bool {
 	return strings.Contains(strings.Join(actions, " "), needle)
 }
+
+// TestStatusPublishesCoordinationWithoutMovingReadiness is AC-07.1 and AC-07.2,
+// and decision D-62 in both directions.
+//
+// The block has to appear and the counts have to be right; readiness has to stay
+// exactly where it was. A blocked task is a fact about work, not about the
+// installation, and a tool that reported BLOCKED — the value reserved for "this
+// repository cannot be verified" — because an agent parked a task would be
+// unusable in the one situation the task was parked for.
+func TestStatusPublishesCoordinationWithoutMovingReadiness(t *testing.T) {
+	repo := newInitializedRepo(t)
+
+	type statusData struct {
+		Readiness    string `json:"readiness"`
+		Coordination struct {
+			Observation    string `json:"observation"`
+			Open           int    `json:"tasks_open"`
+			InProgress     int    `json:"tasks_in_progress"`
+			Blocked        int    `json:"tasks_blocked"`
+			LastCheckpoint *struct {
+				TaskID    string `json:"task_id"`
+				SessionID string `json:"session_id"`
+			} `json:"last_checkpoint"`
+		} `json:"coordination"`
+	}
+
+	read := func() statusData {
+		t.Helper()
+		got := run(t, repo, "status", "--json")
+		got.requireExit(t, app.ExitSuccess)
+		var data statusData
+		decodeData(t, got.stdout, &data)
+		return data
+	}
+
+	// Arm one: an initialised repository with no tasks. The counts are zero and
+	// the block still says somebody looked, because "no work in flight" and
+	// "nobody asked" are different answers.
+	empty := read()
+	before := empty.Readiness
+	if empty.Coordination.Observation != "observed" {
+		t.Errorf("observation = %q on an initialised repository, want observed", empty.Coordination.Observation)
+	}
+	if empty.Coordination.Open != 0 || empty.Coordination.LastCheckpoint != nil {
+		t.Errorf("a repository with no tasks reports %+v", empty.Coordination)
+	}
+
+	// Arm two: one task in each of the three counted states, and a checkpoint.
+	session := sessionID(t, repo)
+	open := openTask(t, repo, session, "waiting to be picked up")
+	_ = open
+
+	working := openTask(t, repo, session, "being worked on")
+	for _, to := range []string{"CLAIMED", "IN_PROGRESS"} {
+		run(t, repo, "task", "state", working, "--to", to, "--session", session, "--json").
+			requireExit(t, app.ExitSuccess)
+	}
+
+	stuck := openTask(t, repo, session, "waiting on a vendor patch")
+	for _, to := range []string{"CLAIMED", "IN_PROGRESS"} {
+		run(t, repo, "task", "state", stuck, "--to", to, "--session", session, "--json").
+			requireExit(t, app.ExitSuccess)
+	}
+	run(t, repo, "task", "state", stuck, "--to", "BLOCKED",
+		"--reason", "the vendor has not shipped it", "--session", session, "--json").
+		requireExit(t, app.ExitSuccess)
+
+	run(t, repo, "checkpoint", "write", stuck, "--note", "chased the vendor", "--session", session, "--json").
+		requireExit(t, app.ExitSuccess)
+
+	busy := read()
+	if busy.Coordination.Open != 1 || busy.Coordination.InProgress != 1 || busy.Coordination.Blocked != 1 {
+		t.Errorf("counts = open %d, in progress %d, blocked %d; want 1, 1, 1",
+			busy.Coordination.Open, busy.Coordination.InProgress, busy.Coordination.Blocked)
+	}
+	if busy.Coordination.LastCheckpoint == nil {
+		t.Fatal("status reports no checkpoint after one was written")
+	}
+	if busy.Coordination.LastCheckpoint.TaskID != stuck {
+		t.Errorf("the newest checkpoint names %q, want %q", busy.Coordination.LastCheckpoint.TaskID, stuck)
+	}
+
+	// The whole point of the block: none of that moved readiness.
+	if busy.Readiness != before {
+		t.Errorf("readiness moved from %q to %q because tasks exist; coordination is not a component (D-62)",
+			before, busy.Readiness)
+	}
+	if run(t, repo, "status", "--json").code != app.ExitSuccess {
+		t.Error("status exited non-zero on a repository whose only unusual feature is a blocked task")
+	}
+}
