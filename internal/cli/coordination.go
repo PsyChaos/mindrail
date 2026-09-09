@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -60,6 +62,10 @@ func runCoordination(cmd *cobra.Command, name string, o Options,
 	inv, err := newInvocation(cmd, name, o)
 	if err != nil {
 		return inv.emit(nil, nil, nil, "", err)
+	}
+
+	if refusal := inv.refuseUnrepresentableFlags(cmd); refusal != nil {
+		return inv.emit(nil, nil, nil, "", refusal)
 	}
 
 	application := bootstrap.New(bootstrap.Options{
@@ -124,6 +130,63 @@ func coordinationScope(a *bootstrap.App) (scope, error) {
 	}
 
 	return scope{app: a, store: store, space: space}, nil
+}
+
+// coordinationTextFlags are the flags whose value is free text the caller wrote,
+// as opposed to an identifier this binary minted or a word from a fixed
+// vocabulary. They are the values that reach a stored column unchanged.
+var coordinationTextFlags = []string{flagTitle, flagNote, flagReason, flagLabel}
+
+// refuseUnrepresentableFlags stops a `--json` write whose own input JSON cannot
+// carry, before the application is started and therefore before anything is
+// written.
+//
+// The refusal is not new; its position is. It used to live in emit, which runs
+// after the body has committed, so `mindrail --json task open --title "fix
+// parser \xff bug"` inserted the task, then reported PATH_NOT_REPRESENTABLE at
+// exit 2 — and a caller that retries on failure opened a second task, and a
+// third (finding F28). `init` learned the same lesson at finding W9 and answers
+// it the same way: refuse before acting, because the alternative is doing the
+// whole job and calling it a failure.
+//
+// A flag value can be refused where a repository path cannot. The path is where
+// the user already is and the command has no other way to describe it; a flag
+// is input at a system boundary, and the caller can pass different bytes.
+//
+// Human mode is untouched. It writes the bytes through unchanged, which is why
+// the JSON refusal can send the reader there, and refusing a title in human mode
+// would take away the one view that can still show it.
+func (inv invocation) refuseUnrepresentableFlags(cmd *cobra.Command) error {
+	if !inv.flags.json {
+		return nil
+	}
+
+	for _, name := range coordinationTextFlags {
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil || !flag.Changed {
+			continue
+		}
+
+		value := flag.Value.String()
+		if utf8.ValidString(value) {
+			continue
+		}
+
+		// strconv.Quote escapes every invalid byte as \xNN, so the refusal
+		// naming the value is itself valid UTF-8 and the envelope reporting the
+		// problem does not reproduce it.
+		return app.NewError(
+			app.CodeCommandLineInvalid,
+			app.KindUsage,
+			"the value given for --"+name+" is not valid UTF-8: "+strconv.Quote(value),
+			"Nothing was read and nothing was written: a value JSON cannot carry unchanged would be "+
+				"stored as it stands and published as something else.",
+			"Pass a --"+name+" whose every byte is valid UTF-8.",
+			"Or run the command without --json, where the bytes are carried through unchanged.",
+		).WithMetadata("flag", name).WithMetadata("unrepresentable_value", strconv.Quote(value))
+	}
+
+	return nil
 }
 
 func coordinationUnavailable(why string) error {

@@ -1662,9 +1662,9 @@
     "semantic_hash": ""
   },
   "internal/cli/coordination.go": {
-    "mtime": 1788948004.9159155,
-    "seen": 1788948028.17542,
-    "ast_hash": "2110fde882a4d24092b9e12e84a153c3",
+    "mtime": 1788956983.4180603,
+    "seen": 1788957018.6038525,
+    "ast_hash": "0fd388e69bbaf4734f18ac419a6dd978",
     "semantic_hash": ""
   },
   "internal/cli/coordination_test.go": {
@@ -1701,6 +1701,12 @@
     "mtime": 1788956691.0893157,
     "seen": 1788956707.1519022,
     "ast_hash": "64a696745cb9b1596bc119c1ca47f139",
+    "semantic_hash": ""
+  },
+  "internal/cli/coordination_agreement_test.go": {
+    "mtime": 1788956963.5501752,
+    "seen": 1788957018.603854,
+    "ast_hash": "04079918be630a4c4094fb7055f1ce30",
     "semantic_hash": ""
   }
 }

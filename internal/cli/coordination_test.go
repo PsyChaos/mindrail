@@ -399,6 +399,16 @@ func openTask(t *testing.T, repo, session, title string) string {
 // database, and read-only is what a test that must not disturb the subject uses.
 func sessionCount(t *testing.T, repo string) int {
 	t.Helper()
+	return rowCount(t, repo, "sessions")
+}
+
+// rowCount reads one table's size straight from the runtime database.
+//
+// A refusal that emits a byte-identical error whether or not it wrote is
+// invisible to any assertion over the envelope, so the tests that separate the
+// two count rows instead.
+func rowCount(t *testing.T, repo, table string) int {
+	t.Helper()
 
 	db, err := storage.Open(t.Context(), storage.Options{
 		Path:     runtimeDBPath(t, repo),
@@ -409,9 +419,11 @@ func sessionCount(t *testing.T, repo string) int {
 	}
 	defer func() { _ = db.Close() }()
 
+	// The table name is a constant at every call site; it cannot be a bound
+	// parameter and there is no user input on this path.
 	var count int
-	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM sessions`).Scan(&count); err != nil {
-		t.Fatalf("counting sessions: %v", err)
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil {
+		t.Fatalf("counting %s: %v", table, err)
 	}
 	return count
 }
