@@ -55,6 +55,20 @@ in the domain layer: it imports `internal/app`, `internal/storage` and
 adapter — but it is added to the layering test's expectations so that a later
 import of `internal/status` from it is caught.
 
+*Amended during the round-1 remediation (finding F16).* That last clause
+described something the milestone did not do. `internal/cli/arch_test.go` was
+not touched at all, so AC-03.5 was satisfied and unenforced: adding imports of
+`internal/git` and `internal/workspace` to `internal/coordination` built,
+vetted and tested clean. The one example this paragraph names was caught anyway,
+by the compiler rather than by a test — `internal/status` already imports
+`internal/coordination`, so the reverse edge is a cycle.
+
+It is enforced now, and by the other shape of rule.
+`TestDomainPackagesImportOnlyWhatTheirRequirementAllows` holds coordination to
+an allow-list rather than to a list of forbidden edges: `upwardRules` says which
+directions must not exist, and AC-03.5 fixes the whole set, so the allow-list is
+what the criterion actually says.
+
 ### Why `internal/identity` is extracted rather than reused in place
 
 `workspace.NewID(prefix)` already mints exactly the right value: a prefixed,

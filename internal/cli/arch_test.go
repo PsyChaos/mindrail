@@ -455,3 +455,61 @@ func isStandardLibrary(importPath string) bool {
 	first, _, _ := strings.Cut(importPath, "/")
 	return !strings.Contains(first, ".")
 }
+
+// declaredImports are the packages a domain package is allowed to reach, spelled
+// as its own requirement spells them.
+//
+// upwardRules is about edges that must not exist; this is the other shape — a
+// package whose whole dependency set is fixed. MR-003's design said
+// internal/coordination "is added to the layering test's expectations so that a
+// later import of internal/status from it is caught", and it was not: the file
+// did not mention coordination at all, and every direction AC-03.5 forbids was
+// open (finding F16). The one example the design named happened to be caught by
+// the compiler, because internal/status already imports internal/coordination
+// and the cycle is refused.
+var declaredImports = map[string][]string{
+	// AC-03.5, verbatim: internal/app, internal/storage, internal/identity and
+	// the standard library, and nothing else from this module.
+	"internal/coordination": {"internal/app", "internal/storage", "internal/identity"},
+}
+
+// TestDomainPackagesImportOnlyWhatTheirRequirementAllows enforces those sets.
+func TestDomainPackagesImportOnlyWhatTheirRequirementAllows(t *testing.T) {
+	module, root := moduleInfo(t)
+	packages := firstPartyPackages(t, root)
+
+	for pkg, allowed := range declaredImports {
+		importPath := module + "/" + pkg
+		found, ok := packages[importPath]
+		if !ok {
+			t.Fatalf("%s is not a package in this module; the table is stale", pkg)
+		}
+
+		permitted := make(map[string]struct{}, len(allowed))
+		for _, name := range allowed {
+			permitted[module+"/"+name] = struct{}{}
+		}
+
+		for _, imported := range found.imports {
+			if isStandardLibrary(imported) {
+				continue
+			}
+			if _, allowedImport := permitted[imported]; !allowedImport {
+				t.Errorf("%s imports %q; its requirement allows only %v and the standard library",
+					pkg, imported, allowed)
+			}
+		}
+
+		// The positive control: an allow-list of packages that are not imported
+		// would pass for a package that imports nothing at all.
+		reached := 0
+		for _, imported := range found.imports {
+			if _, allowedImport := permitted[imported]; allowedImport {
+				reached++
+			}
+		}
+		if reached == 0 {
+			t.Errorf("%s imports none of %v, so the allow-list asserts nothing", pkg, allowed)
+		}
+	}
+}

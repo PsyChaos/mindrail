@@ -7,9 +7,13 @@
   design left open — every such gap is recorded below as a decision D-53…D-62.
 - **Task:** [mindrail-0.1-task-list.md](mindrail-0.1-task-list.md) MR-003
 - **Tier:** 3 (Program). It adds a runtime migration, three new persisted
-  entities, five `app.Code` values that enter the wire vocabulary, three new
+  entities, seven `app.Code` values that enter the wire vocabulary, three new
   command groups and an additive key in `status --json`. The escalation rule
   fires on "public API contract" regardless of line count.
+
+  *The count was five at the freeze.* `COORDINATION_UNAVAILABLE` was added
+  during TASK-05 and `COORDINATION_READ_FAILED` by the round-1 remediation; both
+  are recorded in place under AC-05.1.
 
 This file is frozen **before** implementation so that an audit has something to
 grade against that the implementation did not shape. That sequence is not
@@ -314,6 +318,20 @@ would tell the arriving agent anything.
 - **AC-04.1** `OpenSession`, `OpenTask`, `Transition`, `WriteCheckpoint`,
   `FindTask`, `ListTasks`, `LastCheckpoint` and `Counts`, each taking a
   `context.Context` and each a single short transaction (tech-stack §11).
+
+  *Amended during the round-1 remediation (finding F06).* `Counts` ships as
+  `Summarize`, and the word `Counts` appears nowhere in the module. The rename
+  is the right one and the substance is delivered: design §8 requires the newest
+  checkpoint alongside the three counts, and a method named only "counts" would
+  understate what `status` reads from it. Recorded because the definition of
+  done makes a criterion "met, or recorded as not met with the reason", and this
+  was neither.
+
+  *Also amended (finding F02).* The three writing methods take an `Attribution`
+  rather than a session id and return a `Write` beside their own result. The
+  session is resolved inside the transaction that attributes the write to it, so
+  a refused write leaves no session behind. `FindSession` is gone with the
+  eager-mint call site it existed for.
 - **AC-04.2** A task written by one `Store` is read back with every field intact
   by a second `Store` over a **reopened** database. This is the restart criterion
   and it is asserted on the reopened handle, not on a cached value.
@@ -326,6 +344,18 @@ would tell the arriving agent anything.
   database gets the remedy that can succeed rather than a generic one.
 - **AC-04.6** Every error carries a registered `app.Code`, a diagnostic, an
   impact and at least one `next_action` that names the offending id.
+
+  *Amended during the round-1 remediation (finding F07).* The id must appear in
+  the **payload** — `why`, `metadata` or a `next_action` — and not specifically
+  in a `next_action`. Four of six constructors do not put it in the remedy, and
+  two of those four are specified that way elsewhere in this frozen contract:
+  D-55 enumerates exactly the three items the transition message carries, and
+  D-63 requires a remedy naming `--reason`. The remaining two —
+  `taskNotFound`'s "run `mindrail task list`" and `sessionNotFound`'s "run
+  `mindrail session open`" — are remedies that are *better* without the id in
+  them: both are commands to run verbatim, and an id spliced into either would
+  produce a command line that fails. All six carry the id in `why` and in
+  `metadata`, which is where a caller reads it.
 
 ### REQ-05 — the code vocabulary
 

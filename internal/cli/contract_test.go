@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -2404,6 +2405,50 @@ func reasonAfter(out, marker string) string {
 	return ""
 }
 
+// mintedID matches the identifiers this binary mints: a three-letter prefix and
+// 26 characters of Crockford base32.
+var mintedID = regexp.MustCompile(`\b(SES|TSK|CKP|WS|PRJ)-[0-9A-Z]{26}\b`)
+
+// TestCoordinationHumanOutputGolden is finding F17.
+//
+// The four renderings below were never executed by anything. Replacing the
+// whole body of sessionResult, handoverResult, taskListResult and
+// checkpointResult with panic() left every package green and `make smoke`
+// green: the tests all ran with --json, so the default output of `session
+// open`, `task show`, `task list` and `checkpoint write` could have panicked in
+// a release.
+//
+// A golden is the right instrument precisely because it cannot be satisfied
+// without running the command. What it pins is the layout — what is on which
+// line, and in what order — with the minted ids redacted, because those are the
+// machine-local part.
+func TestCoordinationHumanOutputGolden(t *testing.T) {
+	repo := newInitializedRepo(t)
+	session := sessionID(t, repo)
+	task := openTask(t, repo, session, "wire the reconcile path")
+	run(t, repo, "checkpoint", "write", task,
+		"--note", "parser done; the resolver still returns nil for aliases",
+		"--handoff", "--session", session, "--json").requireExit(t, app.ExitSuccess)
+
+	// Ordered, not a map: `checkpoint write` changes what `task show` reports,
+	// so the goldens describe one sequence rather than four independent runs.
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "session_open", args: []string{"session", "open"}},
+		{name: "task_show", args: []string{"task", "show", task}},
+		{name: "task_list", args: []string{"task", "list"}},
+		{name: "checkpoint_write", args: []string{"checkpoint", "write", task,
+			"--note", "the resolver is done too", "--session", session}},
+	} {
+		got := run(t, repo, append(tc.args, "--no-color")...)
+		got.requireExit(t, app.ExitSuccess)
+
+		assertGolden(t, tc.name+"_human.golden", redact(got.stdout, repo))
+	}
+}
+
 // TestHumanOutputGolden pins the layout a person reads.
 //
 // Everything machine-local is redacted first: absolute paths, opaque ids, the
@@ -2451,6 +2496,11 @@ func redact(out, repo string) string {
 	for _, replacement := range replacements {
 		out = strings.ReplaceAll(out, replacement.pattern, replacement.placeholder)
 	}
+
+	// The coordination renderings put minted ids in the middle of sentences
+	// rather than on labelled lines, so redactLine cannot reach them. They are
+	// exactly as machine-local as the ids it already blanks.
+	out = mintedID.ReplaceAllString(out, "$1-<REDACTED>")
 
 	lines := strings.Split(out, "\n")
 	for i, line := range lines {

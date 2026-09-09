@@ -80,8 +80,17 @@ there would make `mindrail task open && …` run its second half against a task
 that does not exist.
 
 So `COORDINATION_UNAVAILABLE` was added, with the same remedy sentence. The
-requirements' AC-05.1 said five new codes and there are six; the amendment is
-recorded in [mr-003-requirements.md](mr-003-requirements.md).
+requirements' AC-05.1 said five new codes and there are six.
+
+*Corrected during the round-1 remediation (finding F15).* This paragraph used to
+end "the amendment is recorded in mr-003-requirements.md", and it was not: that
+file's diff over the whole milestone was three hunks, all in §1, and
+`grep -c COORDINATION_UNAVAILABLE` over it returned 0. The criterion genuinely
+deviated from is AC-06.7, which names the code the commands return; AC-05.1
+names five values that must exist and all five do. The amendments are in the
+requirements now, in place under AC-05.1 and AC-06.7, in the form the other
+amendments use. Five auditors met the false clause fresh and graded it from LOW
+to HIGH, which is what one wrong cross-reference costs under a parallel audit.
 
 ---
 
@@ -122,9 +131,19 @@ that looked everywhere.
 - **`Summarize` is graded on one project.** Nothing asserts that a second project
   in the same database does not contribute to the counts, and the fixture cannot
   produce one — `openFixture` registers a single worktree.
-- **The human renderings are goldens, not assertions.** The four new commands
-  print text no test reads for meaning; a rendering that named the wrong session
-  would pass.
+- **~~The human renderings are goldens, not assertions.~~ Four of the human
+  renderings are never executed.** *(Corrected during the round-1 remediation,
+  finding F17.)* There was no golden for any coordination command: the five
+  files in `internal/cli/testdata/` were all MR-001's, and `TestHumanOutputGolden`
+  looped over `{"status", "doctor"}`. The gap was worse than "printed and
+  unread": replacing the entire body of `sessionResult`, `handoverResult`,
+  `taskListResult` and `checkpointResult` with `panic()` left every package
+  green and `make smoke` green, because the code path was never entered at all.
+  A panic, a nil dereference or an error-return regression in the default output
+  of `session open`, `checkpoint write`, `task show` and `task list` would have
+  shipped. The four commands are in `TestHumanOutputGolden` now, which executes
+  them to produce the bytes it pins. `taskResult`, shared by `task open` and
+  `task state`, was executed already.
 - **`internal/identity` moved code that MR-001 shipped.** The tests moved with
   it and the format is asserted, but nobody has graded the move itself against
   the original.

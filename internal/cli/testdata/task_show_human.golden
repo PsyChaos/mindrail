@@ -1,0 +1,5 @@
+Task TSK-<REDACTED> is OPEN.
+  wire the reconcile path
+
+Last checkpoint (handoff), written by session SES-<REDACTED>:
+  parser done; the resolver still returns nil for aliases
