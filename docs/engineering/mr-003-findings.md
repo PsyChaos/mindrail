@@ -131,6 +131,22 @@ that looked everywhere.
 - Everything MR-002's Appendix F left open is still open: the unaudited
   `record`, `schema`, migration, storage and workspace packages, and doctor's six
   non-knowledge checks.
+- **Four mutations of the store still survive** *(added by the round-1
+  remediation, finding F21)*. §3's table is not "every new guard", and the
+  Definition of Done's item 3 is therefore not met in full. What is left, after
+  the two the remediation closed:
+
+  | Surviving mutation | Site | Why it is still open |
+  |---|---|---|
+  | `OpenSession`'s empty-workspace guard deleted | `store.go` | The CLI never calls it with an empty workspace: `coordinationScope` refuses first. Reachable only from a future caller |
+  | The four `.UTC()` normalisations dropped | `store.go` | An inherited pattern — the same mutation survives on `internal/workspace/store.go` — and the fixtures are already UTC, so no test can see it |
+  | `Summarize`'s count query loses its project scope | `store.go` | The gap named two bullets above: `openFixture` registers one worktree, so a second project cannot be arranged |
+  | The newest-checkpoint join loses its project scope | `store.go` | The same fixture limitation |
+
+  `requireSession`'s empty-id guard is struck from the list rather than left
+  open: with the guard deleted the SELECT matches no row and produces the
+  byte-identical `SESSION_NOT_FOUND`, so it is an equivalent mutant that no test
+  could kill.
 
 ---
 

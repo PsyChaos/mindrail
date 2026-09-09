@@ -76,9 +76,13 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 // Passed as a value here, the mint happens inside the transaction that carries
 // the write, so a refusal anywhere in that transaction takes it back with
 // everything else.
+// mint is carried explicitly rather than inferred from an empty handle, so that
+// NamedSession("") is a lookup of nothing — ErrSessionNotFound — rather than a
+// silent request to mint.
 type Attribution struct {
 	handle      string
 	workspaceID string
+	mint        bool
 }
 
 // NamedSession attributes a write to a session that already exists. A handle
@@ -87,7 +91,9 @@ func NamedSession(handle string) Attribution { return Attribution{handle: handle
 
 // MintFor attributes a write to a session minted for this workspace, in the
 // write's own transaction (decision D-61).
-func MintFor(workspaceID string) Attribution { return Attribution{workspaceID: workspaceID} }
+func MintFor(workspaceID string) Attribution {
+	return Attribution{workspaceID: workspaceID, mint: true}
+}
 
 // Write is what an attributed write reports beside its own result: the session
 // it was attributed to, and whether that session was minted here.
@@ -104,7 +110,7 @@ type Write struct {
 // attribute resolves an Attribution inside the transaction that carries the
 // write, either by finding the named session or by minting one.
 func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution) (Write, error) {
-	if by.handle != "" {
+	if !by.mint {
 		session, err := requireSession(ctx, tx, by.handle)
 		if err != nil {
 			return Write{}, err
@@ -113,7 +119,7 @@ func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution) (Writ
 	}
 
 	if by.workspaceID == "" {
-		return Write{}, sessionNotFound("")
+		return Write{}, fmt.Errorf("minting a session: %w", errors.New("no workspace id"))
 	}
 
 	session := Session{
