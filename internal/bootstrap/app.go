@@ -33,6 +33,7 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/config"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
@@ -55,19 +56,48 @@ import (
 type Mode int
 
 const (
-	// ModeReadOnly never creates and never migrates: status, doctor, version.
+	// ModeReadOnly never creates, never migrates and opens SQLite read-only:
+	// status, doctor, version.
 	ModeReadOnly Mode = iota
-	// ModeInit is the only writer.
+	// ModeInit is the only mode that creates the database, applies migrations
+	// and registers the worktree.
 	ModeInit
+	// ModeWrite opens an existing database for writing without creating or
+	// migrating it: the coordination commands MR-003 adds, and every later
+	// milestone that records something into a repository `init` has already set
+	// up.
+	//
+	// It exists because the two original modes did not divide the authority the
+	// way decision D-01 does. D-01 gives *setup* authority to `mindrail init`
+	// alone — creating the file, applying migrations, registering the worktree —
+	// and a command that appends a row to a table init already made is not
+	// exercising any of it. Folding those two into one mode meant a coordination
+	// command either opened the database read-only, and could not write at all,
+	// or ran as init and would create a database out from under a user who had
+	// never run it.
+	//
+	// So this mode is read-only in everything except the SQLite handle: a
+	// repository with no database is reported as such, pending migrations are
+	// read and not applied, and an unregistered worktree stays unregistered.
+	ModeWrite
 )
 
 // String renders the mode for logs and diagnostics.
 func (m Mode) String() string {
-	if m == ModeInit {
+	switch m {
+	case ModeInit:
 		return "init"
+	case ModeWrite:
+		return "write"
+	default:
+		return "read-only"
 	}
-	return "read-only"
 }
+
+// creates reports whether this mode may bring a runtime database into existence.
+// Only init may, which is decision D-01 as a predicate rather than as a
+// comparison repeated at four call sites.
+func (m Mode) creates() bool { return m == ModeInit }
 
 // Options carries every input the startup sequence has. A zero value is usable:
 // it starts read-only in the process working directory against the real git,
@@ -417,6 +447,26 @@ func (a *App) DB() *sql.DB {
 	return a.db.DB
 }
 
+// Coordination returns the session/task/checkpoint store, or nil when there is
+// no runtime database to build it over.
+//
+// It is constructed here rather than by each command (requirement AC-08.1) for
+// the reason every other seam in this file is: a command that built its own
+// would be free to hand it a different clock, and two commands disagreeing about
+// what time it is would write rows whose order does not match the order they
+// happened in.
+//
+// nil rather than an error, because "there is no database" is not a failure of
+// this call. In ModeReadOnly it means the repository has never been initialised
+// (decision D-01), which is a state the caller reports with `mindrail init` as
+// the remedy — the same shape DB() above already has.
+func (a *App) Coordination() *coordination.Store {
+	if a.db == nil {
+		return nil
+	}
+	return coordination.NewStore(a.db.DB, a.clock)
+}
+
 // Repo returns the resolved Git layout, zero when discovery failed.
 func (a *App) Repo() git.Repository { return a.subject.Repo }
 
@@ -600,7 +650,7 @@ func (a *App) resolveRuntimePaths(context.Context) error {
 func (a *App) openSQLite(ctx context.Context) error {
 	a.record(StepOpenSQLite)
 
-	if a.opts.Mode == ModeReadOnly && !a.runtimeDatabaseExists() {
+	if !a.opts.Mode.creates() && !a.runtimeDatabaseExists() {
 		a.subject.DBPresent = false
 		return nil
 	}

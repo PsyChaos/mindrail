@@ -101,6 +101,22 @@ const (
 	// checkpoint rather than as a failure.
 	CodeCheckpointNotFound Code = "CHECKPOINT_NOT_FOUND"
 
+	// CodeCoordinationUnavailable marks a coordination command run against a
+	// repository that has no runtime store yet.
+	//
+	// It is deliberately not WORKSPACE_NOT_INITIALIZED, which names the same
+	// condition and is the right code for `status` and `doctor`. That one is
+	// decision D-03's single zero-exit row: it is a *state to report*, and the
+	// exit-class table's comment is explicit that it must never appear in an
+	// error object at all. A command that was asked to open a task and did not
+	// open one has not reported a state — it has failed to do the thing — and
+	// exiting 0 there would make `mindrail task open && ...` run its second half
+	// against a task that does not exist.
+	//
+	// The remedy is the same sentence `status` prints, because the fix is the
+	// same: run `mindrail init`.
+	CodeCoordinationUnavailable Code = "COORDINATION_UNAVAILABLE"
+
 	// CodeCoordinationWriteFailed marks a coordination row that did not reach
 	// the runtime database, after storage.WriteFailure has had its say. It is
 	// the coordination counterpart of WORKSPACE_REGISTRATION_FAILED and exists
@@ -139,6 +155,7 @@ var allCodes = sortedCodes([]Code{
 	CodeTaskNotFound,
 	CodeTaskStateInvalid,
 	CodeCheckpointNotFound,
+	CodeCoordinationUnavailable,
 	CodeCoordinationWriteFailed,
 })
 

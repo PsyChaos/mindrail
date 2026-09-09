@@ -79,6 +79,7 @@ var exitForCode = map[app.Code]int{
 	app.CodeTaskNotFound:            app.ExitFailed,
 	app.CodeTaskStateInvalid:        app.ExitFailed,
 	app.CodeCheckpointNotFound:      app.ExitFailed,
+	app.CodeCoordinationUnavailable: app.ExitFailed,
 	app.CodeCoordinationWriteFailed: app.ExitFailed,
 }
 

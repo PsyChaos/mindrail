@@ -103,6 +103,9 @@ func NewRootWith(o Options) *Root {
 		newStatusCommand(o),
 		newDoctorCommand(o),
 		newVersionCommand(),
+		newSessionCommand(o),
+		newTaskCommand(o),
+		newCheckpointCommand(o),
 	)
 
 	// A help command of our own, because cobra's prints the whole root help on

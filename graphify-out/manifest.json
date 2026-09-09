@@ -1578,9 +1578,9 @@
     "semantic_hash": ""
   },
   "docs/engineering/mr-003-requirements.md": {
-    "mtime": 1788947059.378148,
-    "seen": 1788947089.4306588,
-    "ast_hash": "7f7f02bec6a70659d31c3a753fa6c63c",
+    "mtime": 1788947555.2393434,
+    "seen": 1788947582.9575438,
+    "ast_hash": "ec47c88533a6846d5bb9a16a6820ef1b",
     "semantic_hash": ""
   },
   "internal/identity/id.go": {
@@ -1605,6 +1605,54 @@
     "mtime": 1788947027.7579668,
     "seen": 1788947089.4293478,
     "ast_hash": "99cc178dd013b150be792dd0ed301cc2",
+    "semantic_hash": ""
+  },
+  "internal/coordination/errors.go": {
+    "mtime": 1788947296.467019,
+    "seen": 1788947582.9574018,
+    "ast_hash": "15f4ffb813a5eefac5fde0266c1d9dad",
+    "semantic_hash": ""
+  },
+  "internal/coordination/lifecycle_scan_test.go": {
+    "mtime": 1788947205.810361,
+    "seen": 1788947582.9574032,
+    "ast_hash": "a17c5c3be5a25bcee37a243e43f9ee8d",
+    "semantic_hash": ""
+  },
+  "internal/coordination/model.go": {
+    "mtime": 1788947270.141699,
+    "seen": 1788947582.9574037,
+    "ast_hash": "419bb0fc6e5fd76bd888e0ae865c9494",
+    "semantic_hash": ""
+  },
+  "internal/coordination/state.go": {
+    "mtime": 1788947222.8351762,
+    "seen": 1788947582.9574044,
+    "ast_hash": "f7f731855fd5b0c0d2a96e5198166492",
+    "semantic_hash": ""
+  },
+  "internal/coordination/state_test.go": {
+    "mtime": 1788947211.0272262,
+    "seen": 1788947582.9574049,
+    "ast_hash": "d527b37cad903fc83767ffc803ebdac4",
+    "semantic_hash": ""
+  },
+  "internal/coordination/store.go": {
+    "mtime": 1788947534.9495752,
+    "seen": 1788947582.9574058,
+    "ast_hash": "c25187192ce346849c211f1704ddab11",
+    "semantic_hash": ""
+  },
+  "internal/coordination/store_test.go": {
+    "mtime": 1788947517.9683042,
+    "seen": 1788947582.957406,
+    "ast_hash": "0f3b919b18c6b1762f4a23255db27b08",
+    "semantic_hash": ""
+  },
+  "migrations/000002_coordination.sql": {
+    "mtime": 1788946789.9451377,
+    "seen": 1788947582.9575155,
+    "ast_hash": "fa66d745092e8384e004eecdcb1efc9b",
     "semantic_hash": ""
   }
 }
