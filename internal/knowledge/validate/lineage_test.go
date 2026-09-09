@@ -306,6 +306,59 @@ func TestEveryRecordOnAClosedWalkIsReported(t *testing.T) {
 	}
 }
 
+// TestARecordThatSupersedesItselfIsCountedAsOneRecord reads the text of the
+// milestone's only fatal message, at the group size nothing else exercises.
+//
+// A record whose "supersedes" names its own id is a closed group of one — spec
+// §95 step 9 counts it and closedGroups is written to find it — and the message
+// hard-coded the plural noun, so that store was published as "a closed supersede
+// group of 1 records" in `status --json`'s error.why, in status's stderr, and in
+// both of doctor's renderings. It survived four audit rounds because no test in
+// the repository read this string: the assertions elsewhere check which files are
+// reported, and the two message-reading tests both use groups of three.
+//
+// Both counts are asserted here. A test that only checked the singular would
+// pass on a message that had lost its plural instead.
+func TestARecordThatSupersedesItselfIsCountedAsOneRecord(t *testing.T) {
+	validator := shippedValidator(t)
+
+	alone := validate.Check(storeOf(t, []testRecord{
+		decisionAt("DEC-0001.json", decisionDoc("DEC-0001", map[string]any{
+			"status":     "superseded",
+			"supersedes": []any{"DEC-0001"},
+		})),
+	}), validator)
+
+	got := findingsAt(alone, validate.StepSupersedeCycle)
+	if len(got) != 1 {
+		t.Fatalf("a self-superseding record produced %d step-9 findings, want 1:\n\t%s",
+			len(got), describe(alone))
+	}
+	if want := "group of 1 record:"; !strings.Contains(got[0].Message, want) {
+		t.Errorf("step 9 counts the group as %q; the message reads:\n\t%q",
+			want, got[0].Message)
+	}
+
+	// The other arm, so a fix that simply dropped the "s" is red too.
+	pair := validate.Check(storeOf(t, []testRecord{
+		decisionAt("DEC-0001.json", decisionDoc("DEC-0001", map[string]any{
+			"status":     "superseded",
+			"supersedes": []any{"DEC-0002"},
+		})),
+		decisionAt("DEC-0002.json", decisionDoc("DEC-0002", map[string]any{
+			"status":     "superseded",
+			"supersedes": []any{"DEC-0001"},
+		})),
+	}), validator)
+
+	for _, finding := range findingsAt(pair, validate.StepSupersedeCycle) {
+		if want := "group of 2 records:"; !strings.Contains(finding.Message, want) {
+			t.Errorf("step 9 counts a two-record group as something other than %q:\n\t%q",
+				want, finding.Message)
+		}
+	}
+}
+
 // TestARecordOutsideAClosedGroupIsNotDraggedIntoIt is the over-fire guard for
 // the test above.
 //

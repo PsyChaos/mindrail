@@ -168,20 +168,22 @@ func oracleCycleMembers(store []storeFile) []string {
 		}
 	}
 
-	// A group whose every member was refused by step 5 is left to step 5: D-40
-	// did not ask those records step 9, and the reader is told to correct them
-	// first. The group here is the whole of onCycle, because with two ids every
-	// closed walk in this space is a single component.
-	reportable := false
-	for id := range onCycle {
-		if !owner[id].rejected {
-			reportable = true
-		}
-	}
-	if !reportable {
-		return []string{}
-	}
-
+	// D-40 decides who is named, and it decides it per record: a record step 5
+	// refused was never asked step 9, so it receives no finding and the reader is
+	// told to correct it by step 5 instead. The skip below is the whole of that
+	// rule, and it needs to know nothing about where the components are — a group
+	// whose every member was refused contributes nothing because each of its
+	// members is skipped, not because anything counted the group.
+	//
+	// That is why there is no "is this group reportable at all" guard here. An
+	// earlier draft had one; it could not change any of the 4,864 answers, because
+	// the loop below already returns an empty slice in exactly the cases the guard
+	// returned one for. It also justified itself with "every closed walk in this
+	// space is a single component", which is false: two ids that each supersede
+	// themselves are two disjoint components, and 204 of the swept stores hold
+	// that shape. A per-record rule is right for a reason that has nothing to do
+	// with how many components there are, which is what makes the guard both dead
+	// and unnecessary.
 	paths := make([]string, 0, len(onCycle))
 	for id := range onCycle {
 		if owner[id].rejected {

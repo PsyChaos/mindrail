@@ -40,6 +40,21 @@ func nameList(shown []string, total int) string {
 	return strings.Join(shown, ", ")
 }
 
+// plural picks the noun a count takes. It is internal/doctor's helper of the same
+// name, spelled again here because the two packages share no code and this one
+// had none — which is how "a closed supersede group of 1 records" survived four
+// audit rounds in the milestone's only fatal message.
+//
+// A count of one is the deliberate case, not the odd one: spec §95 step 9 counts
+// a record whose "supersedes" names its own id as a closed group of one, and
+// closedGroups is written to find it.
+func plural(n int, singular, many string) string {
+	if n == 1 {
+		return singular
+	}
+	return many
+}
+
 // invalid builds the finding every step but 9 produces. Sharing the constructor
 // is what keeps the code and the fatality of a finding a property of its step
 // rather than of whoever wrote the step: decision D-39 says only a supersede
@@ -372,8 +387,8 @@ func stepSupersedeCycle(lineages *graph) []ordered {
 					Step: StepSupersedeCycle,
 					Code: app.CodeKnowledgeSupersedeCycle,
 					Message: fmt.Sprintf(
-						"%s is part of a closed supersede group of %d records: %s. Each of them is reachable from every other by following \"supersedes\", so no lineage among them has a newest record and no answer about which record is current is correct",
-						s.ref.Path, len(group), members),
+						"%s is part of a closed supersede group of %d %s: %s. Each of them is reachable from every other by following \"supersedes\", so no lineage among them has a newest record and no answer about which record is current is correct",
+						s.ref.Path, len(group), plural(len(group), "record", "records"), members),
 					Fatal: true,
 				}})
 			}

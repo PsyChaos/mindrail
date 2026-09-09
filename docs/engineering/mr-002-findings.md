@@ -13,15 +13,20 @@ pass had introduced.
 - **Remediation 2** landed as `8832bfd`.
 - **Round 3** graded it. 17 proposed, **12 confirmed**, 5 refuted, 0 unsettled.
   Nine were new; three pre-dated it. Appendix D.
-- **Remediation 3** landed as `aa5ec9e..0cee59b`, closing all twelve under decision
+- **Remediation 3** landed as `f2be82e..0cee59b`, closing all twelve under decision
   **D-52**. Appendix E.
+- **Round 4** graded it, with seven auditors over sixty-seven agents. 32 proposed,
+  24 after merging, **8 confirmed**, 16 refuted — including all four proposed
+  MEDIUMs. **No confirmed finding is in behaviour.** Appendix F.
+- **Remediation 4** closed all eight. Appendix G.
 
-**Status: `NOT_VERIFIED`.** Not because a finding is open — all twelve are closed
-and each fix has a test that a mutation of the fix turns red. It is `NOT_VERIFIED`
-because **no audit round has graded remediation 3**, and this repository's measured
-base rate for an ungraded fix pass is the whole subject of §1: remediation 1
-introduced eleven defects out of eleven. A fourth round is what would change this
-verdict.
+**Status: `NOT_VERIFIED`.** Not because a finding is open. Round 4 is the first
+round in this milestone to find no wrong answer a user can reach: the ownership
+rule agreed with five independently written referees, one of them sweeping 110,592
+stores, and none of the twelve round-3 defects returned. The verdict stands only
+because **remediation 4 has not itself been graded**, and §1 is why that matters
+in this repository. A fifth round over a pass this small is the open question, not
+a foregone requirement.
 
 ---
 
@@ -189,22 +194,35 @@ directions.
 **`NOT_VERIFIED`.** *Amended after remediation 3; the paragraph this replaces
 recorded the state after round 2, when one HIGH was still open.*
 
-No finding is open. What is missing is a grade: the twelve findings of round 3 were
-closed by a fix pass that no auditor has read, and §1 is the measurement that says
-what that is worth. The last two fix passes introduced 11 and 9 defects
-respectively.
+No finding is open, and remediation 3 has now been graded: **audit round 4 found
+no defect in behaviour.** Every one of its eight confirmed findings is LOW and in
+prose — a stale code comment, a plural noun, and four overstatements in this
+document's own account of itself. Remediation 4 closed all eight (Appendix G).
+
+The verdict stays `NOT_VERIFIED` for one reason: **remediation 4 is itself an
+ungraded fix pass**, and §1 is the measurement that says what that is worth. It is
+a much smaller pass than the three before it — one hard-coded noun, five comments,
+two strengthened tests and four corrected numbers — so the risk is smaller too,
+but the rule this repository wrote for itself does not have a size exemption.
 
 What MR-002 has:
 
-- `make verify` green, `make tidy-check` green, **726** top-level test functions
-  against a baseline of 507 (507 → 619 → 674 → 711 → 726).
+- `make verify` green, `make tidy-check` green, **720** top-level test functions
+  against a baseline of 507: 507 → 619 → 674 → 710 → 719 → 720.
+  Counted with `go test -list '.*' ./...`, which is the method the requirements
+  and the audit package name, at `79716a9`, `8e5c2e5`, `3bd453c`, `8832bfd`,
+  `0cee59b` and HEAD. *Amended after round 4 (finding R4-M11): the two figures
+  this replaces — 711 and 726 — came from a grep that counts `TestMain`, which no
+  other number in the sequence does, overstating the gain by seven.*
 - Steps 5–11 implemented, wired into `status` and `doctor`, with the pipeline pure
   and the schema documents as the contract.
-- The identity seam decided once, by decision D-52, rather than patched three times,
-  and graded against the whole 4,864-store space round 3's Breaker enumerated
-  (Appendix E).
+- The identity seam decided once, by decision D-52, rather than patched three
+  times, graded against the whole 4,864-store space round 3's Breaker enumerated
+  (Appendix E), and then re-graded by round 4 against a wider space than either —
+  110,592 three-file stores over three ids, admitting cycles of three and disjoint
+  components, with zero mismatches (Appendix F).
 
-What it does not have: a fourth audit round.
+What it does not have: a fifth round over remediation 4.
 
 ---
 
@@ -430,9 +448,19 @@ round 2's defect through a different door. Rule 4 is that review's amendment.
 
 ## Appendix E — what the third remediation did
 
-Four commits, `aa5ec9e..0cee59b`, closing all twelve round-3 findings. Every fix
-was mutated afterwards and the mutation turned a test red; the mutation is named
-in each row below, because a fix whose test cannot fail is not a fix.
+Four commits — `aa5ec9e`, `c9892db`, `5ac040a`, `0cee59b`, or the range
+`f2be82e..0cee59b` — closing all twelve round-3 findings.
+
+Every **behavioural** fix was mutated afterwards and the mutation turned a test
+red; the mutation is named in that fix's row below, because a fix whose test
+cannot fail is not a fix. One row is exempt and says so: B-B2 changed a comment
+and nothing else, and a comment has no mutation.
+
+*Amended after audit round 4 (findings R4-M08, R4-M09, R4-M11). As first
+published this preamble claimed the property of every row while two of its own
+rows visibly lacked it, the commit citation used a range that excludes its own
+first commit, and the mutation counts below were measured before the acceptance
+sweep existed. All four are corrected in place.*
 
 ### The rule, in two lines of code
 
@@ -447,13 +475,19 @@ previous three attempts each governed one of them and were silent about the othe
 `subject.canonical` is computed once, in `readRecords`, so the two questions
 cannot read different answers. Nothing else in the pipeline changed.
 
-Three mutations, each caught:
+Three mutations, each caught. The counts are **module-wide** — every package,
+`go test ./...` at `0cee59b` — and each names a distinct top-level test function:
 
 | Mutation | Which rule it removes | What went red |
 |---|---|---|
-| every claimant supplies edges | rules 2 and 3 | 6 tests, including round 2's over-fire regression |
-| only schema-valid canonical records supply edges | rule 1 | 5 tests, including round 1's fail-open regression **and the new CLI row** |
-| `askedFor` drops the canonical condition | rule 4 | 3 tests, including round 3's own store |
+| every claimant supplies edges | rules 2 and 3 | **9** — 7 in `validate` including round 2's over-fire regression, 2 in `cli` |
+| only schema-valid canonical records supply edges | rule 1 | **7** — 6 in `validate` including round 1's fail-open regression, 1 in `cli`, which is the new agreement row |
+| `askedFor` drops the canonical condition | rule 4 | **4** — all in `validate`, including round 3's own store |
+
+The acceptance sweep below is red under all three, which is the row that matters
+most and the one the first version of this table could not show: it was written
+before the sweep landed, and published the validate-package counts from a tree
+that did not yet contain it.
 
 ### Graded against the whole state space, not a fixture set
 
@@ -491,7 +525,7 @@ cycle once the reader renames the files.
 | B-B3 | `escapingImpact`'s verbs agree with its subject, and a test reads the field for one and two records | either verb back to singular |
 | B-B4, RD-02 | a mixed degraded set gets its own noun ("unreadable or declined records") in the omission tail, and a remedy tail that asks for both actions instead of telling the reader to fix links | either tail falling back to the unreadable wording |
 | RD-01 | `alsoHeading`'s mixed arm is now covered, under a fatal reading where the heading is the reader's only account of those records | the mixed arm replaced by either homogeneous sentence |
-| RD-04 | the containment test builds the store its name describes: a linked bucket whose entry must be read rather than a same-named decoy elsewhere in the repository, plus a linked entry in a real bucket, both reported at their repository-relative paths | — (the old test had no link in it at all) |
+| RD-04 | the containment test builds the store its name describes: a linked bucket whose entry must be read rather than a same-named decoy elsewhere in the repository, plus a linked entry in a real bucket, both reported at their repository-relative paths | reporting a record at the path its link resolved to (`Path: abs` for `Path: rel` in `readRecord`) |
 | RD-05 | one in-package test calls `recordFile` directly with a name that is not a single component, and asserts both arms | `if true` in place of the guard, which previously left all 18 packages green |
 | B-B2 | the comment now states what the check is — point-in-time, not time-of-use — and what closing the window would cost | — (prose) |
 
@@ -510,3 +544,146 @@ wrong, and the comment is what changed.
 The residual cost regression (Appendix D) and the accepted containment gap around
 `filesystem.Root.Resolve` are likewise untouched, for the same reason: both are
 outside what a finding asked for.
+
+---
+
+## Appendix F — round 4 findings, as confirmed
+
+Round 4 graded remediation 3 (`f2be82e..0cee59b`). Seven asymmetric auditors —
+three Readers on conformance, four Breakers on behaviour — across 67 agents, with
+every proposed finding then given to two adversarial verifiers briefed to refute
+it, and an arbiter on every split.
+
+**32 proposed, 24 after merging, 8 confirmed, 16 refuted, 10 arbitrated.** All
+four proposed MEDIUMs were refuted. **No confirmed finding is in behaviour.**
+
+This is the first round in the milestone where the fix pass under audit produced
+no wrong answer a user can reach. It is also the first where refutation carried
+two thirds of the outcome.
+
+### The eight
+
+| ID | New | Where | What |
+|---|---|---|---|
+| R4-M13 | YES | `validate.go`, the comment above `lineages := newGraph(all)` | The caller's copy of the ownership sentence still stated the rule D-52 replaced — "a record step 5 rejected … does not get to override an accepted record's id" — on the line a fifth editor reads first, about the one seam that has been wrong three times |
+| R4-M16 | NO | `steps.go`, `stepSupersedeCycle`'s format string | A record whose `supersedes` names its own id is published as "a closed supersede group of **1 records**", in `status --json`'s `error.why`, in status's stderr and in both of doctor's renderings — the milestone's only fatal message. No test read the string |
+| R4-M22 | YES | `doctor/checks.go` `knowledgeResult` and `recordRemedy` | Two surviving comments asserted a declined record "reads perfectly" — the claim the comment added 380 lines below calls fabricated. One of them is the recorded reason the escaping remedy differs from the unreadable one |
+| R4-M20 | YES | `doctor/checks.go`, `remainingRecordRemedy`'s mixed arm | The two counts in the new sentence could be exchanged and all 15 packages stayed green: the only fixture reaching that arm had two records of each class, so the swap was byte-identical. A real 15-and-5 store would have printed the numbers the wrong way round |
+| R4-M17 | YES | `ownership_sweep_test.go`, `oracleCycleMembers` | A nine-line guard inside D-52's own acceptance oracle changes none of the 4,864 answers, and the comment justifying it — "every closed walk in this space is a single component" — is false for 204 of the stores it grades |
+| R4-M09 | YES | Appendix E's mutation table | Published 6, 5 and 3 red tests; the tree it ships with gives 9, 7 and 4. The figures were measured before the acceptance sweep landed, the scope was never stated, and row 2's count excluded the CLI test the same row names |
+| R4-M11 | YES | §4's test-function count | 726 against a baseline of 507 compares a grep that counts `TestMain` against one that does not, overstating the gain by seven |
+| R4-M08 | YES | Appendix E's preamble and §1 | Both claimed every fix carries a named mutation while two of the appendix's own eleven rows end in a dash |
+
+### What the refutations killed, and why it matters
+
+Sixteen findings died, including every proposed MEDIUM. The commonest cause was a
+finding citing a document that says something narrower than the finding claimed —
+so the verifiers' first move was to read the quoted sentence in full and in place.
+
+Grouped:
+
+- **Four attacked D-52's implementation directly and failed.** The sharpest,
+  R4-M05, argued that `isCanonical` is an unguarded single gate on the fatal check
+  for the invariant kind; measured, the identical one-token exposure exists at
+  `f2be82e`, so remediation 3 created nothing. R4-M02 and R4-M14 both read a
+  qualification out of a sentence that carries it three times in the same file.
+- **Three attacked the rewritten containment test.** R4-M06 asked for a
+  discrimination that is not expressible: re-deriving the record path through the
+  root is an *equivalent* mutant, because `absDir` is the canonicalisation of the
+  same bucket and both reach the same inode. They differ only under a mid-walk
+  filesystem swap, which the loader exposes no seam for.
+- **Two attacked the loader guard.** R4-M24 argued `"."` and `".."` defeat the
+  single-component precondition; they are single components by Go's own
+  definition, and measured, the boundary returns a byte-identical answer for both.
+- **Two were textual claims that did not survive their own quotation** — R4-M04 on
+  a commit range whose disambiguating word sat in the same clause, R4-M10 on a
+  phrase D-52 itself glosses.
+
+One refuted finding produced a fix anyway. R4-M23 reported that the new in-package
+loader test fails whenever `TMPDIR` is reached through a symbolic link — the macOS
+default. It was refuted as a security finding, correctly: a broken guard still
+aborts at the assertion above the fragile comparison. But the portability hazard
+is real and was reproduced on Linux by pointing `TMPDIR` at a symlink, so it is
+closed in Appendix G. **A refuted finding can still be worth acting on; refuted
+means "not the defect it claimed to be", not "nothing here".**
+
+### What round 4 did not look at
+
+Stated plainly, because a round that reports only what it found reads as a round
+that looked everywhere.
+
+- **No store mixing decisions and invariants was enumerated by anyone.** The
+  4,864-store acceptance sweep is decisions-only and so is every auditor's fuzzer.
+  No test in the repository asserts step 9 over an invariant at all.
+- Cycles of three or more, non-active statuses and loader problems fall outside
+  the shipped sweep's space and were reached by **sampling, not enumeration**:
+  60,000 random stores, 16,000 plus 1,600 cycle-biased, and 400 plus 250 on disk.
+  One auditor did enumerate wider — 110,592 three-file stores over three ids,
+  admitting 3-cycles and disjoint components, zero mismatches — and that is the
+  round's strongest single result, still decisions-only.
+- **Everything was measured on ext4 on Linux.** `isCanonical` compares a file name
+  against a JSON id byte for byte; on a case-insensitive or Unicode-normalising
+  filesystem that comparison is *argued* unreachable, not measured. macOS and
+  Windows are on the project's advertised matrix and neither was exercised.
+- Concurrency was barely touched: one determinism check and one swap probe.
+  Nothing ran two commands against one store at the same time.
+- `internal/knowledge/record`, `internal/knowledge/schema`, the schema documents,
+  and the migration, storage and workspace packages were not audited this round,
+  nor were doctor's six non-knowledge checks.
+
+### What generalises
+
+1. **Once the code is right, grade the account of the code as hard as the code.**
+   Six of the eight survivors are prose the fix pass wrote about itself.
+2. **A blanket falsifiability claim must be scoped to the rows that can carry it.**
+   The missing word was "behavioural".
+3. **Re-measure a published count against the tree it ships with, and say what you
+   counted.** Both wrong numbers here erred in the conservative direction and both
+   still cost an auditor a day, because a figure a reader cannot reproduce reads as
+   one that was invented.
+4. **When a rule moves, grep for every copy of the sentence that stated the old
+   one.** This pass rewrote the ownership sentence inside `newGraph` and left the
+   caller's copy 150 lines away; it removed the readability claim from three places
+   in one file and left two standing.
+5. **A widened classification needs a fixture whose classes are unequal.** Two
+   mutation survivors survived only because the one store reaching the new arm held
+   two of each.
+6. **An acceptance oracle earns its authority by being able to disagree.** Grade it
+   by removal, not only by whether it passes.
+7. **"No written contract forbids it" is not a refutation in this repository, and
+   "a contract forbids it" is not a requirement.** Round 3 confirmed four findings
+   with no acceptance criterion behind them. Cite the graded ledger, not only the
+   frozen requirements.
+
+---
+
+## Appendix G — what the fourth remediation did
+
+All eight round-4 findings, closed in one pass. Four are behavioural or
+test-visible and carry a named mutation; four are corrections to this document and
+to D-51's prose, and carry a measurement instead.
+
+| ID | What was done | Held by |
+|---|---|---|
+| R4-M16 | `internal/knowledge/validate` gained a `plural` helper — it had none — and step 9's fatal message uses it. A self-superseding record now reads "a closed supersede group of 1 record" | `TestARecordThatSupersedesItselfIsCountedAsOneRecord`, which reads the message at both group sizes. Mutation: hard-code "records" again → red |
+| R4-M20 | The mixed-tail fixture's classes are now unequal — four unreadable, two links past the cap — and both counts are asserted against their own nouns | Mutation: exchange the two counts in `remainingRecordRemedy`'s mixed arm → red. The same mutation left all 15 packages green before this |
+| R4-M17 | The dead `reportable` block is gone from the acceptance oracle; the per-record D-40 skip below it already carried the whole rule, which is also why the rule is right for a reason unrelated to component counts. The false comment is replaced by that reasoning, with the 204 measured and stated | The sweep passes with an identical log line, which is the point: the block could not change an answer |
+| R4-M22 | The "reads perfectly" claim is gone from `knowledgeResult`, `recordRemedy` and `degradedAccount` in `doctor/checks.go`, from `escapingRecord` and `unreadableStore` in the loader, and from two test doc-comments — six copies in four files, found by grepping the sentence rather than the two the finding named. **D-51's own prose is amended in place**, since leaving it would have made the code disagree with the requirements instead of with itself | Measurement: `grep -rn "reads perfectly"` over `internal/` leaves two, both correct — one in `cli/agreement_test.go` about a directory link whose target really is a readable directory the loader walked, and one in `internal/storage` about a database, which has nothing to do with D-51 |
+| R4-M13 | The caller's ownership paragraph now states D-52, and says why it is worth re-writing whenever `newGraph` changes | — (comment) |
+| R4-M09 | Re-measured at `0cee59b` module-wide: 9, 7 and 4, with the scope stated and the acceptance sweep's own redness recorded | Reproduced by running each mutation and counting distinct `--- FAIL:` lines |
+| R4-M11 | The sequence is republished as 507 → 619 → 674 → 710 → 719 → 720 under `go test -list '.*' ./...`, with the method named | Every one of the six re-measured in a worktree at its own commit |
+| R4-M08 | "Every **behavioural** fix", in both places; RD-04's mutation cell is filled with a mutation that does turn its test red | Mutation: `Path: abs` for `Path: rel` in `readRecord` → `TestLoadReadsTheEntryInsideTheDirectoryItListed` red |
+
+**One refuted finding acted on.** R4-M23's security claim was correctly refuted,
+but the portability hazard behind it is real: the in-package loader test compared
+a path assembled with `filepath.Join` against one `filesystem.Root` had
+canonicalised, so it failed wherever `TMPDIR` is a symbolic link — the macOS
+default. Reproduced on Linux with `TMPDIR` pointed at a symlink (the test went red
+with `/tmp/mr4real/...` against `/tmp/mr4link/...`), fixed by canonicalising the
+worktree once at setup, and re-run green both ways.
+
+**What was deliberately not done.** The coverage gaps in Appendix F are not closed
+by this pass and none of them is a finding: no auditor produced a defect from the
+decision/invariant gap, and closing it means enumerating a mixed-kind space, which
+is work a requirement should ask for rather than a fix pass. It is the strongest
+candidate for the next round's brief.

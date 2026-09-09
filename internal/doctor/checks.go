@@ -736,16 +736,23 @@ func knowledgeResult(s Subject) Result {
 		return result
 	}
 
-	// Decision D-51. A record that resolves outside the repository reads
-	// perfectly; what happened to it is that Mindrail declined to treat it as
-	// repository content. The loader draws that distinction deliberately
-	// (loader.escapingRecord) and publishes PATH_ESCAPES_ROOT for it, and this
-	// is the only place a consumer can observe it: a reading carries one Code,
-	// and until this branch existed every such record arrived under
+	// Decision D-51. A record that resolves outside the repository was never
+	// opened; what happened to it is that Mindrail declined to treat it as
+	// repository content, on the path alone. The loader draws that distinction
+	// deliberately (loader.escapingRecord) and publishes PATH_ESCAPES_ROOT for it,
+	// and this is the only place a consumer can observe it: a reading carries one
+	// Code, and until this branch existed every such record arrived under
 	// KNOWLEDGE_UNREADABLE with the summary "Knowledge store has unreadable
 	// records" and the remedy "Fix or remove <path>" — an account of a read
-	// failure, about a file that reads, with a remedy that names nothing to fix
+	// failure that never happened, with a remedy that names nothing to fix
 	// (findings R-05, B-A6).
+	//
+	// This paragraph used to say the record "reads perfectly", and so did
+	// recordRemedy's. That is the claim escapingDiagnostic below now calls
+	// fabricated, and it was wrong for the same reason KNOWLEDGE_UNREADABLE was:
+	// a link pointing at a deleted or unopenable target reaches this branch
+	// identically, and nothing here has ever held its bytes. What the reading may
+	// say is where the record is, not what is in it (finding R4-M22).
 	//
 	// It is a homogeneity test and not a per-record one because a reading
 	// publishes exactly one Code. A store holding both classes keeps
@@ -1170,8 +1177,9 @@ func invalidRecordsImpact(degraded []loader.Problem) string {
 // words.
 //
 // "could not be read at all" is a claim about the loader's attempt, and it is
-// false of a record that resolves outside the repository: that record reads, and
-// Mindrail declined it (decision D-51). The account is shared by every reading
+// false of a record that resolves outside the repository: there was no attempt —
+// Mindrail declined it on its path, before opening anything (decision D-51, as
+// amended after audit round 4). The account is shared by every reading
 // that has to describe a degraded set, so two readings of one store cannot drift
 // into describing it differently.
 func degradedAccount(degraded []loader.Problem) string {
@@ -1308,9 +1316,15 @@ func recordRemedies(problems []loader.Problem) []string {
 //
 // The two classes ask for different things, and that difference is the whole of
 // decision D-51. "Fix or remove <path>" is the right sentence for a file this
-// binary could not read; it is the wrong one for a file that reads perfectly and
-// was declined because it resolves outside the repository, where there is
-// nothing in the file to fix and the thing to act on is the link.
+// binary could not read; it is the wrong one for a file that was declined
+// because it resolves outside the repository, where the thing to act on is the
+// link and nothing in the file is under discussion at all.
+//
+// The reason is where the record is, not that its contents are fine. This
+// comment used to say the declined file "reads perfectly", which is the claim
+// escapingDiagnostic calls fabricated: a link pointing at a deleted target is
+// declined identically, and the remedy below is right for it too — replace the
+// link, or remove it — precisely because the remedy is about the link.
 func recordRemedy(problem loader.Problem) string {
 	if problem.Code == app.CodePathEscapesRoot {
 		return "Replace the link at " + problem.Path + " with the record itself, or remove it."

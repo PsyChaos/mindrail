@@ -275,10 +275,17 @@ func Check(store loader.Store, v *schema.Validator) []Finding {
 	// rather than as a condition each step has to remember.
 	//
 	// `all` rather than `judged`, and the graph then decides for itself which of
-	// those records speaks for which node: a record step 5 rejected keeps the
-	// relation it declares and does not get to override an accepted record's id.
-	// Both halves of that sentence are load-bearing and each was once wrong on
-	// its own — see newGraph.
+	// those records speaks for which node. Decision D-52 is what it decides by:
+	// the record filed at the path an id names speaks for that id **whether or
+	// not step 5 accepted it**, and a record filed anywhere else speaks for
+	// nothing, however good its document is. An id no file is named after speaks
+	// for nothing at all. See newGraph, which is where that is written out.
+	//
+	// This paragraph is worth re-reading before editing newGraph, and worth
+	// re-writing if newGraph changes. Three fix passes each stated the rule here
+	// as well as there, and the fourth audit found this copy still stating the
+	// rule D-52 had already replaced — the one seam in this package that has been
+	// wrong three times, described backwards on the line above the call.
 	lineages := newGraph(all)
 
 	found = append(found, stepFilenameConsistency(judged)...)

@@ -387,17 +387,29 @@ loader files that refusal as a non-fatal `loader.Problem` carrying
 `app.CodePathEscapesRoot`. The report layers did not read that code. Every
 non-fatal loader problem produced one reading — `KNOWLEDGE_UNREADABLE`, summary
 "Knowledge store has unreadable records", remedy "Fix or remove `<path>`" — so a
-file that reads perfectly was published as one this binary could not read.
+file this binary never opened was published as one it could not read.
 
 **Why that is a defect and not a wording preference.** The code is the value a
-consumer branches on, and `KNOWLEDGE_UNREADABLE` is a false statement about this
-file: nothing is wrong with its bytes, its permissions or its JSON. The remedy
-inherits the falsehood and becomes unfollowable — there is nothing in the file to
-fix, and "remove it" removes a link whose target the reader may still want. The
-thing to act on is the link, and only a reading that knows the record was
-*declined* rather than *unread* can say so. This is the same defect shape as
-finding E10, one level further down: one condition wearing another condition's
-name, with that name's remedy attached.
+consumer branches on, and `KNOWLEDGE_UNREADABLE` is a claim about a read attempt
+that never happened: `loader.recordFile` decides `PATH_ESCAPES_ROOT` by resolving
+the path, before anything is opened. The remedy inherits the falsehood and becomes
+unfollowable — the file's contents are not under discussion, and "remove it"
+removes a link whose target the reader may still want. The thing to act on is the
+link, and only a reading that knows the record was *declined* rather than *unread*
+can say so. This is the same defect shape as finding E10, one level further down:
+one condition wearing another condition's name, with that name's remedy attached.
+
+> **Amended after audit round 4 (finding R4-M22).** As first written, the two
+> paragraphs above justified the new reading by saying the declined file "reads
+> perfectly" and that "nothing is wrong with its bytes, its permissions or its
+> JSON". That is the same shape of fabricated claim D-51 exists to remove, pointed
+> the other way: a link whose target has been deleted, or cannot be opened, is
+> declined identically, and no layer in this pipeline has ever held its bytes. The
+> warrant is not that the file is fine — it is that **this run knows nothing about
+> the file's contents and must not speak about them.** Nothing about the decision's
+> content changes: the code, the summary, the remedy split and the homogeneity test
+> are all as ruled. Only the ground under them is corrected, and it is a stronger
+> one.
 
 **The rule.**
 

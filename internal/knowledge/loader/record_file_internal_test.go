@@ -45,6 +45,20 @@ func TestTheFastPathIsNotTakenForANameThatIsNotOneComponent(t *testing.T) {
 		t.Fatalf("creating the decisions bucket: %v", err)
 	}
 
+	// Canonicalise the worktree before anything is built from it. On macOS
+	// TMPDIR is reached through a symbolic link by default, so filesystem.Root
+	// would resolve to /private/var/... while a path assembled here with
+	// filepath.Join would keep /var/... — and the final comparison below would
+	// fail on the platform rather than on the code. Audit round 4 raised this
+	// (R4-M23); the finding was refuted, because a broken guard still aborts at
+	// the assertion above that comparison, but a test that goes red on a
+	// supported platform is worth not shipping either way.
+	canonical, err := filepath.EvalSymlinks(worktree)
+	if err != nil {
+		t.Fatalf("canonicalising the worktree %q: %v", worktree, err)
+	}
+	worktree = canonical
+
 	// An ordinary file outside the worktree, in the directory the escaping name
 	// below lands in. Without it the fast path would fail at the Lstat and the
 	// test would pass for the wrong reason.

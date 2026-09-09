@@ -635,11 +635,11 @@ func TestBrokenSetupMatrix(t *testing.T) {
 				return repo
 			},
 			// Finding BA-10's condition, published under decision D-51. The whole
-			// point of the row is the code: this file reads perfectly, so
+			// point of the row is the code: this file was never opened, so
 			// KNOWLEDGE_UNREADABLE was a false statement about it and the remedy
 			// that comes with that code — "Fix or remove <path>" — asks the reader
-			// to repair a file with nothing wrong in it. The thing to act on is
-			// the link, and PATH_ESCAPES_ROOT is the code that says so.
+			// to repair a file whose contents are not under discussion. The thing
+			// to act on is the link, and PATH_ESCAPES_ROOT is the code that says so.
 			//
 			// Exit 0 and DEGRADED, not a usage error: app.CodePathEscapesRoot maps
 			// to ExitUsage where it is a fatal error object, and this is not one —

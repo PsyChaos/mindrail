@@ -497,11 +497,21 @@ func unreadableRecord(rel, message string) *Problem {
 // repository cannot be walked at all, so there is no store left to report.
 //
 // The code is PATH_ESCAPES_ROOT and deliberately not KNOWLEDGE_UNREADABLE.
-// KNOWLEDGE_UNREADABLE means "this binary could not read the record", and this
-// record reads perfectly; Mindrail declines to treat it as repository content.
+// KNOWLEDGE_UNREADABLE means "this binary could not read the record", and no read
+// was attempted: recordFile decides this from the resolved path, so a link
+// pointing at a deleted or unopenable target arrives here exactly like one
+// pointing at a perfect record. Mindrail declines to treat any of them as
+// repository content, and says so without claiming anything about their bytes.
 // Conflating the two is the mistake unreadableStore below stopped making for the
 // directory case, where it produced the remedy "check that it is a readable
-// directory" for a link that was already perfectly readable.
+// directory" for a link the loader had walked into without difficulty.
+//
+// This paragraph said "this record reads perfectly" until audit round 4 found
+// the same sentence standing in three places after the pass that removed it from
+// the fourth (finding R4-M22). Decision D-51's rule that escapingRecord "keeps
+// its comment" recorded that D-51 changed nothing here; it is not a licence for
+// the sentence to stay wrong. The code, the Fatal flag and the published Message
+// are untouched.
 //
 // The message is built from the repo-relative path rather than from the
 // containment error's prose, because that prose quotes the machine-local
@@ -528,10 +538,11 @@ func escapingRecord(rel string) *Problem {
 // leaks internal package names and repeats the absolute path the reader already
 // knows, and it says nothing the three fields below do not say better.
 func unreadableStore(rel string, cause error) error {
-	// A directory that resolves outside the repository is not unreadable. It
-	// reads perfectly — which is why "check that .mindrail/knowledge is a
-	// readable directory" cleared nothing and the reader was left carrying out
-	// an instruction that was already satisfied — and the containment layer has
+	// A directory that resolves outside the repository is not unreadable. It was
+	// refused on its path rather than read — which is why "check that
+	// .mindrail/knowledge is a readable directory" cleared nothing and the reader
+	// was left carrying out an instruction that changes nothing about the
+	// condition — and the containment layer has
 	// already named the condition in the words `init` prints for the same disk.
 	// Returning that error unchanged is what makes one condition one diagnosis
 	// whichever command met it: before this, `status` and `doctor` said

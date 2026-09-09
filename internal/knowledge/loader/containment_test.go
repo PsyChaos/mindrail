@@ -91,7 +91,7 @@ func TestLoadRefusesARecordThatResolvesOutsideTheRepository(t *testing.T) {
 
 			problem := store.Problems[0]
 			if problem.Code != app.CodePathEscapesRoot {
-				t.Errorf("Problem.Code = %q, want %q: the file reads perfectly, so it is not KNOWLEDGE_UNREADABLE",
+				t.Errorf("Problem.Code = %q, want %q: nothing was read, so it is not KNOWLEDGE_UNREADABLE",
 					problem.Code, app.CodePathEscapesRoot)
 			}
 			if problem.Fatal {

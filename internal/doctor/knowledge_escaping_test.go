@@ -34,11 +34,11 @@ func declinedRecord(path string) loader.Problem {
 	}
 }
 
-// readFailureWords are the claims a reading must not make about a record that
-// reads perfectly. They are the words the KNOWLEDGE_UNREADABLE rendering used:
-// before decision D-51 a planted symlink and a truncated file arrived under one
-// code, one summary and one remedy shape, and a consumer branching on the code
-// could not tell them apart.
+// readFailureWords are the claims a reading must not make about a record this
+// binary never opened. They are the words the KNOWLEDGE_UNREADABLE rendering
+// used: before decision D-51 a planted symlink and a truncated file arrived
+// under one code, one summary and one remedy shape, and a consumer branching on
+// the code could not tell them apart.
 var readFailureWords = []string{
 	"unreadable",
 	"could not be read",
@@ -52,7 +52,7 @@ func assertSaysNothingAboutAReadFailure(t *testing.T, result Result) {
 	whole := strings.Join(append([]string{result.Summary, result.Diagnostic, result.Impact}, result.NextAction...), "\n")
 	for _, word := range readFailureWords {
 		if strings.Contains(whole, word) {
-			t.Errorf("the reading says %q about a record that reads perfectly:\n%s", word, whole)
+			t.Errorf("the reading says %q about a record that was declined without being opened:\n%s", word, whole)
 		}
 	}
 }
@@ -61,9 +61,9 @@ func assertSaysNothingAboutAReadFailure(t *testing.T, result Result) {
 // findings R-05 and B-A6.
 //
 // loader.escapingRecord draws the distinction deliberately: PATH_ESCAPES_ROOT
-// and not KNOWLEDGE_UNREADABLE, because the record reads and what happened is
-// that Mindrail declined to treat it as repository content. Nothing could
-// observe it. `knowledgeResult`'s degraded branch hard-coded
+// and not KNOWLEDGE_UNREADABLE, because nothing was read — what happened is that
+// Mindrail declined to treat the file as repository content, on its path alone.
+// Nothing could observe it. `knowledgeResult`'s degraded branch hard-coded
 // KNOWLEDGE_UNREADABLE, the summary "Knowledge store has unreadable records" and
 // the remedy "Fix or remove <path>", so a planted symlink and a truncated file
 // were indistinguishable in the code, the summary and the remedy shape alike.
@@ -534,20 +534,45 @@ func TestAMixedDegradedSetBelowAFatalReadingNamesBothCounts(t *testing.T) {
 // opened and have nothing in them to fix. The reader is told to edit a file
 // whose contents are not the problem, one line below ten sentences that say so.
 //
-// The records alternate so that the tail of the list is mixed too. A test whose
-// first ten entries were one class and whose tail was the other would exercise
-// the homogeneous arms twice and this defect not at all.
+// The first ten records alternate so that both classes are named individually,
+// and the six past the cap are split **unevenly** — four unreadable, two links.
+// The uneven split is the part that took a second finding to get right. The
+// fixture this replaces put two of each past the cap, and with the counts equal
+// the two numbers in the tail could be exchanged for one another and the sentence
+// came out byte-identical: the whole suite stayed green while a real store of
+// fifteen unreadable records and five bad links would have told its reader there
+// were five of the first and fifteen of the second (finding R4-M20). The counts
+// are the part of an instruction a reader acts on, so they are asserted, not just
+// the class words around them.
 func TestAMixedDegradedTailDoesNotFileOneClassUnderTheOthersWords(t *testing.T) {
-	const total = 14
+	const (
+		total          = 16
+		tailUnread     = 4
+		tailEscaping   = 2
+		wantOmitted    = tailUnread + tailEscaping
+		wantUnreadWord = "4 unreadable"
+		wantLinkWord   = "2 link"
+	)
 
 	problems := make([]loader.Problem, 0, total)
-	for i := 1; i <= total; i++ {
-		path := fmt.Sprintf("%s/decisions/DEC-%05d.json", loader.StoreRoot, i)
+	pathAt := func(i int) string {
+		return fmt.Sprintf("%s/decisions/DEC-%05d.json", loader.StoreRoot, i)
+	}
+	// The named ten: alternating, so each class earns its own remedy above the
+	// tail and the tail cannot be the reader's first sight of either.
+	for i := 1; i <= maxNamedRecords; i++ {
 		if i%2 == 0 {
-			problems = append(problems, declinedRecord(path))
+			problems = append(problems, declinedRecord(pathAt(i)))
 			continue
 		}
-		problems = append(problems, unreadableRecord(path, false))
+		problems = append(problems, unreadableRecord(pathAt(i), false))
+	}
+	// The tail: four that could not be read, then two that were never opened.
+	for i := maxNamedRecords + 1; i <= maxNamedRecords+tailUnread; i++ {
+		problems = append(problems, unreadableRecord(pathAt(i), false))
+	}
+	for i := maxNamedRecords + tailUnread + 1; i <= total; i++ {
+		problems = append(problems, declinedRecord(pathAt(i)))
 	}
 
 	subject := healthySubject()
@@ -574,5 +599,17 @@ func TestAMixedDegradedTailDoesNotFileOneClassUnderTheOthersWords(t *testing.T) 
 	}
 	if !strings.Contains(remedyTail, "outside the repository root") {
 		t.Errorf("the remedy tail tells the reader to fix links that were never opened: %q", remedyTail)
+	}
+	// Each count against its own noun. Together these are what a swap breaks.
+	if !strings.Contains(remedyTail, wantUnreadWord) {
+		t.Errorf("the remedy tail does not say %q, so it is counting the wrong class or the wrong number: %q",
+			wantUnreadWord, remedyTail)
+	}
+	if !strings.Contains(remedyTail, wantLinkWord) {
+		t.Errorf("the remedy tail does not say %q, so it is counting the wrong class or the wrong number: %q",
+			wantLinkWord, remedyTail)
+	}
+	if omitted.count != wantOmitted {
+		t.Errorf("the omission tail counts %d records past the cap, want %d", omitted.count, wantOmitted)
 	}
 }
