@@ -144,14 +144,17 @@ AgentSession, Task ve Checkpoint yaşam döngüsünü SQLite üzerinde kur. İlk
 
 #### Durum
 
-**Uygulandı ve denetlendi; remediasyon bekliyor.** Kutular bu yüzden işaretsiz.
+**Uygulandı, denetlendi ve remediasyon yapıldı; ikinci denetim turu bekliyor.**
+Kutular bu yüzden hâlâ işaretsiz: bu depoda bir remediasyon geçişi denetlenir.
+MR-002'nin ilk remediasyonu 22 bulguyu kapattı ve 11 yenisini getirdi; on birinin
+tamamı düzeltme geçişinden çıktı.
 
 Sözleşme koda başlanmadan donduruldu ([mr-003-requirements.md](mr-003-requirements.md),
 `cd74767`), tasarım [mr-003-design.md](mr-003-design.md). Milestone'un senaryosu
 bir test olarak çalışıyor: iki ayrı AgentSession, aynı workspace'te, art arda,
 aynı Task'ı sürdürüyor — aralarında Go tarafında hiçbir şey taşınmadan, her adım
-veritabanını açıp kapatan ayrı bir komut çağrısı olarak. `make verify` ve
-`make tidy-check` yeşil; 768 test (temel 732).
+veritabanını açıp kapatan ayrı bir komut çağrısı olarak. `make check`,
+`make verify` ve `make tidy-check` yeşil; 799 test (denetimde 768, temel 732).
 
 **Birinci denetim turu** (`cd74767..f51478e`, yedi denetçi, 107 ajan) 50 bulgu
 önerdi, 46'sı çürütmeden sağ çıktı, birleştirilince **27 farklı kusur**: 5 HIGH,
@@ -173,6 +176,17 @@ adımdan önce durdu" yazıyor.
 Remediasyon brifingi on beş kalem hâlinde denetim belgesinin sonunda; her kalem
 neyi bozmaması gerektiğini ve düzeltmeyi hangi mutasyonun tuttuğunu adıyla
 söylüyor.
+
+**Remediasyon** (`c29efa3..e7e946c`, on beş kalem, on beş commit) her kalemin
+kendi mutasyonunu uygulayıp **kırmızı** olduğunu doğruladıktan sonra düzeltmeyi
+yazdı — çünkü bu depoda en sık üretilen yanlış iddia, bir düzeltmenin üzerinden
+geçen yeşil bir test paketidir. Beş HIGH bulgunun beşi de kapandı: koordinasyon
+komutları artık başlangıç yargısını `status` ile aynı kodla yayımlıyor, geçersiz
+UTF-8 taşıyan bayrak değerleri hiçbir şey açılmadan reddediliyor, saklanmış bir
+değer artık "yeniden adlandırılamayan bir yol" diye anlatılmıyor, D-55 muhafızı
+iç içe checkout'ta yeşil kalıyor, ve "en yeni checkpoint" veritabanının atadığı
+sıra oldu. Ayrıntısı ve bu geçişin brifingden ayrıldığı üç yer
+[mr-003-findings.md](mr-003-findings.md) §6'da.
 
 ---
 

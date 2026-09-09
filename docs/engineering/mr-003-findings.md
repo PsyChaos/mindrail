@@ -7,9 +7,13 @@
   proposed, 46 confirmed, **27 distinct defects — 5 HIGH, 15 MEDIUM, 7 LOW**.
   The evidence is [mr-003-audit-round-1.md](mr-003-audit-round-1.md); §5 below is
   the summary.
-- **Status: not done.** No remediation has been written.
-- `make verify` green, `make tidy-check` green
-- **768** top-level test functions, from a baseline of 732
+- **Round-1 remediation**: all fifteen items of the audit's brief, `c29efa3..e7e946c`.
+  §6 below is the record.
+- **Status: remediated, not re-audited.** A remediation pass in this repository
+  is audited: MR-002's first remediation closed 22 findings and introduced 11,
+  and all eleven came from the fix pass. Round 2 grades this one.
+- `make check` green, `make verify` green, `make tidy-check` green
+- **799** top-level test functions, from 768 at the audit and 732 at the freeze
   (`go test -list '.*' ./...`, the method R4-M11 settled)
 
 Sections 1–4 are the **implementer's own account**, written before the audit so
@@ -245,3 +249,87 @@ under parallel audit.** One wrong cross-reference was found five times and grade
 HIGH, MEDIUM, MEDIUM, MEDIUM and LOW. A synthesis step that merges before grading
 is not a nicety at that width; without it the round's headline severity would have
 been set by the fifth auditor to meet a `grep`.
+
+---
+
+## 6. The round-1 remediation
+
+All fifteen items of the audit's remediation brief, in the order it gave. Every
+item's stated mutation was applied and confirmed **red** before the suite was run
+and confirmed green, because a green suite over a fix is this repository's most
+frequently produced false claim.
+
+`make check`, `make verify` and `make tidy-check` are green. 799 top-level test
+functions, from 768 at `3f5ab3e`, counted with `go test -list '.*' ./...`.
+
+### What changed, and what proves it
+
+| # | Findings | What the fix does | The mutation that turns the new test red |
+|---|---|---|---|
+| 1 | F20, F12 | The D-55 lifecycle guard skips dot-prefixed directories, `vendor`, `testdata`, `graphify-out` and any nested checkout. One `internal/moduletree` for the three module-wide walkers under `internal/` | a file in `internal/cli` spelling all seven states — named, red. From a clone with `git worktree add ./mode-b` — green |
+| 2 | F09, F29, F36, F43 | `runCoordination` takes the startup verdict from `Diagnosis` and returns it before `coordinationScope` is consulted | reverting the `Diagnosis` call — six conditions × six commands red on the code, the exit class and the remedy |
+| 3 | F28, F42, F30 | `--title`, `--note`, `--reason` and `--label` are refused for UTF-8 at the flag boundary under `--json`, before anything opens. `unrepresentableError` gained a stored-field form that names the member | removing the boundary refusal — `wrote 1 row(s) into tasks, want 0`. Collapsing the two error forms — the remedy tells the reader to rename a path for a column |
+| 4 | F37, F24 | "The newest checkpoint" is `ORDER BY rowid`, the order the database assigned | `ORDER BY checkpoint_id DESC` — `LastCheckpoint`, `Handover` and `Summarize` all red |
+| 5 | F02, F11, F31, F38 | The session is resolved inside the transaction that attributes the write (`Attribution` / `Write`); empty title and note are judged at the CLI boundary | restoring the eager mint — `a refusal that reports "COMMAND_LINE_INVALID" minted 1 session(s)`. Minting outside the transaction — deadlock |
+| 6 | F10, F03, F39, F45 | `init` reads the coordination summary too | removing the one line — `init` and `status` publish different blocks, `observation: not_observed` |
+| 7 | F01, F41 | The workspace lookup is skipped only when the migration that creates the table is pending; a reading nobody made is marked as no reading | the blanket `PendingCount > 0` skip — an upgraded repository is told it is not registered. Dropping the marker — `observed` over a query that could not run |
+| 8 | F32 | (test only) all six commands from an unregistered linked worktree, on the code *and* the branch | deleting the `space.ID == ""` branch — `task show` returns another worktree's task at `ok:true` |
+| 9 | F40 | (test only) `ModeWrite` creates, migrates and registers nothing | `creates()` returning true for `ModeWrite`, and the same for the migrator and the registration — three separate reds |
+| 10 | F04 | (test only) a write failure is named by the storage layer first | removing the `storage.WriteFailure` call — all four writers red on `COORDINATION_WRITE_FAILED` |
+| 11 | F21 | (test only) an accepted move advances `updated_at`; abandoning keeps the claimant | `updated_at = updated_at`, and adding `ABANDONED` to the clearing branch |
+| 12 | F13, F35 | A coordination agreement matrix: AC-09.1's four conditions asserted across the envelope, the human rendering and the exit code, with the printed remedy carried out | reverting item 2 — the startup rows red |
+| 13 | F44, F46, F26 | `COORDINATION_READ_FAILED` wraps the read paths; `CoordinationErr` gives the block `indeterminate`; the empty-workspace guards are coded | reverting one read wrap — `code: ""`. Removing the indeterminate route — `not_observed` over a read that ran |
+| 14 | F33, F34, F22, F48, F49 | The usage envelope publishes the full command path; a group named without a subcommand is an envelope under `--json`; the self-transition refusal names the claimant; the project-scoped checkpoint query stops sorting the project; the "Last checkpoint" line has a subject | `cmd.Name()`, help under `--json`, the dropped `claimed_by`, the join instead of `EXISTS` — each red |
+| 15 | F15, F05, F14, F23, F47, F06, F25, F18, F16, F17, F07 | The ledger, plus two things it turned out to be cheaper to fix than to record: AC-03.5 is now enforced by an allow-list, and the four unexecuted renderings have goldens | `internal/coordination` importing `internal/git` — red. `sessionResult.RenderHuman` panicking — red, where before it was green in 18 packages and in `make smoke` |
+
+### Where this pass departed from the brief, and why
+
+Three items were carried out differently from the letter of the brief. Each is a
+judgment a second audit should grade rather than take on trust.
+
+- **Item 10's test lives in `internal/coordination`, not in the command layer.**
+  The brief says "make the database unwritable and assert all four writers
+  report `CodeRuntimePathUnwritable`". Driven through the CLI that assertion now
+  passes for the wrong reason: item 2 made the startup verdict come first, so an
+  unwritable runtime path is caught before any store method runs, and the
+  mutation the brief names — removing `storage.WriteFailure` from
+  `(*Store).writeFailure` — leaves the CLI test green. The store-level test
+  reaches the code under test and dies on that mutation.
+
+- **Item 13's "make `emit` refuse to publish an envelope whose payload carries
+  no registered code" is enforced as a test, not as a runtime branch.**
+  `app.WriteJSON`'s own comment argues that dropping an uncoded error is worse
+  than reporting it uncoded, and the alternative — inventing a general
+  "internal defect" code — is a wire-vocabulary addition this brief did not ask
+  for. `TestNoCoordinationFailureReachesTheWireUncoded` drives `task list --json`
+  over all of the MR-001 agreement matrix instead, which is the sweep that found
+  F09 in the first place.
+
+- **Item 14's migration comment is not corrected.** `migrations/000002_coordination.sql`
+  mis-attributes which command runs which query, and the migrator checksums the
+  file it applied: editing an applied migration reports
+  `MIGRATION_CHECKSUM_MISMATCH` on every existing database, which is the loudest
+  possible failure for a corrected comment. The correction is in
+  `internal/coordination/store.go`, on the constant that holds the query, with
+  the reason.
+
+  F48's index is also not added, and does not need to be: the query was rewritten
+  from a join to an `EXISTS`, which changes the plan from "walk every task of the
+  project, then sort" to "walk the checkpoints backwards and stop at the first
+  one" — 1.2 ms to 10 µs at 20,000 tasks, with no schema change.
+  `TestTheNewestCheckpointQueryDoesNotSortTheProject` asserts the plan rather
+  than the timing.
+
+### What this pass did not close
+
+- **Four store mutations still survive**, listed in §4 with the reason each is
+  still open. Two need a fixture that can register a second project.
+- **The two remaining `commandsUnderTest` invariants** —
+  `TestNoDocumentContradictsItsOwnErrorObject` and
+  `TestEveryRemedyAboutAFileNamesThatFileAbsolutely` — still do not cover the
+  coordination commands. Recorded under AC-09.1 with the reason each is vacuous
+  there.
+- **Everything MR-002's Appendix F left open**, plus `internal/workspace` and
+  `internal/migration`, which round 1 added.
+- **Linux only.** No macOS or Windows path behaviour has been exercised by
+  anyone, in any round.
