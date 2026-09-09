@@ -393,7 +393,13 @@ func paintReadiness(readiness Readiness, text string, color bool) string {
 // bound on its length; `mindrail task show` is where the note itself belongs.
 func lastCheckpointNote(info CoordinationInfo) string {
 	if !info.Observation.Known() {
-		return observed(info.Observation, "")
+		// "unknown", not "". observed() concatenates value + " (" + observation
+		// + ")", so an empty value left the line reading `Last checkpoint:
+		// (not_observed)` — four spaces after the colon against the section's
+		// three, on every `mindrail init` (finding F49). The word is also the
+		// honest one: with no reading there is no checkpoint to report and no
+		// claim that there is none.
+		return observed(info.Observation, "unknown")
 	}
 	if info.LastCheckpoint == nil {
 		return "none"

@@ -21,6 +21,32 @@ const (
 	checkpointIDPrefix = "CKP"
 )
 
+// selectNewestCheckpointOfProject is the query `status` runs on every start.
+//
+// EXISTS rather than a join, and the difference is the whole cost of it. A join
+// drives from tasks — SEARCH t USING idx_tasks_project, a probe into the
+// checkpoint index per task, then a temp b-tree to sort what came back — so the
+// work is proportional to the number of tasks in the project even when the
+// project has no checkpoints at all: 1.2 ms at 20,000 tasks with 200
+// checkpoints, paid on every read-only startup (finding F48).
+//
+// Written this way the plan is SCAN c in reverse rowid order with an EXISTS
+// probe per row, and LIMIT 1 stops at the first checkpoint belonging to this
+// project — 10 µs on the same database, because the newest checkpoint is the
+// first row the scan meets. It is a package-level constant so that the test
+// asserting the plan reads the same string this runs.
+//
+// The comment in migrations/000002_coordination.sql attributes this query to
+// `task show` and names the task-scoped one instead. It is wrong and it stays:
+// the migrator checksums the file it applied, so editing an applied migration
+// would report MIGRATION_CHECKSUM_MISMATCH on every existing database — the
+// loudest possible failure for a corrected comment.
+const selectNewestCheckpointOfProject = `SELECT c.task_id, c.session_id, c.created_at
+	   FROM checkpoints c
+	  WHERE EXISTS (SELECT 1 FROM tasks t
+	                 WHERE t.task_id = c.task_id AND t.project_id = ?)
+	  ORDER BY c.rowid DESC LIMIT 1`
+
 // Store reads and writes the session, task and checkpoint rows.
 //
 // Every method is one short transaction (tech-stack §11). There is no method
@@ -232,7 +258,7 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 		}
 
 		if !CanTransition(current.State, to) {
-			return transitionNotAvailable(taskID, current.State, to)
+			return transitionNotAvailable(taskID, current.State, to, current.ClaimedBy)
 		}
 		if to == StateBlocked && reason == "" {
 			return blockedReasonMissing(taskID)
@@ -475,11 +501,7 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 		sessionID string
 		createdAt string
 	)
-	err = s.db.QueryRowContext(ctx,
-		`SELECT c.task_id, c.session_id, c.created_at
-		   FROM checkpoints c JOIN tasks t ON t.task_id = c.task_id
-		  WHERE t.project_id = ?
-		  ORDER BY c.rowid DESC LIMIT 1`, projectID).
+	err = s.db.QueryRowContext(ctx, selectNewestCheckpointOfProject, projectID).
 		Scan(&taskID, &sessionID, &createdAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

@@ -42,7 +42,7 @@ Coordination
   Tasks open:        0 (not_observed)
   Tasks in progress: 0 (not_observed)
   Tasks blocked:     0 (not_observed)
-  Last checkpoint:    (not_observed)
+  Last checkpoint:   unknown (not_observed)
 
 Components
   ✓ knowledge                     Knowledge store readable (2 decisions, 1 invariant)

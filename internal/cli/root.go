@@ -76,7 +76,7 @@ func NewRootWith(o Options) *Root {
 		// The root has to be runnable for cobra to reach ValidateArgs at all —
 		// a non-runnable command returns ErrHelp first — and running it with no
 		// arguments has always printed help, so that is what it does.
-		RunE: func(c *cobra.Command, _ []string) error { return c.Help() },
+		RunE: func(c *cobra.Command, _ []string) error { return root.helpOrEnvelope(c) },
 
 		// Replaces cobra's legacyArgs, which produced the same sentence but as a
 		// bare error that app.ExitCode could only read as "operation failed".
@@ -242,7 +242,7 @@ func (r *Root) classifyArgsOf(cmd *cobra.Command) {
 	// `mindrail bogus` exits 2. Running it prints help, which is what it did
 	// before.
 	if cmd.HasSubCommands() && !cmd.Runnable() {
-		cmd.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+		cmd.RunE = func(c *cobra.Command, _ []string) error { return r.helpOrEnvelope(c) }
 	}
 
 	declared := classifiedArgs{check: cmd.Args}
@@ -280,6 +280,23 @@ const argsClassifiedAnnotation = "mindrail.args_classified"
 // left it exiting 1, the code reserved for a gate that ran and failed, so a
 // wrapper branching on "was my invocation wrong?" got the wrong answer
 // (findings F04, F08).
+// helpOrEnvelope answers a command that groups others and was named without one
+// of them.
+//
+// Help is the right answer for a person and not an answer at all for `--json`:
+// decision D-15 promises one JSON object on stdout and nothing else, and
+// `mindrail task --json` put 968 bytes of help there and exited 0 — so
+// `mindrail checkpoint --json && echo "handoff recorded"` printed that with
+// nothing written (finding F34). A group named without a subcommand is a
+// command line this binary cannot act on, which is what exit 2 means.
+func (r *Root) helpOrEnvelope(cmd *cobra.Command) error {
+	if r.jsonRequested() {
+		return r.usageError(cmd, fmt.Errorf(
+			"%s names a group of commands rather than a command to run", cmd.CommandPath()))
+	}
+	return cmd.Help()
+}
+
 func (r *Root) usageError(cmd *cobra.Command, err error, extra ...string) error {
 	next := append([]string{
 		"Run `" + cmd.CommandPath() + " --help` to see the accepted commands and flags.",
@@ -325,7 +342,25 @@ func (r *Root) emitUsageEnvelope(cmd *cobra.Command, verdict error) {
 	if !r.jsonRequested() {
 		return
 	}
-	_ = app.WriteJSON(cmd.OutOrStdout(), cmd.Name(), nil, nil, verdict)
+	_ = app.WriteJSON(cmd.OutOrStdout(), publishedName(cmd), nil, nil, verdict)
+}
+
+// publishedName is the command a reader typed, without the binary in front of
+// it: "task open", not "open".
+//
+// It used to be cmd.Name(), which is the leaf word. That was invisible while
+// every command was top level — at `cd74767` the leaf word *was* the command —
+// and MR-003 added the first nested ones, at which point one command
+// contradicted itself under one error class: `task state <id> --to BOGUS`
+// published "task state", because the body raises that error and passes its own
+// name, while `task state --to CLAIMED` with the id missing published "state",
+// because cobra raises it here. Both exit 2 with COMMAND_LINE_INVALID, and a
+// consumer keying on `command` saw two different commands (finding F33).
+func publishedName(cmd *cobra.Command) string {
+	if _, rest, found := strings.Cut(cmd.CommandPath(), " "); found {
+		return rest
+	}
+	return cmd.CommandPath()
 }
 
 // jsonRequested reads --json off the raw command line. Everything after a bare

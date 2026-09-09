@@ -74,7 +74,7 @@ func checkpointNotFound(taskID string) error {
 // says only "you cannot do that" leaves the reader to guess, and the guess is
 // usually a second wrong command; the alternatives come from TransitionsFrom, so
 // this message cannot drift from the table it is describing.
-func transitionNotAvailable(taskID string, from, to State) error {
+func transitionNotAvailable(taskID string, from, to State, claimedBy string) error {
 	available := TransitionsFrom(from)
 
 	var remedy string
@@ -89,10 +89,23 @@ func transitionNotAvailable(taskID string, from, to State) error {
 		remedy = fmt.Sprintf("From %s this task can move to: %s.", from, strings.Join(names, ", "))
 	}
 
-	return app.NewError(
+	// Decision D-58 promises that a second claim on a claimed task says which
+	// session holds it, and nothing said so: the refusal named the two states
+	// and stopped there, which tells an arriving agent that the task is taken
+	// and not who to hand over to — on the one command group whose whole
+	// purpose is handover (finding F22). The clause is about the claim, so the
+	// holder is named where there is one; an unclaimed task in a state that
+	// refuses the move has no holder to name and inventing one would be worse
+	// than saying nothing.
+	why := fmt.Sprintf("task %s is %s and cannot move to %s", taskID, from, to)
+	if claimedBy != "" {
+		why += fmt.Sprintf("; it is claimed by session %s", claimedBy)
+	}
+
+	failure := app.NewError(
 		app.CodeTaskStateInvalid,
 		app.KindFailed,
-		fmt.Sprintf("task %s is %s and cannot move to %s", taskID, from, to),
+		why,
 		"The task was left exactly as it was; nothing was written.",
 		remedy,
 	).
@@ -100,6 +113,11 @@ func transitionNotAvailable(taskID string, from, to State) error {
 		WithMetadata("from_state", string(from)).
 		WithMetadata("to_state", string(to)).
 		WithCause(ErrTransitionNotAvailable)
+
+	if claimedBy != "" {
+		failure = failure.WithMetadata("claimed_by", claimedBy)
+	}
+	return failure
 }
 
 // blockedReasonMissing reports a block with nothing said about why.
@@ -116,14 +134,6 @@ func blockedReasonMissing(taskID string) error {
 		WithCause(ErrBlockedReasonMissing)
 }
 
-// writeFailed reports a coordination row that did not reach the database, after
-// the storage layer has had its say.
-//
-// The named storage conditions come first for the reason MR-001's finding W2
-// records: `init` against a database whose mode bits refuse writes used to exit
-// 1 with the remedy "run doctor", and doctor — which only ever reads — called
-// that same database healthy. A generic remedy is only correct for the failures
-// that really are about the rows.
 // noWorkspace reports a session asked for without a worktree to attribute it to.
 //
 // It is not reachable from today's CLI — coordinationScope refuses an
@@ -163,6 +173,14 @@ func readFailed(what, id string, cause error) error {
 	).WithMetadata("subject_id", id).WithCause(cause)
 }
 
+// writeFailed reports a coordination row that did not reach the database, after
+// the storage layer has had its say.
+//
+// The named storage conditions come first for the reason MR-001's finding W2
+// records: `init` against a database whose mode bits refuse writes used to exit
+// 1 with the remedy "run doctor", and doctor — which only ever reads — called
+// that same database healthy. A generic remedy is only correct for the failures
+// that really are about the rows.
 func writeFailed(what, id string, cause error) error {
 	return app.NewError(
 		app.CodeCoordinationWriteFailed,
