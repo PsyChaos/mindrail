@@ -936,9 +936,9 @@
     "semantic_hash": ""
   },
   "internal/cli/representable.go": {
-    "mtime": 1788620199.4107761,
-    "seen": 1788623545.0549748,
-    "ast_hash": "b3cf56890b9e12ab850016d96a36d11b",
+    "mtime": 1788957418.1102598,
+    "seen": 1788957712.2671163,
+    "ast_hash": "18861c6dfea13686fc1cc4dcf7a81917",
     "semantic_hash": ""
   },
   "internal/cli/representable_test.go": {
@@ -1662,15 +1662,15 @@
     "semantic_hash": ""
   },
   "internal/cli/coordination.go": {
-    "mtime": 1788956983.4180603,
-    "seen": 1788957018.6038525,
-    "ast_hash": "0fd388e69bbaf4734f18ac419a6dd978",
+    "mtime": 1788957481.7832084,
+    "seen": 1788957712.2670145,
+    "ast_hash": "cc712d264cf8eaa5b9c42b6722b3d4c1",
     "semantic_hash": ""
   },
   "internal/cli/coordination_test.go": {
-    "mtime": 1788948231.6216075,
-    "seen": 1788948346.0995867,
-    "ast_hash": "ad9f05cd84369c590e9cf013ac9c7147",
+    "mtime": 1788957364.2076728,
+    "seen": 1788957712.2670317,
+    "ast_hash": "8ad165345eabf5b4578b01da7abd8153",
     "semantic_hash": ""
   },
   "internal/cli/task.go": {
@@ -1707,6 +1707,12 @@
     "mtime": 1788956963.5501752,
     "seen": 1788957018.603854,
     "ast_hash": "04079918be630a4c4094fb7055f1ce30",
+    "semantic_hash": ""
+  },
+  "internal/cli/coordination_representable_test.go": {
+    "mtime": 1788957455.057291,
+    "seen": 1788957712.267027,
+    "ast_hash": "84741af37decf89cc06e07b27b0f4c5a",
     "semantic_hash": ""
   }
 }

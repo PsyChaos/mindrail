@@ -304,14 +304,26 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID, sessionID, workspac
 
 // LastCheckpoint returns a task's newest checkpoint, or ErrCheckpointNotFound.
 //
-// Newest by checkpoint_id rather than by created_at (decision D-59). The id
-// carries a 48-bit millisecond prefix and is monotonic within a millisecond, so
-// it orders two checkpoints written in the same millisecond; a timestamp column
-// with second or millisecond resolution does not, and an injected clock does not
-// move at all.
+// Newest by rowid, which is the order SQLite inserted the rows in. Neither of
+// the two columns that look like they answer this question does.
+//
+// created_at is stamped in Go before the transaction opens, and app.FormatTime
+// writes RFC3339Nano, which trims trailing zeros — so the TEXT column is not
+// even lexicographically ordered, and an injected clock does not move at all.
+//
+// checkpoint_id was the answer until finding F37. Its 48-bit millisecond prefix
+// is monotonic *within one process*, because the tie-break under the prefix is
+// a per-process counter; two processes writing in the same millisecond order by
+// 80 random bits. Two agents handing over is the case this milestone exists
+// for, so "the newest checkpoint" was decided by a coin flip exactly when it
+// mattered most — the writes serialise correctly and the read that decides
+// which write was last did not.
+//
+// rowid is assigned by the database inside the insert, in insertion order, and
+// decision D-59 forbids deleting a checkpoint, so it is never reused.
 func (s *Store) LastCheckpoint(ctx context.Context, taskID string) (Checkpoint, error) {
 	row := s.db.QueryRowContext(ctx,
-		selectCheckpoint+` WHERE task_id = ? ORDER BY checkpoint_id DESC LIMIT 1`, taskID)
+		selectCheckpoint+` WHERE task_id = ? ORDER BY rowid DESC LIMIT 1`, taskID)
 
 	checkpoint, err := scanCheckpoint(row)
 	switch {
@@ -387,7 +399,7 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 		`SELECT c.task_id, c.session_id, c.created_at
 		   FROM checkpoints c JOIN tasks t ON t.task_id = c.task_id
 		  WHERE t.project_id = ?
-		  ORDER BY c.checkpoint_id DESC LIMIT 1`, projectID).
+		  ORDER BY c.rowid DESC LIMIT 1`, projectID).
 		Scan(&taskID, &sessionID, &createdAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

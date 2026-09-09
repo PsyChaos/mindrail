@@ -158,12 +158,29 @@ claiming, and only a claim or a release touches it. Ownership becomes
 enforceable in MR-004, where a lease gives "who may move this" a time bound to
 answer with.
 
-### D-59 — checkpoints are append-only, and "the last checkpoint" is the newest id
+### D-59 — checkpoints are append-only, and "the last checkpoint" is the last one inserted
 
 A checkpoint is never updated and never deleted. The newest is selected by
-`checkpoint_id DESC`, not by `created_at DESC`: the id carries a 48-bit
-millisecond prefix and is monotonic within a millisecond, so it orders two
-checkpoints written in the same millisecond and a timestamp column does not.
+`rowid DESC`: the row order the database itself assigned inside the insert.
+
+*Amended during the round-1 remediation (finding F37).* This decision originally
+said `checkpoint_id DESC`, on the argument that the id carries a 48-bit
+millisecond prefix and orders two checkpoints written in the same millisecond
+where a timestamp column does not. Half of that is right. The id **is**
+monotonic within one process, because the bits under the prefix are a
+per-process counter — and between two processes writing in the same millisecond
+they are random, so two ids from two agents order by 80 random bits. Sequential
+handover between two processes is what this milestone exists for, so the
+comparison was undecided in exactly the case it was written for: the writes
+serialise correctly and the read that decides which write was last did not.
+
+`created_at` is not the substitute. It is stamped in Go before the transaction
+opens, and `RFC3339Nano` trims trailing zeros, so the TEXT column is not even
+lexicographically ordered.
+
+`rowid` is assigned by SQLite inside the insert, in insertion order, and this
+decision's own append-only rule is what makes it safe: a rowid is only ever
+reused after a delete, and there is no delete.
 
 `--handoff` marks a checkpoint as the one the writer left on the way out (spec
 §99's `mindrail_checkpoint(handoff=true)`). It is recorded and reported; in
