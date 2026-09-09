@@ -54,8 +54,8 @@
     "semantic_hash": ""
   },
   "go.mod": {
-    "mtime": 1788945595.1906083,
-    "seen": 1788945794.1975868,
+    "mtime": 1788948329.081226,
+    "seen": 1788948346.0995579,
     "ast_hash": "1cf9f68e894a2e26d917dc48f1922d4f",
     "semantic_hash": ""
   },
@@ -336,9 +336,9 @@
     "semantic_hash": ""
   },
   "internal/bootstrap/app.go": {
-    "mtime": 1788947852.7036798,
-    "seen": 1788948028.175408,
-    "ast_hash": "ff483896a4a6f31e7aded041c2a0f615",
+    "mtime": 1788948081.7552278,
+    "seen": 1788948346.0995705,
+    "ast_hash": "3f6f81bd4c25572f2fea329b7c2e95f8",
     "semantic_hash": ""
   },
   "internal/bootstrap/app_test.go": {
@@ -492,9 +492,9 @@
     "semantic_hash": ""
   },
   "internal/doctor/subject.go": {
-    "mtime": 1788867456.516127,
-    "seen": 1788867647.2275097,
-    "ast_hash": "1557f050cdd8bf32114af95b606c3837",
+    "mtime": 1788948070.6677897,
+    "seen": 1788948346.0996313,
+    "ast_hash": "9da2edb910da57b6065e4941565d3ddc",
     "semantic_hash": ""
   },
   "internal/filesystem/access_other.go": {
@@ -660,9 +660,9 @@
     "semantic_hash": ""
   },
   "internal/status/render.go": {
-    "mtime": 1788869845.8352673,
-    "seen": 1788870567.8806112,
-    "ast_hash": "144f620a3f0c80d1aa7250a144e50fdc",
+    "mtime": 1788948121.389276,
+    "seen": 1788948346.0997136,
+    "ast_hash": "1c9ddd50bb2fcf2be269ed0468580240",
     "semantic_hash": ""
   },
   "internal/status/render_test.go": {
@@ -672,15 +672,15 @@
     "semantic_hash": ""
   },
   "internal/status/report.go": {
-    "mtime": 1788867489.6291528,
-    "seen": 1788867647.2301354,
-    "ast_hash": "3a60f6a02bcfa21753efe8e44469c0f6",
+    "mtime": 1788948098.5288255,
+    "seen": 1788948346.099715,
+    "ast_hash": "3ca3fd93fed8cfca9069d7f961955c82",
     "semantic_hash": ""
   },
   "internal/status/report_test.go": {
-    "mtime": 1788867178.203646,
-    "seen": 1788867647.2301373,
-    "ast_hash": "e2a8afa56b3ffc8cce9c620202b679ce",
+    "mtime": 1788948151.4665508,
+    "seen": 1788948346.0997155,
+    "ast_hash": "3547059e3ee57986fc7b0e6d6533c65a",
     "semantic_hash": ""
   },
   "internal/storage/arch_test.go": {
@@ -1668,9 +1668,9 @@
     "semantic_hash": ""
   },
   "internal/cli/coordination_test.go": {
-    "mtime": 1788947987.059483,
-    "seen": 1788948028.1754208,
-    "ast_hash": "995fac934d066a42fed028c072e88df8",
+    "mtime": 1788948231.6216075,
+    "seen": 1788948346.0995867,
+    "ast_hash": "ad9f05cd84369c590e9cf013ac9c7147",
     "semantic_hash": ""
   },
   "internal/cli/task.go": {

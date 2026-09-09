@@ -142,6 +142,28 @@ AgentSession, Task ve Checkpoint yaşam döngüsünü SQLite üzerinde kur. İlk
 - [ ] Aynı workspace'teki sıralı ajan devri veri kaybı veya gereksiz conflict üretmez.
 - [ ] Domain, persistence ve CLI akışı birlikte integration test ile doğrulanır.
 
+#### Durum
+
+**Uygulandı, denetlenmedi.** Kutular bu yüzden işaretsiz: dört kriterin dördü de
+kod tarafından karşılanıyor ve testleri var, ama bu kodu bağımsız kimse
+notlandırmadı. MR-002'nin bulgu belgesinin birinci bölümü bu deponun ölçülmüş
+temel oranıdır — taze kodun kaç kusur taşıdığını yazan sayı odur — ve bir
+uygulayıcının kendi işini yeniden okuması o ölçüme cevap değildir.
+
+Sözleşme koda başlanmadan donduruldu ([mr-003-requirements.md](mr-003-requirements.md),
+`cd74767`), tasarım [mr-003-design.md](mr-003-design.md), uygulamanın kendi kaydı
+ise [mr-003-findings.md](mr-003-findings.md). `make verify` ve `make tidy-check`
+yeşil; 768 test (temel 732).
+
+Milestone'un senaryosu bir test olarak çalışıyor: iki ayrı AgentSession, aynı
+workspace'te, art arda, aynı Task'ı sürdürüyor — aralarında Go tarafında hiçbir
+şey taşınmadan, her adım veritabanını açıp kapatan ayrı bir komut çağrısı olarak.
+
+Uygulama sırasında iki kusur kendi kendini gösterdi ve ikisi de belgede adıyla
+kayıtlı: komutlar veritabanını salt-okunur açtığı için hiçbir şey yazamıyordu, ve
+mevcut "başlatılmamış depo" hata kodu bir başarısızlık nesnesinde kullanılamadığı
+için altıncı bir kod eklendi.
+
 ---
 
 ### [ ] MR-004 — Güvenli lease, idempotency ve optimistic revision
