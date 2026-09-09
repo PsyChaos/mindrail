@@ -109,7 +109,7 @@ func (f fixture) session(t *testing.T) coordination.Session {
 func (f fixture) task(t *testing.T, sessionID, title string) coordination.Task {
 	t.Helper()
 
-	task, err := f.store.OpenTask(t.Context(), f.projectID, sessionID, title)
+	task, _, err := f.store.OpenTask(t.Context(), f.projectID, coordination.NamedSession(sessionID), title)
 	if err != nil {
 		t.Fatalf("OpenTask = %v, want no error", err)
 	}
@@ -120,7 +120,7 @@ func (f fixture) task(t *testing.T, sessionID, title string) coordination.Task {
 func (f fixture) move(t *testing.T, taskID, sessionID string, to coordination.State, reason string) coordination.Task {
 	t.Helper()
 
-	task, err := f.store.Transition(t.Context(), taskID, sessionID, to, reason)
+	task, _, err := f.store.Transition(t.Context(), taskID, coordination.NamedSession(sessionID), to, reason)
 	if err != nil {
 		t.Fatalf("Transition(%s -> %s) = %v, want no error", taskID, to, err)
 	}
@@ -179,7 +179,7 @@ func TestATaskAndItsCheckpointSurviveAReopenedDatabase(t *testing.T) {
 	writer := first.session(t)
 
 	task := first.taskIn(t, writer.ID, coordination.StateBlocked)
-	checkpoint, err := first.store.WriteCheckpoint(t.Context(), task.ID, writer.ID, first.spaceID,
+	checkpoint, _, err := first.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(writer.ID), first.spaceID,
 		"stopped waiting for the upstream fix", true)
 	if err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
@@ -237,7 +237,7 @@ func TestASecondSessionContinuesTheFirstsTask(t *testing.T) {
 	f := newFixture(t)
 	first := f.session(t)
 	task := f.taskIn(t, first.ID, coordination.StateInProgress)
-	if _, err := f.store.WriteCheckpoint(t.Context(), task.ID, first.ID, f.spaceID, "handing over", true); err != nil {
+	if _, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(first.ID), f.spaceID, "handing over", true); err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
 	}
 
@@ -290,7 +290,7 @@ func TestEveryTransitionTheTableRefusesLeavesTheRowUntouched(t *testing.T) {
 				t.Fatalf("FindTask = %v, want no error", err)
 			}
 
-			_, err = f.store.Transition(t.Context(), task.ID, session.ID, to, "a reason, in case it is needed")
+			_, _, err = f.store.Transition(t.Context(), task.ID, coordination.NamedSession(session.ID), to, "a reason, in case it is needed")
 			if !errors.Is(err, coordination.ErrTransitionNotAvailable) {
 				t.Errorf("Transition(%s -> %s) = %v, want ErrTransitionNotAvailable", from, to, err)
 				continue
@@ -334,7 +334,7 @@ func TestEveryTransitionTheTableAllowsIsWritten(t *testing.T) {
 			accepted++
 
 			task := f.taskIn(t, session.ID, from)
-			moved, err := f.store.Transition(t.Context(), task.ID, session.ID, to, "because the route needs one")
+			moved, _, err := f.store.Transition(t.Context(), task.ID, coordination.NamedSession(session.ID), to, "because the route needs one")
 			if err != nil {
 				t.Errorf("Transition(%s -> %s) = %v, want no error", from, to, err)
 				continue
@@ -370,7 +370,7 @@ func TestABlockCarriesItsReasonAndLeavingClearsIt(t *testing.T) {
 	session := f.session(t)
 	task := f.taskIn(t, session.ID, coordination.StateInProgress)
 
-	_, err := f.store.Transition(t.Context(), task.ID, session.ID, coordination.StateBlocked, "   ")
+	_, _, err := f.store.Transition(t.Context(), task.ID, coordination.NamedSession(session.ID), coordination.StateBlocked, "   ")
 	if !errors.Is(err, coordination.ErrBlockedReasonMissing) {
 		t.Fatalf("blocking with blank whitespace = %v, want ErrBlockedReasonMissing", err)
 	}
@@ -443,7 +443,7 @@ func TestTheLastCheckpointIsTheNewestIdNotTheNewestTimestamp(t *testing.T) {
 	notes := []string{"first", "second", "third", "fourth"}
 	written := make([]coordination.Checkpoint, 0, len(notes))
 	for _, note := range notes {
-		checkpoint, err := f.store.WriteCheckpoint(t.Context(), task.ID, session.ID, f.spaceID, note, false)
+		checkpoint, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, note, false)
 		if err != nil {
 			t.Fatalf("WriteCheckpoint(%q) = %v, want no error", note, err)
 		}
@@ -510,15 +510,15 @@ func TestAnUnknownSessionIsRefusedByEveryWriter(t *testing.T) {
 
 	writers := map[string]func() error{
 		"OpenTask": func() error {
-			_, err := f.store.OpenTask(t.Context(), f.projectID, bogus, "a task from nowhere")
+			_, _, err := f.store.OpenTask(t.Context(), f.projectID, coordination.NamedSession(bogus), "a task from nowhere")
 			return err
 		},
 		"Transition": func() error {
-			_, err := f.store.Transition(t.Context(), task.ID, bogus, coordination.StateClaimed, "")
+			_, _, err := f.store.Transition(t.Context(), task.ID, coordination.NamedSession(bogus), coordination.StateClaimed, "")
 			return err
 		},
 		"WriteCheckpoint": func() error {
-			_, err := f.store.WriteCheckpoint(t.Context(), task.ID, bogus, f.spaceID, "a note from nowhere", false)
+			_, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(bogus), f.spaceID, "a note from nowhere", false)
 			return err
 		},
 	}
@@ -568,11 +568,11 @@ func TestAnUnknownTaskIsRefusedByNameRatherThanByAConstraint(t *testing.T) {
 		"FindTask": func() error { _, err := f.store.FindTask(t.Context(), bogus); return err },
 		"Handover": func() error { _, err := f.store.Handover(t.Context(), bogus); return err },
 		"Transition": func() error {
-			_, err := f.store.Transition(t.Context(), bogus, session.ID, coordination.StateClaimed, "")
+			_, _, err := f.store.Transition(t.Context(), bogus, coordination.NamedSession(session.ID), coordination.StateClaimed, "")
 			return err
 		},
 		"WriteCheckpoint": func() error {
-			_, err := f.store.WriteCheckpoint(t.Context(), bogus, session.ID, f.spaceID, "note", false)
+			_, _, err := f.store.WriteCheckpoint(t.Context(), bogus, coordination.NamedSession(session.ID), f.spaceID, "note", false)
 			return err
 		},
 	} {
@@ -614,7 +614,7 @@ func TestSummarizeCountsTheActionableStatesAndNamesTheNewestNote(t *testing.T) {
 	f.taskIn(t, session.ID, coordination.StateCompleted)
 	noted := f.taskIn(t, session.ID, coordination.StateAbandoned)
 
-	if _, err := f.store.WriteCheckpoint(t.Context(), noted.ID, session.ID, f.spaceID, "the newest note", true); err != nil {
+	if _, _, err := f.store.WriteCheckpoint(t.Context(), noted.ID, coordination.NamedSession(session.ID), f.spaceID, "the newest note", true); err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
 	}
 
@@ -677,7 +677,7 @@ func TestTimestampsAreStoredAsUTC(t *testing.T) {
 	f := openFixture(t, filepath.Join(t.TempDir(), "mindrail.db"), app.FixedClock{Instant: baseInstant})
 	session := f.session(t)
 	task := f.task(t, session.ID, "a task with a timestamp")
-	checkpoint, err := f.store.WriteCheckpoint(t.Context(), task.ID, session.ID, f.spaceID, "a note", false)
+	checkpoint, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, "a note", false)
 	if err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
 	}
@@ -708,12 +708,12 @@ func TestATitlelessTaskAndANotelessCheckpointAreRefused(t *testing.T) {
 	f := newFixture(t)
 	session := f.session(t)
 
-	if _, err := f.store.OpenTask(t.Context(), f.projectID, session.ID, "   "); err == nil {
+	if _, _, err := f.store.OpenTask(t.Context(), f.projectID, coordination.NamedSession(session.ID), "   "); err == nil {
 		t.Error("OpenTask with a blank title succeeded")
 	}
 
 	task := f.task(t, session.ID, "a task with a real title")
-	if _, err := f.store.WriteCheckpoint(t.Context(), task.ID, session.ID, f.spaceID, "\t\n", false); err == nil {
+	if _, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, "\t\n", false); err == nil {
 		t.Error("WriteCheckpoint with a blank note succeeded")
 	}
 

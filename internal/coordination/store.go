@@ -63,31 +63,91 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 	return session, nil
 }
 
-// FindSession returns the session with this id, or ErrSessionNotFound.
-func (s *Store) FindSession(ctx context.Context, id string) (Session, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT session_id, workspace_id, label, started_at FROM sessions WHERE session_id = ?`, id)
-
-	session, err := scanSession(row)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return Session{}, sessionNotFound(id)
-	case err != nil:
-		return Session{}, fmt.Errorf("look up session %q: %w", id, err)
-	}
-	return session, nil
+// Attribution says which agent session a write belongs to.
+//
+// A caller either names a session it already holds or asks for one to be
+// minted, and the difference matters for where the mint happens. It used to
+// happen first, in the caller, through OpenSession's own statement — so a write
+// that was then refused left behind a session row for an agent that never did
+// anything, under an `impact` reading "Nothing was written" (finding F02).
+// Thirty refusals in a loop left thirty rows, and no shipped command can list
+// or remove one.
+//
+// Passed as a value here, the mint happens inside the transaction that carries
+// the write, so a refusal anywhere in that transaction takes it back with
+// everything else.
+type Attribution struct {
+	handle      string
+	workspaceID string
 }
+
+// NamedSession attributes a write to a session that already exists. A handle
+// that names nothing is ErrSessionNotFound, and nothing is written.
+func NamedSession(handle string) Attribution { return Attribution{handle: handle} }
+
+// MintFor attributes a write to a session minted for this workspace, in the
+// write's own transaction (decision D-61).
+func MintFor(workspaceID string) Attribution { return Attribution{workspaceID: workspaceID} }
+
+// Write is what an attributed write reports beside its own result: the session
+// it was attributed to, and whether that session was minted here.
+//
+// Minted is returned rather than inferred by the caller, because "you are
+// working under a session you did not name" is something the result has to say
+// out loud: an agent that wanted continuity and forgot the flag would otherwise
+// carry on under a fresh identity without noticing.
+type Write struct {
+	Session Session
+	Minted  bool
+}
+
+// attribute resolves an Attribution inside the transaction that carries the
+// write, either by finding the named session or by minting one.
+func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution) (Write, error) {
+	if by.handle != "" {
+		session, err := requireSession(ctx, tx, by.handle)
+		if err != nil {
+			return Write{}, err
+		}
+		return Write{Session: session}, nil
+	}
+
+	if by.workspaceID == "" {
+		return Write{}, sessionNotFound("")
+	}
+
+	session := Session{
+		ID:          identity.NewID(sessionIDPrefix),
+		WorkspaceID: by.workspaceID,
+		StartedAt:   s.clock.Now().UTC(),
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES (?, ?, ?, ?)`,
+		session.ID, session.WorkspaceID, nullable(session.Label),
+		app.FormatTime(session.StartedAt)); err != nil {
+		return Write{}, err
+	}
+	return Write{Session: session, Minted: true}, nil
+}
+
+// A session is looked up by requireSession, inside the transaction that is
+// about to attribute a write to it. There is no standalone FindSession: it had
+// one caller, the CLI's eager mint, and reading a session outside the
+// transaction that uses it is the shape finding F02 was about — the answer can
+// stop being true between the read and the write.
 
 // OpenTask creates a task in OPEN, attributed to the session that opened it.
 //
-// The session is verified inside the transaction rather than before it. A
+// The session is resolved inside the transaction rather than before it. A
 // handle that stopped being valid between the check and the insert would
 // otherwise write a task pointing at nothing — and the foreign key would refuse
-// it with a message about a constraint rather than about a session.
-func (s *Store) OpenTask(ctx context.Context, projectID, sessionID, title string) (Task, error) {
+// it with a message about a constraint rather than about a session. A session
+// minted for this write is minted in the same transaction for the mirror-image
+// reason: a refusal below takes it back with everything else.
+func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, title string) (Task, Write, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
-		return Task{}, app.NewError(
+		return Task{}, Write{}, app.NewError(
 			app.CodeCommandLineInvalid,
 			app.KindUsage,
 			"a task needs a title",
@@ -102,16 +162,20 @@ func (s *Store) OpenTask(ctx context.Context, projectID, sessionID, title string
 		Title:     title,
 		State:     StateOpen,
 		ProjectID: projectID,
-		OpenedBy:  sessionID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 
+	var write Write
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		if err := requireSession(ctx, tx, sessionID); err != nil {
+		resolved, err := s.attribute(ctx, tx, by)
+		if err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx,
+		write = resolved
+		task.OpenedBy = resolved.Session.ID
+
+		_, err = tx.ExecContext(ctx,
 			`INSERT INTO tasks (task_id, project_id, title, state, blocked_reason,
 				opened_by, claimed_by, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?)`,
@@ -120,10 +184,10 @@ func (s *Store) OpenTask(ctx context.Context, projectID, sessionID, title string
 		return err
 	})
 	if err != nil {
-		return Task{}, s.adopt(ctx, "the task", task.ID, err)
+		return Task{}, Write{}, s.adopt(ctx, "the task", task.ID, err)
 	}
 
-	return task, nil
+	return task, write, nil
 }
 
 // Transition moves a task through decision D-55's table.
@@ -137,14 +201,20 @@ func (s *Store) OpenTask(ctx context.Context, projectID, sessionID, title string
 // first one claimed is the handover working (decision D-58); ownership becomes
 // enforceable in MR-004, where a lease makes "who may move this" a question with
 // a time bound behind it.
-func (s *Store) Transition(ctx context.Context, taskID, sessionID string, to State, reason string) (Task, error) {
+func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, to State, reason string) (Task, Write, error) {
 	reason = strings.TrimSpace(reason)
 
-	var updated Task
+	var (
+		updated Task
+		write   Write
+	)
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		if err := requireSession(ctx, tx, sessionID); err != nil {
+		resolved, err := s.attribute(ctx, tx, by)
+		if err != nil {
 			return err
 		}
+		write = resolved
+		sessionID := resolved.Session.ID
 
 		current, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE task_id = ?`, taskID))
 		switch {
@@ -190,10 +260,10 @@ func (s *Store) Transition(ctx context.Context, taskID, sessionID string, to Sta
 		return err
 	})
 	if err != nil {
-		return Task{}, s.adopt(ctx, "the task state", taskID, err)
+		return Task{}, Write{}, s.adopt(ctx, "the task state", taskID, err)
 	}
 
-	return updated, nil
+	return updated, write, nil
 }
 
 // FindTask returns the task with this id, or ErrTaskNotFound.
@@ -247,10 +317,10 @@ func (s *Store) ListTasks(ctx context.Context, projectID string, state State) ([
 // Append-only (decision D-59). There is no Update and no Delete on this table,
 // and the absence is the feature: a handover note that could be rewritten after
 // the fact is one the arriving agent cannot rely on.
-func (s *Store) WriteCheckpoint(ctx context.Context, taskID, sessionID, workspaceID, note string, handoff bool) (Checkpoint, error) {
+func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attribution, workspaceID, note string, handoff bool) (Checkpoint, Write, error) {
 	note = strings.TrimSpace(note)
 	if note == "" {
-		return Checkpoint{}, app.NewError(
+		return Checkpoint{}, Write{}, app.NewError(
 			app.CodeCommandLineInvalid,
 			app.KindUsage,
 			"a checkpoint needs a note",
@@ -262,20 +332,23 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID, sessionID, workspac
 	checkpoint := Checkpoint{
 		ID:          identity.NewID(checkpointIDPrefix),
 		TaskID:      taskID,
-		SessionID:   sessionID,
 		WorkspaceID: workspaceID,
 		Note:        note,
 		Handoff:     handoff,
 		CreatedAt:   s.clock.Now().UTC(),
 	}
 
+	var write Write
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		if err := requireSession(ctx, tx, sessionID); err != nil {
+		resolved, err := s.attribute(ctx, tx, by)
+		if err != nil {
 			return err
 		}
+		write = resolved
+		checkpoint.SessionID = resolved.Session.ID
 
 		var exists string
-		err := tx.QueryRowContext(ctx, `SELECT task_id FROM tasks WHERE task_id = ?`, taskID).Scan(&exists)
+		err = tx.QueryRowContext(ctx, `SELECT task_id FROM tasks WHERE task_id = ?`, taskID).Scan(&exists)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return taskNotFound(taskID)
@@ -296,10 +369,10 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID, sessionID, workspac
 		return err
 	})
 	if err != nil {
-		return Checkpoint{}, s.adopt(ctx, "the checkpoint", checkpoint.ID, err)
+		return Checkpoint{}, Write{}, s.adopt(ctx, "the checkpoint", checkpoint.ID, err)
 	}
 
-	return checkpoint, nil
+	return checkpoint, write, nil
 }
 
 // LastCheckpoint returns a task's newest checkpoint, or ErrCheckpointNotFound.
@@ -493,20 +566,20 @@ func scanCheckpoint(row rowScanner) (Checkpoint, error) {
 
 // requireSession refuses a handle that names no session, inside the caller's
 // transaction.
-func requireSession(ctx context.Context, tx *sql.Tx, id string) error {
+func requireSession(ctx context.Context, tx *sql.Tx, id string) (Session, error) {
 	if id == "" {
-		return sessionNotFound(id)
+		return Session{}, sessionNotFound(id)
 	}
 
-	var found string
-	err := tx.QueryRowContext(ctx, `SELECT session_id FROM sessions WHERE session_id = ?`, id).Scan(&found)
+	session, err := scanSession(tx.QueryRowContext(ctx,
+		`SELECT session_id, workspace_id, label, started_at FROM sessions WHERE session_id = ?`, id))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return sessionNotFound(id)
+		return Session{}, sessionNotFound(id)
 	case err != nil:
-		return err
+		return Session{}, err
 	}
-	return nil
+	return session, nil
 }
 
 // nullable stores an empty string as NULL.

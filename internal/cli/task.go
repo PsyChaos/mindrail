@@ -42,17 +42,22 @@ func newTaskOpenCommand(o Options) *cobra.Command {
 			title, _ := cmd.Flags().GetString(flagTitle)
 			handle, _ := cmd.Flags().GetString(flagSession)
 
+			// The title is judged before the application starts, beside the
+			// `--to` parse below. A missing title is a mistake in the command
+			// line, and nothing has to be opened to know it.
+			if refusal := requireFlagText(cmd, flagTitle, title,
+				"a task needs a title",
+				"Re-run with --title describing the work in one line."); refusal != nil {
+				return refuseBeforeStarting(cmd, "task open", o, refusal)
+			}
+
 			return runCoordination(cmd, "task open", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					session, minted, err := s.resolveSession(ctx, handle)
+					task, write, err := s.store.OpenTask(ctx, s.projectID(), s.attribution(handle), title)
 					if err != nil {
 						return nil, nil, err
 					}
-					task, err := s.store.OpenTask(ctx, s.projectID(), session.ID, title)
-					if err != nil {
-						return nil, nil, err
-					}
-					result := taskResult{Task: task, Session: session, SessionMinted: minted}
+					result := taskResult{Task: task, Session: write.Session, SessionMinted: write.Minted}
 					return result, result.RenderHuman, nil
 				})
 		},
@@ -83,24 +88,16 @@ name, and the refusal lists the moves that are available from where the task is.
 			// something that happened during the operation.
 			to, err := parseStateFlag(cmd, raw)
 			if err != nil {
-				inv, invErr := newInvocation(cmd, "task state", o)
-				if invErr != nil {
-					return inv.emit(nil, nil, nil, "", invErr)
-				}
-				return inv.emit(nil, nil, nil, "", err)
+				return refuseBeforeStarting(cmd, "task state", o, err)
 			}
 
 			return runCoordination(cmd, "task state", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					session, minted, err := s.resolveSession(ctx, handle)
+					task, write, err := s.store.Transition(ctx, args[0], s.attribution(handle), to, reason)
 					if err != nil {
 						return nil, nil, err
 					}
-					task, err := s.store.Transition(ctx, args[0], session.ID, to, reason)
-					if err != nil {
-						return nil, nil, err
-					}
-					result := taskResult{Task: task, Session: session, SessionMinted: minted}
+					result := taskResult{Task: task, Session: write.Session, SessionMinted: write.Minted}
 					return result, result.RenderHuman, nil
 				})
 		},

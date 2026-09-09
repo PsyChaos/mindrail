@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -199,21 +200,53 @@ func coordinationUnavailable(why string) error {
 	)
 }
 
-// resolveSession turns the --session flag into a session, minting one when the
-// caller supplied none (decision D-61).
+// attribution turns the --session flag into the store's Attribution: the
+// session the caller named, or an instruction to mint one for this worktree
+// (decision D-61).
 //
-// The minted flag is returned rather than inferred by the caller, because "you
-// are working under a session you did not name" is something the result has to
-// say out loud: an agent that wanted continuity and forgot the flag would
-// otherwise carry on under a fresh identity without noticing.
-func (s scope) resolveSession(ctx context.Context, handle string) (coordination.Session, bool, error) {
+// It resolves nothing itself. The session used to be minted here, before the
+// operation was judged, so a refused write left a row for an agent that never
+// did anything while telling the caller nothing had been written (finding F02).
+// The store mints inside the transaction that carries the write, and a refusal
+// takes the mint back with it.
+func (s scope) attribution(handle string) coordination.Attribution {
 	if handle == "" {
-		session, err := s.store.OpenSession(ctx, s.space.ID, "")
-		return session, true, err
+		return coordination.MintFor(s.space.ID)
+	}
+	return coordination.NamedSession(handle)
+}
+
+// refuseBeforeStarting reports a mistake in the command line without starting
+// the application, so that the answer can say so.
+//
+// It is the shape the `--to` parse already had. A judgment made after the
+// database is open is reported as something that happened during the
+// operation — "Nothing was written" — where a judgment made here can say
+// Mindrail never ran, which is both truthful and a different instruction to a
+// caller deciding whether to retry.
+func refuseBeforeStarting(cmd *cobra.Command, name string, o Options, refusal error) error {
+	inv, err := newInvocation(cmd, name, o)
+	if err != nil {
+		return inv.emit(nil, nil, nil, "", err)
+	}
+	return inv.emit(nil, nil, nil, "", refusal)
+}
+
+// requireFlagText refuses a command whose one mandatory free-text flag is empty
+// or blank, at the boundary rather than inside the store.
+func requireFlagText(cmd *cobra.Command, flag, value, why, remedy string) error {
+	if strings.TrimSpace(value) != "" {
+		return nil
 	}
 
-	session, err := s.store.FindSession(ctx, handle)
-	return session, false, err
+	return app.NewError(
+		app.CodeCommandLineInvalid,
+		app.KindUsage,
+		why,
+		"Mindrail did not run: nothing was read and nothing was written.",
+		remedy,
+		"Run `"+cmd.CommandPath()+" --help` to see the accepted flags.",
+	).WithMetadata("flag", flag)
 }
 
 // newSessionCommand builds `mindrail session`.

@@ -35,20 +35,26 @@ func newCheckpointWriteCommand(o Options) *cobra.Command {
 			handoff, _ := cmd.Flags().GetBool(flagHandoff)
 			handle, _ := cmd.Flags().GetString(flagSession)
 
+			// The note is judged before the application starts, for the same
+			// reason `task state` parses --to there: an empty note is a mistake
+			// in the command line, not something that went wrong during a write.
+			if refusal := requireFlagText(cmd, flagNote, note,
+				"a checkpoint needs a note",
+				"Re-run with --note saying where the work stands."); refusal != nil {
+				return refuseBeforeStarting(cmd, "checkpoint write", o, refusal)
+			}
+
 			return runCoordination(cmd, "checkpoint write", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					session, minted, err := s.resolveSession(ctx, handle)
-					if err != nil {
-						return nil, nil, err
-					}
-					checkpoint, err := s.store.WriteCheckpoint(ctx, args[0], session.ID, s.space.ID, note, handoff)
+					checkpoint, write, err := s.store.WriteCheckpoint(
+						ctx, args[0], s.attribution(handle), s.space.ID, note, handoff)
 					if err != nil {
 						return nil, nil, err
 					}
 					result := checkpointResult{
 						Checkpoint:    checkpoint,
-						Session:       session,
-						SessionMinted: minted,
+						Session:       write.Session,
+						SessionMinted: write.Minted,
 					}
 					return result, result.RenderHuman, nil
 				})

@@ -304,6 +304,70 @@ func TestTheReadCommandsMintNoSession(t *testing.T) {
 	}
 }
 
+// TestARefusedWriteMintsNoSession is finding F02, and it is the arm the test
+// above was missing.
+//
+// That one counts sessions around the two reads and around a write that
+// succeeds. Nothing counted them around a write that fails — and every one of
+// these four refusals used to mint a session first, then refuse, then report
+// `impact` as "Nothing was written". Thirty refusals in a loop left thirty
+// rows, for thirty agent identities that never did anything, and no shipped
+// command can list or remove one.
+//
+// The assertion has to be the row count. Two of these paths emit a
+// byte-identical envelope whether the session was minted or not, so a test that
+// read the payload would pass over the defect in either direction.
+func TestARefusedWriteMintsNoSession(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args func(task string) []string
+		code app.Code
+	}{
+		{
+			name: "task open with no title",
+			args: func(string) []string { return []string{"task", "open"} },
+			code: app.CodeCommandLineInvalid,
+		},
+		{
+			name: "checkpoint write with no note",
+			args: func(task string) []string { return []string{"checkpoint", "write", task} },
+			code: app.CodeCommandLineInvalid,
+		},
+		{
+			name: "checkpoint write against a task that does not exist",
+			args: func(string) []string {
+				return []string{"checkpoint", "write", "TSK-0000000000000000000000000", "--note", "a note"}
+			},
+			code: app.CodeTaskNotFound,
+		},
+		{
+			name: "task state moving somewhere the lifecycle does not go",
+			args: func(task string) []string {
+				return []string{"task", "state", task, "--to", "COMPLETED"}
+			},
+			code: app.CodeTaskStateInvalid,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newInitializedRepo(t)
+			session := sessionID(t, repo)
+			task := openTask(t, repo, session, "a task in OPEN")
+
+			before := sessionCount(t, repo)
+			got := run(t, repo, append(tc.args(task), "--json")...)
+
+			payload := got.errorPayload(t)
+			if payload.Code != tc.code {
+				t.Fatalf("code = %q, want %q\n%s", payload.Code, tc.code, got.stdout)
+			}
+			if after := sessionCount(t, repo); after != before {
+				t.Errorf("a refusal that reports %q minted %d session(s); its impact says %q",
+					payload.Code, after-before, payload.Impact)
+			}
+		})
+	}
+}
+
 // TestEveryCoordinationCommandEmitsExactlyOneEnvelope is AC-06.2 over the whole
 // group, on both the success and the failure path.
 //
