@@ -19,14 +19,20 @@ pass had introduced.
   24 after merging, **8 confirmed**, 16 refuted — including all four proposed
   MEDIUMs. **No confirmed finding is in behaviour.** Appendix F.
 - **Remediation 4** closed all eight. Appendix G.
+- **The coverage pass** wrote the tests Appendix F's "what round 4 did not look at"
+  list named — mixed-kind stores, the wider enumeration for both kinds, file-name
+  spellings, two commands at once. It found no wrong answer. Appendix H.
 
-**Status: `NOT_VERIFIED`.** Not because a finding is open. Round 4 is the first
-round in this milestone to find no wrong answer a user can reach: the ownership
-rule agreed with five independently written referees, one of them sweeping 110,592
-stores, and none of the twelve round-3 defects returned. The verdict stands only
-because **remediation 4 has not itself been graded**, and §1 is why that matters
-in this repository. A fifth round over a pass this small is the open question, not
-a foregone requirement.
+**Status: `NOT_VERIFIED`.** The label means **nobody has independently graded the
+last two passes** — it does not mean a finding is open, and none is. Round 4 was
+the first round in this milestone to find no wrong answer a user can reach: the
+ownership rule agreed with five independently written referees, one of them
+sweeping 110,592 stores, and none of the twelve round-3 defects returned. The
+coverage pass since then enumerated 221,184 stores across both record kinds and
+found no wrong answer either. What is missing is a round that grades *those two
+passes*, and §1 is why that matters in this repository. It is the open question,
+not a foregone requirement. *Amended after the coverage pass; the paragraph this
+replaces named remediation 4 as the only ungraded pass.*
 
 ---
 
@@ -199,30 +205,42 @@ no defect in behaviour.** Every one of its eight confirmed findings is LOW and i
 prose — a stale code comment, a plural noun, and four overstatements in this
 document's own account of itself. Remediation 4 closed all eight (Appendix G).
 
-The verdict stays `NOT_VERIFIED` for one reason: **remediation 4 is itself an
-ungraded fix pass**, and §1 is the measurement that says what that is worth. It is
-a much smaller pass than the three before it — one hard-coded noun, five comments,
-two strengthened tests and four corrected numbers — so the risk is smaller too,
-but the rule this repository wrote for itself does not have a size exemption.
+The verdict stays `NOT_VERIFIED` for one reason: **the last two passes are
+ungraded**, and §1 is the measurement that says what that is worth. Remediation 4
+was a much smaller pass than the three before it — one hard-coded noun, five
+comments, two strengthened tests and four corrected numbers — and the coverage
+pass after it touched no source file outside the test suite, so the risk is
+smaller too, but the rule this repository wrote for itself does not have a size
+exemption. *Amended after the coverage pass; the paragraph this replaces named
+remediation 4 alone.*
 
 What MR-002 has:
 
-- `make verify` green, `make tidy-check` green, **720** top-level test functions
-  against a baseline of 507: 507 → 619 → 674 → 710 → 719 → 720.
+- `make verify` green, `make tidy-check` green, **732** top-level test functions
+  against a baseline of 507: 507 → 619 → 674 → 710 → 719 → 720 → 732.
   Counted with `go test -list '.*' ./...`, which is the method the requirements
   and the audit package name, at `79716a9`, `8e5c2e5`, `3bd453c`, `8832bfd`,
-  `0cee59b` and HEAD. *Amended after round 4 (finding R4-M11): the two figures
-  this replaces — 711 and 726 — came from a grep that counts `TestMain`, which no
-  other number in the sequence does, overstating the gain by seven.*
+  `0cee59b`, `b1093ab` and HEAD. *Amended after round 4 (finding R4-M11): the two
+  figures this replaces — 711 and 726 — came from a grep that counts `TestMain`,
+  which no other number in the sequence does, overstating the gain by seven.
+  Amended again after the coverage pass, which added the final figure and the
+  commit before it.*
 - Steps 5–11 implemented, wired into `status` and `doctor`, with the pipeline pure
   and the schema documents as the contract.
 - The identity seam decided once, by decision D-52, rather than patched three
   times, graded against the whole 4,864-store space round 3's Breaker enumerated
-  (Appendix E), and then re-graded by round 4 against a wider space than either —
-  110,592 three-file stores over three ids, admitting cycles of three and disjoint
-  components, with zero mismatches (Appendix F).
+  (Appendix E), re-graded by round 4 against a wider space than either — 110,592
+  three-file stores over three ids, admitting cycles of three and disjoint
+  components, with zero mismatches (Appendix F) — and then graded again over the
+  record kind nobody had used: both enumerations now run for invariants as well,
+  221,184 stores in total, still zero mismatches (Appendix H).
+- Two commands reading one store at the same time, and a reader running while the
+  store is rewritten under it, both green under the race detector (Appendix H).
 
-What it does not have: a fifth round over remediation 4.
+What it does not have: a round that grades remediation 4 and the coverage pass.
+`internal/knowledge/record`, `internal/knowledge/schema`, the schema documents,
+the migration, storage and workspace packages, and doctor's six non-knowledge
+checks have never been audited at all.
 
 ---
 
@@ -687,3 +705,70 @@ by this pass and none of them is a finding: no auditor produced a defect from th
 decision/invariant gap, and closing it means enumerating a mixed-kind space, which
 is work a requirement should ask for rather than a fix pass. It is the strongest
 candidate for the next round's brief.
+
+---
+
+## Appendix H — the coverage pass
+
+Appendix F ends with a list of what round 4 did not look at. This is that list,
+worked through. **It is not a fifth audit round**, and it did not look for
+defects: it wrote the tests the gaps named and reports what they found, which in
+every case was that the implementation already answered correctly. No behaviour
+changed and no source file outside the test suite was edited.
+
+Twelve top-level test functions were added, taking the suite from 720 to **732**
+(`go test -list '.*' ./...`, the method R4-M11 settled). `make verify` and `make
+tidy-check` are green.
+
+### What each gap is now
+
+| Appendix F said | State | What was done |
+|---|---|---|
+| "No store mixing decisions and invariants was enumerated by anyone… no test asserts step 9 over an invariant at all" | **Closed** | The acceptance sweep is parameterised by kind and runs round 3's 4,864-store enumeration **twice**, once per kind, against the same independent oracle. A second sweep pairs every decision store with an unrelated invariant store and requires step 9's answer to be exactly the two halves' answers. Four more named tests read the fatal message over an invariant group |
+| "Cycles of three or more… reached by sampling, not enumeration… still decisions-only" | **Closed, behind a switch** | The 110,592-store three-id enumeration is now in the repository and runs for **both** kinds — 221,184 stores, zero mismatches — against a transitive-closure oracle rather than a second Tarjan. It costs about twelve seconds without the race detector and minutes with it, so it is gated on `MR002_WIDE_ENUMERATION=1` rather than run on every save |
+| "Everything was measured on ext4 on Linux… that comparison is *argued* unreachable, not measured" | **Closed as far as it can be** | Seven spellings a folding or normalising filesystem can hand back for one id are measured against D-52, each in a store one edge short of the fatal finding. Two more tests run on a real filesystem and assert the same rule whichever kind of filesystem they land on. **What is still not measured is an actual case-insensitive or normalising mount**; nothing here can create one without root |
+| "Concurrency was barely touched… nothing ran two commands against one store at the same time" | **Closed** | Eight goroutines run `status` and `doctor` against one repository at once and every answer must be the one a sequential run gives. A second test runs four readers while a writer rewrites, removes and half-writes a record underneath them. Both are green under `-race` |
+| "`internal/knowledge/record`, `internal/knowledge/schema`, the schema documents, and the migration, storage and workspace packages were not audited this round, nor were doctor's six non-knowledge checks" | **Open** | Unchanged. This is an audit scope, not a test gap, and it is the strongest candidate for whichever round comes next |
+
+### Two numbers the pass corrected in passing
+
+- **204.** Appendix F's account of R4-M17 says two ids that each supersede
+  themselves are two disjoint components and that "204 of the swept stores hold
+  that shape". The sweep now counts it instead of asserting it, and the count
+  needed the sentence's implied second clause to come out right: **272** stores per
+  kind hold two self-superseding owners, and 204 is the subset where step 5
+  accepted at least one of them, which is the subset where the dead guard's false
+  premise could have met a finding. The comment now says which of the two it means.
+- **732, not 720.** Twelve new top-level functions: six for the mixed-kind space,
+  three for file names, one for the wide enumeration, two for concurrency.
+
+### The mutations, and one they did not catch
+
+Every new guard was mutated and the mutation confirmed red.
+
+| Mutation | Result |
+|---|---|
+| `isCanonical` returns `true` unconditionally | Every file-name row red, both sweeps red |
+| `isCanonical` compares with `strings.EqualFold` | The two case-folded file-name rows red; the others correctly unaffected |
+| `newGraph` drops the `!s.canonical` guard | **The invariant arm of the sweep goes red on its own**, which is what makes running the enumeration twice worth its seconds |
+| `node` loses its kind, fusing the two kinds into one id space | Red — but only after the fixture below was written |
+
+The last row is the one worth recording. The obvious cross-kind test — a decision
+and an invariant naming each other — **could not catch it**, and a mutation is how
+that was discovered rather than a review. The reason is structural: both shipped
+documents pin their id with a `pattern`, so no record step 5 accepts can carry the
+other kind's id, and a store built only from accepted records behaves identically
+whether the graph keys on `(kind, id)` or on the bare string. The kind is only
+observable through a record step 5 *refused* — and a refused record receives no
+finding of its own (D-40), so the defect can only surface as a **refused record of
+one kind changing the verdict on an accepted record of the other**. That is the
+fixture that now exists: a file in the invariants directory named after a
+decision, refused twice over, declaring the one edge that would close two correct
+decisions into a fatal cycle. Keyed on `(kind, id)` it owns nothing that matters;
+keyed on the bare id it hands two correct files round 2's defect through a door
+round 2 never used.
+
+**Generalises:** *when a separation is enforced in two places, a test can only see
+one of them.* The id patterns and the graph's key both keep decisions and
+invariants apart, so any fixture built from valid records grades the patterns and
+reports it as having graded the key.

@@ -71,7 +71,7 @@ olduğu — [mr-001-findings.md](mr-001-findings.md) içinde.
 
 ---
 
-### [ ] MR-002 — Sürümlü Decision/Invariant bilgi yaşam döngüsü
+### [x] MR-002 — Sürümlü Decision/Invariant bilgi yaşam döngüsü
 
 - **Tür:** AFK
 - **Blocked by:** MR-001
@@ -83,11 +83,45 @@ olduğu — [mr-001-findings.md](mr-001-findings.md) içinde.
 
 #### Kabul kriterleri
 
-- [ ] Decision ve Invariant kayıtları yeniden başlatma sonrası kaybolmaz.
-- [ ] Temiz clone yalnızca repository içeriğiyle knowledge kayıtlarını doğrular.
-- [ ] Bozuk JSON kaynak doğrulamasına geçmeden hata üretir.
-- [ ] Desteklenmeyen ileri şema ve supersede cycle CI dahil tüm doğrulama yollarında reddedilir.
-- [ ] Bilgi şeması fixture/contract testleri bulunur.
+- [x] Decision ve Invariant kayıtları yeniden başlatma sonrası kaybolmaz.
+- [x] Temiz clone yalnızca repository içeriğiyle knowledge kayıtlarını doğrular.
+- [x] Bozuk JSON kaynak doğrulamasına geçmeden hata üretir.
+- [x] Desteklenmeyen ileri şema ve supersede cycle CI dahil tüm doğrulama yollarında reddedilir.
+- [x] Bilgi şeması fixture/contract testleri bulunur.
+
+#### Durum
+
+Tamamlandı. `make verify` yeşil (gofmt, `go vet`, 732 test, race detector,
+3 temiz-binary smoke testi), `make tidy-check` yeşil. Tasarım
+[mr-002-design.md](mr-002-design.md); koda başlamadan dondurulan sözleşme
+[mr-002-requirements.md](mr-002-requirements.md).
+
+Dördüncü kriterin CI satırı **MR-018'e borçlu olarak kayıtlıdır, üstlenilmiş
+değildir** (AC-11.6). Bu sürümde bir CI giriş noktası yok; reddetmenin `status`,
+`doctor` ve `init` yollarında birebir aynı verdiği test edilir. Kriterin geri
+kalanı — ileri şema ve supersede cycle — her üç yolda da karşılanır.
+
+Milestone'un tek ölümcül kontrolü olan supersede cycle, dört denetim turu boyunca
+üç kez yanlış yerde durdu; her seferinde soru "bu kaydın o kimlik üzerindeki
+iddiası inandırıcı mı?" idi ve her seferinde belgenin *içeriğine* bakılarak
+yanıtlandı. Karar **D-52** soruyu kaydın *nerede durduğuna* bağladı: bir kimliğin
+adını taşıyan dosyada duran kayıt o kimlik adına konuşur, şemasını geçse de
+geçmese de. Kural, bağımsız yazılmış bir hakemle her iki kayıt türü üzerinde
+4.864'er mağaza; üç kimlikli geniş uzayda 110.592'şer mağaza; ve her iki türün
+karıştığı 4.864 mağaza üzerinde sınandı — toplam 221.184, sıfır uyuşmazlık.
+
+Dördüncü tur (yedi denetçi, altmış yedi ajan) davranışta hata bulamadı:
+onaylanan sekiz bulgunun tamamı LOW ve metindeydi. Ardından gelen kapsam turu,
+dördüncü turun "bakılmadı" listesini kapattı — karışık türlü mağazalar, geniş
+sayım, dosya adı baytları ve aynı anda tek bir deponun üzerinde çalışan iki
+komut.
+
+Kapanmayan tek şey bir denetim borcu: **son iki geçiş bağımsız olarak
+notlandırılmadı**, ve `internal/knowledge/record`, `internal/knowledge/schema`,
+şema belgeleri, migration/storage/workspace paketleri ile doctor'ın altı
+bilgi-dışı kontrolü hiç denetlenmedi. Her bulgunun ne olduğu, neyle kapandığı ve
+geri gelirse hangi testin düşeceği [mr-002-findings.md](mr-002-findings.md)
+içinde; kapsam turunun ölçümleri Ek H'de.
 
 ---
 
