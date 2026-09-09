@@ -32,10 +32,11 @@ Workspace
   Registered: false
 
 Coordination
-  Tasks open:        0
-  Tasks in progress: 0
-  Tasks blocked:     0
-  Last checkpoint:   none
+  Observation:       not observed — startup stopped before this subsystem was read
+  Tasks open:        0 (not_observed)
+  Tasks in progress: 0 (not_observed)
+  Tasks blocked:     0 (not_observed)
+  Last checkpoint:    (not_observed)
 
 Components
   ✓ knowledge                     Knowledge store readable (2 decisions, 1 invariant)

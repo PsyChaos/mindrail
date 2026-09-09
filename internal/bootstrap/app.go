@@ -894,6 +894,13 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 			return a.subject.WorkspaceErr
 		}
 		a.subject.Workspace = ws
+
+		// Init reads the summary too. Returning here was why `mindrail init`
+		// published "not observed — startup stopped before this subsystem was
+		// read" three lines above READY FOR TARGETED WORK, with zeros for a
+		// repository `status` reported one open task in seconds later (finding
+		// F10). The sequence had not stopped; it had simply never asked.
+		a.readCoordination(ctx)
 		return nil
 	}
 

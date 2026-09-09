@@ -470,6 +470,12 @@ func healthySubject() doctor.Subject {
 		// one. Leaving the flag false published `not_observed` on a report the
 		// observation tests require to carry no caveat at all — which is exactly
 		// what those tests are for, and they caught it.
+		//
+		// For a while the flag was true here and unreachable from `init`, which
+		// returned from step 7 before reading the summary (finding F10): the
+		// fixture described a world the command could not produce. Both commands
+		// read it now, and the two fixtures that genuinely have not observed it —
+		// uninitializedSubject and haltedAtSQLiteSubject — say so.
 		CoordinationObserved: true,
 		// Declaring the probe answers keeps this fixture a value: doctor.Probe
 		// passes an already-probed subject through, so no test here needs the
@@ -496,6 +502,12 @@ func uninitializedSubject() doctor.Subject {
 	s.Migrations = nil
 	s.Workspace = workspace.Workspace{}
 	s.WorkspaceErr = workspace.ErrNotRegistered
+	// Nobody looked at coordination here, and this is the case that sentence
+	// describes: there is no database, so step 7 never reached the summary. The
+	// flag was inherited from healthySubject, where it is true because `init`
+	// and `status` both do read it (finding F10) — leaving it true here made
+	// "observed, zero tasks" the reading for a repository with nothing to read.
+	s.CoordinationObserved = false
 	// The path was inspected and is genuinely empty, which is the one condition
 	// `mindrail init` actually fixes.
 	s.Probes.DBPath = storage.PresenceAbsent
@@ -513,6 +525,10 @@ func haltedAtSQLiteSubject() doctor.Subject {
 	s.Migrations = nil
 	s.Knowledge = loader.Store{}
 	s.Workspace = workspace.Workspace{}
+	// The sequence stopped at step 5, so steps 6 and 7 never ran and nobody
+	// looked at coordination. This is the fixture the `not_observed` rendering
+	// exists for.
+	s.CoordinationObserved = false
 	s.DBErr = app.NewError(app.CodeRuntimeDBCorrupt, app.KindUnavailable,
 		"the runtime database file is not a valid SQLite database",
 		"All recorded workspace state is unreadable.",

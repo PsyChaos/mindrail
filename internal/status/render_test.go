@@ -562,15 +562,21 @@ func TestInitReportTellsTheTwoScaffoldSilencesApart(t *testing.T) {
 		want          string
 		absent        string
 	}{
+		// Both sentences are matched in full. `absent` used to be the fragment
+		// "stopped before", which reads as this report's scaffold silence and is
+		// also two words of the coordination block's "startup stopped before
+		// this subsystem was read" — so once a fixture that genuinely has not
+		// observed coordination reached this renderer, the assertion failed over
+		// a sentence about a different subsystem.
 		"stopped before the scaffold step": {
 			configPresent: false,
 			want:          "init stopped before the repository scaffold step",
-			absent:        "while laying down",
+			absent:        "init stopped while laying down the repository scaffold",
 		},
 		"stopped inside the scaffold step": {
 			configPresent: true,
 			want:          "init stopped while laying down the repository scaffold",
-			absent:        "stopped before",
+			absent:        "init stopped before the repository scaffold step",
 		},
 	}
 

@@ -496,6 +496,61 @@ func remedyMentions(actions []string, needle string) bool {
 	return strings.Contains(strings.Join(actions, " "), needle)
 }
 
+// TestInitAndStatusPublishTheSameCoordinationBlock is finding F10.
+//
+// `init` is idempotent and is the command a user runs on a repository that
+// already exists. Its own report carries the same status block `status`
+// publishes — and on the init path the summary was never read, so a re-init of
+// a repository with work in flight printed "not observed — startup stopped
+// before this subsystem was read" and three zeros, three lines above READY FOR
+// TARGETED WORK, while `status` on the same bytes seconds later reported the
+// task. The sequence had not stopped.
+//
+// The two blocks are compared as raw JSON rather than field by field, because
+// the defect was in a field a field-by-field test would have had to think to
+// include. Anything either command starts publishing is compared from here on.
+func TestInitAndStatusPublishTheSameCoordinationBlock(t *testing.T) {
+	repo := newInitializedRepo(t)
+	session := sessionID(t, repo)
+	task := openTask(t, repo, session, "work that was in flight when init ran again")
+	run(t, repo, "checkpoint", "write", task, "--note", "half done", "--session", session, "--json").
+		requireExit(t, app.ExitSuccess)
+
+	reinit := run(t, repo, "init", "--json")
+	reinit.requireExit(t, app.ExitSuccess)
+	reported := run(t, repo, "status", "--json")
+	reported.requireExit(t, app.ExitSuccess)
+
+	var fromInit struct {
+		Status struct {
+			Readiness    string          `json:"readiness"`
+			Coordination json.RawMessage `json:"coordination"`
+		} `json:"status"`
+	}
+	var fromStatus struct {
+		Readiness    string          `json:"readiness"`
+		Coordination json.RawMessage `json:"coordination"`
+	}
+	decodeData(t, reinit.stdout, &fromInit)
+	decodeData(t, reported.stdout, &fromStatus)
+
+	if string(fromInit.Status.Coordination) != string(fromStatus.Coordination) {
+		t.Errorf("the two commands describe one repository differently\n  init:   %s\n  status: %s",
+			fromInit.Status.Coordination, fromStatus.Coordination)
+	}
+	if !strings.Contains(string(fromInit.Status.Coordination), `"observation":"observed"`) {
+		t.Errorf("init says nobody looked at coordination on a run that completed: %s",
+			fromInit.Status.Coordination)
+	}
+
+	// Decision D-62 in the other direction: reading the summary must not move
+	// readiness, and a report that agreed by both saying "not observed" would
+	// pass the comparison above.
+	if fromInit.Status.Readiness != fromStatus.Readiness {
+		t.Errorf("readiness = %q from init and %q from status", fromInit.Status.Readiness, fromStatus.Readiness)
+	}
+}
+
 // TestStatusPublishesCoordinationWithoutMovingReadiness is AC-07.1 and AC-07.2,
 // and decision D-62 in both directions.
 //
