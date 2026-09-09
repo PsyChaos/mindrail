@@ -1164,9 +1164,9 @@
     "semantic_hash": ""
   },
   "docs/engineering/mindrail-0.1-task-list.md": {
-    "mtime": 1788948402.734415,
-    "seen": 1788948412.3162472,
-    "ast_hash": "426ddf8e4ff4f134b28238e120ebfb77",
+    "mtime": 1788955933.710182,
+    "seen": 1788955980.807309,
+    "ast_hash": "cebed85a6ead561c3333c5e61fbf9a7a",
     "semantic_hash": ""
   },
   "docs/engineering/mr-001-findings.md": {
@@ -1680,9 +1680,15 @@
     "semantic_hash": ""
   },
   "docs/engineering/mr-003-findings.md": {
-    "mtime": 1788948382.4099157,
-    "seen": 1788948412.3162599,
-    "ast_hash": "72804487c67cf165a2e8c3b2f4819849",
+    "mtime": 1788955903.4279833,
+    "seen": 1788955980.8073175,
+    "ast_hash": "59629c793bbb25348644026d0fb17b6c",
+    "semantic_hash": ""
+  },
+  "docs/engineering/mr-003-audit-round-1.md": {
+    "mtime": 1788955858.9200559,
+    "seen": 1788955980.8073153,
+    "ast_hash": "2b052072db0a839a4328f160a3ebd786",
     "semantic_hash": ""
   }
 }
