@@ -3,12 +3,12 @@ package coordination_test
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/coordination"
+	"github.com/PsyChaos/mindrail/internal/moduletree"
 )
 
 // lifecycleLiteralsOutsideThisPackage returns every Go file outside
@@ -37,9 +37,11 @@ func lifecycleLiteralsOutsideThisPackage(t *testing.T) []string {
 		case err != nil:
 			return err
 		case entry.IsDir():
-			// .git holds packed objects that would be read as text, and testdata
-			// holds fixtures that are data rather than statements of the rule.
-			if name := entry.Name(); name == ".git" || name == "testdata" {
+			// moduletree.SkipDir keeps the walk inside this module's own
+			// sources: out of tooling state, out of fixtures, and out of any
+			// nested checkout, whose copy of state.go is the same statement
+			// rather than a second one.
+			if moduletree.SkipDir(root, path) {
 				return fs.SkipDir
 			}
 			if path == thisPackage {
@@ -78,13 +80,13 @@ func lifecycleLiteralsOutsideThisPackage(t *testing.T) []string {
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 
-	out, err := exec.Command("go", "env", "GOMOD").Output()
+	working, err := os.Getwd()
 	if err != nil {
-		t.Skipf("go env GOMOD: %v", err)
+		t.Fatalf("getwd: %v", err)
 	}
-	gomod := strings.TrimSpace(string(out))
-	if gomod == "" || gomod == os.DevNull {
-		t.Skip("not inside a module")
+	root, err := moduletree.Root(working)
+	if err != nil {
+		t.Fatalf("module root above %s: %v", working, err)
 	}
-	return filepath.Dir(gomod)
+	return root
 }

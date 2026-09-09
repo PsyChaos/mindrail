@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/PsyChaos/mindrail/internal/moduletree"
 )
 
 // driverModule is the one SQLite implementation this binary links. Everything
@@ -85,7 +87,7 @@ func TestDriverImportUnreachableFromOtherPackages(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
-			if shouldSkipDir(entry.Name()) {
+			if moduletree.SkipDir(root, path) {
 				return fs.SkipDir
 			}
 			return nil
@@ -184,28 +186,18 @@ func importPath(t *testing.T, spec *ast.ImportSpec) string {
 	return unquoted
 }
 
-// shouldSkipDir keeps the walk inside first-party source.
-func shouldSkipDir(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "graphify-out"
-}
-
 // moduleRoot walks up from the test's working directory to the go.mod, so the
 // test does not care how deep in the tree the package sits.
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.Getwd()
+	working, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test working directory")
-		}
-		dir = parent
+	root, err := moduletree.Root(working)
+	if err != nil {
+		t.Fatalf("module root above %s: %v", working, err)
 	}
+	return root
 }

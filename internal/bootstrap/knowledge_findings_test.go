@@ -16,6 +16,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
 	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
+	"github.com/PsyChaos/mindrail/internal/moduletree"
 	"github.com/PsyChaos/mindrail/schemas"
 )
 
@@ -270,8 +271,7 @@ func TestTheKnowledgePipelineHasExactlyOneCallSite(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			name := entry.Name()
-			if strings.HasPrefix(name, ".") || name == "testdata" || name == "graphify-out" || name == "vendor" {
+			if moduletree.SkipDir(root, path) {
 				return fs.SkipDir
 			}
 			return nil
@@ -330,18 +330,13 @@ func TestTheKnowledgePipelineHasExactlyOneCallSite(t *testing.T) {
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.Getwd()
+	working, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	for {
-		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test working directory")
-		}
-		dir = parent
+	root, err := moduletree.Root(working)
+	if err != nil {
+		t.Fatalf("module root above %s: %v", working, err)
 	}
+	return root
 }

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/PsyChaos/mindrail/internal/moduletree"
 )
 
 // The dependency rules of design §3, spelled as data.
@@ -307,7 +309,7 @@ func firstPartyPackages(t *testing.T, root string) map[string]firstPartyPackage 
 			return err
 		}
 		if entry.IsDir() {
-			if skipDir(entry.Name()) {
+			if moduletree.SkipDir(root, p) {
 				return fs.SkipDir
 			}
 			return nil
@@ -452,8 +454,4 @@ func fileImports(t *testing.T, file string) []string {
 func isStandardLibrary(importPath string) bool {
 	first, _, _ := strings.Cut(importPath, "/")
 	return !strings.Contains(first, ".")
-}
-
-func skipDir(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "graphify-out"
 }

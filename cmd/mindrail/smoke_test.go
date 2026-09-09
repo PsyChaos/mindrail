@@ -253,6 +253,12 @@ func addWorktree(t *testing.T, repo, name string) string {
 	return root
 }
 
+// moduleRoot walks up to the directory holding go.mod.
+//
+// internal/moduletree does this for the three module-wide walkers inside
+// internal/, and this is not a fourth caller of it: the package comment above
+// keeps this file free of internal/ imports, so the walk is spelled out here on
+// purpose.
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 
