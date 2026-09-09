@@ -72,6 +72,27 @@ func runCoordination(cmd *cobra.Command, name string, o Options,
 	defer shutdown(cmd.Context(), application, inv.logger)
 
 	return application.Run(cmd.Context(), func(ctx context.Context, a *bootstrap.App) error {
+		// The startup verdict comes first, and it comes from the doctor checks
+		// for the same reason `init` takes it that way: `init`, `status`,
+		// `doctor` and the six coordination commands must never report
+		// different codes for one broken installation.
+		//
+		// Run calls this body even when Start failed, so without this line the
+		// only two readings below — is the store nil, is the workspace row
+		// empty — answered for every cause there is. A repository whose
+		// config.toml cannot be parsed, whose database is corrupt or whose
+		// schema is newer than this binary was told, on stdout, that it "has no
+		// runtime database, so it holds no sessions, tasks or checkpoints",
+		// with `mindrail init` as the remedy that clears none of them, while
+		// the true code went to stderr and was dropped (finding F09). An agent
+		// reading that has been told its handover state does not exist.
+		//
+		// COORDINATION_UNAVAILABLE is reachable only when the startup sequence
+		// completed, which is the one condition it describes truthfully.
+		if _, verdict := a.Diagnosis(ctx); verdict != nil {
+			return inv.emit(nil, nil, a.Warnings(), a.Config().Config.Output.Color, verdict)
+		}
+
 		resolved, err := coordinationScope(a)
 		if err != nil {
 			return inv.emit(nil, nil, a.Warnings(), a.Config().Config.Output.Color, err)
