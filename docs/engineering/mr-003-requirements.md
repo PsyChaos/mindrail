@@ -148,6 +148,16 @@ MR-004 adds the lease. It will add expiry, renewal and contention on top of this
 column; it will not have to unpick a half-built lease first. A 20-minute default
 appears nowhere in MR-003.
 
+*Amended during TASK-05.* The freeze said "no refusal on the grounds of time"
+and left the other half implicit. It is stated here because the implementation
+had to decide it: there is **no refusal on the grounds of identity either**. A
+second session may move a task the first one claimed, and that is the handover
+working rather than a conflict — it is the milestone's own scenario. What the
+move does not do is rewrite `claimed_by`: the claim is attribution of the act of
+claiming, and only a claim or a release touches it. Ownership becomes
+enforceable in MR-004, where a lease gives "who may move this" a time bound to
+answer with.
+
 ### D-59 — checkpoints are append-only, and "the last checkpoint" is the newest id
 
 A checkpoint is never updated and never deleted. The newest is selected by
@@ -194,6 +204,30 @@ A blocked task is a fact about work, not about the installation. A tool that
 reported `BLOCKED` readiness — the value reserved for "this repository cannot be
 verified" — because an agent parked a task would be unusable in exactly the
 situation the task was parked for.
+
+### D-63 — a task cannot enter `BLOCKED` without a reason
+
+*Added during TASK-05, after the freeze. It is recorded here rather than in a
+commit message because it is a rule a reader meets at the command line.*
+
+`BLOCKED` is the one state whose name says nothing useful on its own. "This task
+is stuck" is what the state already means; the only new information is what it is
+stuck on, and that is precisely what the next agent needs and cannot recover from
+anywhere else. A block with an empty reason is a state change that costs the
+reader a lookup and gives them nothing.
+
+So `Transition(..., StateBlocked, "")` is refused, with `TASK_STATE_INVALID` and
+a remedy naming `--reason`. Whitespace is not a reason: the value is trimmed
+before it is judged.
+
+The mirror rule is that leaving `BLOCKED` **clears** it. A reason left standing
+after the block was lifted describes something that is no longer true, which is
+worse than no reason at all.
+
+Two other emptiness rules follow the same argument and are implemented with it: a
+task with no title and a checkpoint with no note are refused. Both columns are
+`NOT NULL` and neither is `NOT EMPTY`, so both would insert cleanly and neither
+would tell the arriving agent anything.
 
 ---
 
