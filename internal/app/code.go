@@ -69,6 +69,45 @@ const (
 	// which a report must be able to say without borrowing the vocabulary of
 	// "we looked and it is not there".
 	CodeStartupIncomplete Code = "STARTUP_INCOMPLETE"
+
+	// CodeSessionNotFound marks a session handle that names no session this
+	// repository has ever minted.
+	//
+	// It is a refusal rather than a mint (decision D-61). A caller who mistypes
+	// the handle they were given must be told, because the alternative — minting
+	// a session under the typo — turns one agent into two and puts the next
+	// checkpoint under an identity nothing else will ever refer to.
+	CodeSessionNotFound Code = "SESSION_NOT_FOUND"
+
+	// CodeTaskNotFound marks a task id no row carries. It is separate from
+	// SESSION_NOT_FOUND because the remedies differ: one is `mindrail task list`,
+	// the other is the id the caller's own `session open` printed.
+	CodeTaskNotFound Code = "TASK_NOT_FOUND"
+
+	// CodeTaskStateInvalid marks a state change spec §58's lifecycle does not
+	// have: completing a task nobody claimed, reopening an abandoned one,
+	// claiming one that is already claimed.
+	//
+	// It is its own code because it is the only refusal in this milestone that a
+	// caller can act on without changing anything else — the task exists, the
+	// session exists, and the answer is that this move is not available from
+	// where the task is. The message names both states and the moves that are
+	// (decision D-55).
+	CodeTaskStateInvalid Code = "TASK_STATE_INVALID"
+
+	// CodeCheckpointNotFound marks a task with no checkpoint on it where one was
+	// required. It is not the answer to `task show` on a fresh task: a task
+	// nobody has checkpointed yet is a normal state, reported as an absent
+	// checkpoint rather than as a failure.
+	CodeCheckpointNotFound Code = "CHECKPOINT_NOT_FOUND"
+
+	// CodeCoordinationWriteFailed marks a coordination row that did not reach
+	// the runtime database, after storage.WriteFailure has had its say. It is
+	// the coordination counterpart of WORKSPACE_REGISTRATION_FAILED and exists
+	// for the same reason: the generic remedy is only correct for the failures
+	// that really are about the rows being written, and the named storage
+	// conditions carry remedies that can succeed.
+	CodeCoordinationWriteFailed Code = "COORDINATION_WRITE_FAILED"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -96,6 +135,11 @@ var allCodes = sortedCodes([]Code{
 	CodeKnowledgeSupersedeCycle,
 	CodeCommandLineInvalid,
 	CodeStartupIncomplete,
+	CodeSessionNotFound,
+	CodeTaskNotFound,
+	CodeTaskStateInvalid,
+	CodeCheckpointNotFound,
+	CodeCoordinationWriteFailed,
 })
 
 var codeSet = indexCodes(allCodes)

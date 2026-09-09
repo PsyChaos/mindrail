@@ -59,6 +59,27 @@ var exitForCode = map[app.Code]int{
 	app.CodeWorkspaceNotInitialized:     app.ExitSuccess,
 	app.CodeConfigUnknownEnvVar:         app.ExitSuccess,
 	app.CodeKnowledgeInvalid:            app.ExitSuccess,
+
+	// MR-003's five, all ExitFailed (requirement AC-05.3). Every one of them is
+	// an operation that ran, found the repository healthy, and could not do what
+	// it was asked: the id names nothing, or the move is not available from
+	// where the task is.
+	//
+	// None is ExitUsage. The command line was well formed — `task state TSK-…
+	// --to COMPLETED` is a sentence this binary understands — and the refusal
+	// depends on rows, not on spelling. A caller that retried after fixing its
+	// arguments would meet the same answer. The spelling mistakes are caught
+	// earlier and still exit 2 through COMMAND_LINE_INVALID.
+	//
+	// None is ExitUnavailable either, including COORDINATION_WRITE_FAILED: the
+	// storage conditions that really are "come back later" are named by
+	// storage.WriteFailure before this code is reached, and the generic one that
+	// survives is a write that failed for a reason retrying will not fix.
+	app.CodeSessionNotFound:         app.ExitFailed,
+	app.CodeTaskNotFound:            app.ExitFailed,
+	app.CodeTaskStateInvalid:        app.ExitFailed,
+	app.CodeCheckpointNotFound:      app.ExitFailed,
+	app.CodeCoordinationWriteFailed: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

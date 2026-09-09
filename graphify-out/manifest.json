@@ -1570,5 +1570,17 @@
     "seen": 1788945794.1977923,
     "ast_hash": "57091caa3aa15da2a3adf469e95b0344",
     "semantic_hash": ""
+  },
+  "docs/engineering/mr-003-design.md": {
+    "mtime": 1788946393.868496,
+    "seen": 1788946542.3101885,
+    "ast_hash": "02b09e772e1ed460fbd96cc85f173c59",
+    "semantic_hash": ""
+  },
+  "docs/engineering/mr-003-requirements.md": {
+    "mtime": 1788946524.814056,
+    "seen": 1788946542.3101969,
+    "ast_hash": "4765fffe064171a4b5b7c6bff334c6eb",
+    "semantic_hash": ""
   }
 }

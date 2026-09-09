@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/identity"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
@@ -194,7 +195,7 @@ func upsertProject(ctx context.Context, tx *sql.Tx, commonDir string, now time.T
 		return Project{}, err
 	}
 
-	project.ID = NewID(projectIDPrefix)
+	project.ID = identity.NewID(projectIDPrefix)
 	project.RegisteredAt = now
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO projects (project_id, common_dir, registered_at) VALUES (?, ?, ?)`,
@@ -226,7 +227,7 @@ func upsertWorkspace(ctx context.Context, tx *sql.Tx, projectID string, r Regist
 	}
 
 	workspace := Workspace{
-		ID:               NewID(workspaceIDPrefix),
+		ID:               identity.NewID(workspaceIDPrefix),
 		ProjectID:        projectID,
 		RootPath:         r.WorktreeRoot,
 		GitDir:           r.GitDir,

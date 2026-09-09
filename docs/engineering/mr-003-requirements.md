@@ -52,17 +52,25 @@ which is the loudest possible failure for a change that was meant to be additive
 
 The visible consequence is named here so it is a decision rather than a surprise:
 **`status --json`'s `runtime.schema_version` changes from 1 to 2**, and so does
-the same value in `init --json` and in doctor's rendering. Exactly two places
-record the old value today — the assertion at `internal/status/report_test.go:69`
-and the golden `internal/status/testdata/init_ready_json.golden` — because the
-two CLI goldens carry key paths rather than values and `internal/migration`'s
-tests build their own synthetic migration sets. Both are updated as part of the
-change, not worked around.
+the same value in `init --json` and in doctor's rendering.
+
+*Amended during TASK-02, before the implementation it describes was finished.*
+The freeze predicted the wrong two places. It named
+`internal/status/report_test.go` and `internal/status/testdata/`, and neither
+moved: every test in `internal/status` builds its own migration set, so none of
+them ever reads the embedded one. The two files that actually carried the old
+value are `internal/cli/testdata/status_human.golden` and
+`internal/cli/testdata/doctor_human.golden`, which are produced by driving the
+real command tree. Both were regenerated with `-update` and the diff is four
+lines: `Schema version: 1 → 2`, and doctor's `applied` and `current_version`
+following it. Nothing else in either golden moved, which is the measurement this
+decision was written to make checkable.
 
 `readable_schema_versions` and `write_schema_version` are the **knowledge**
 record window and are untouched. The two numbers are unrelated and the report
 prints both; a change to one that silently moved the other would be the defect
-this paragraph exists to prevent.
+this paragraph exists to prevent. The regenerated goldens are where that is
+visible: both stay at 1, on the lines directly below the value that moved.
 
 ### D-54 — "Checkpoint" means two things in this repository, and neither is renamed
 

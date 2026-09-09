@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -246,43 +245,17 @@ func TestRegisterStoresUTCTimestamps(t *testing.T) {
 	}
 }
 
-// TestIDsAreOpaquePrefixedAndSortable covers decision D-26: identity is the
+// TestRegisteredIDsAreOpaqueAndPrefixed covers decision D-26: identity is the
 // opaque id, never the path. An id that leaked the root path would make every
 // downstream reference machine-specific.
-func TestIDsAreOpaquePrefixedAndSortable(t *testing.T) {
-	const total = 500
-
-	shape := regexp.MustCompile(`^(PRJ|WS)-[0-9A-HJKMNP-TV-Z]{26}$`)
-
-	ids := make([]string, 0, total)
-	seen := make(map[string]struct{}, total)
-	for range total {
-		id := workspace.NewID("WS")
-		if !shape.MatchString(id) {
-			t.Fatalf("NewID(%q) = %q, want prefix + '-' + 26 Crockford base32 characters", "WS", id)
-		}
-		if _, duplicate := seen[id]; duplicate {
-			t.Fatalf("NewID produced %q twice", id)
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-
-	// Creation order must equal lexicographic order: the ids are used as tie
-	// breakers when a fixed clock gives several rows the same timestamp.
-	if !slices.IsSorted(ids) {
-		for i := 1; i < len(ids); i++ {
-			if ids[i] <= ids[i-1] {
-				t.Fatalf("id %d (%q) does not sort after id %d (%q)", i, ids[i], i-1, ids[i-1])
-			}
-		}
-	}
-
-	if got := workspace.NewID("PRJ"); !strings.HasPrefix(got, "PRJ-") {
-		t.Errorf("NewID(\"PRJ\") = %q, want the PRJ- prefix", got)
-	}
-
-	// Opacity: no path, no readable clock value.
+//
+// This is the half of D-26 that is about the rows this package writes. The
+// format half — the alphabet, the length, the sort order — moved to
+// internal/identity with the minter (decision D-57), and asserting it here as
+// well would be a second copy that could pass while the real one was red. What
+// stays is what only this package can answer: that the id the store put in a row
+// is the opaque one, and that it carries this package's prefix.
+func TestRegisteredIDsAreOpaqueAndPrefixed(t *testing.T) {
 	store, _ := newStore(t, app.FixedClock{Instant: baseInstant})
 	project, ws, err := store.Register(t.Context(), registration("/very/unusual/repo/.git", "/very/unusual/repo", false))
 	if err != nil {

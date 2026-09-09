@@ -19,6 +19,15 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"workspace_id", "project_id", "root_path", "git_dir",
 			"is_linked_worktree", "registered_at", "last_seen_at",
 		},
+		"sessions": {"session_id", "workspace_id", "label", "started_at"},
+		"tasks": {
+			"task_id", "project_id", "title", "state", "blocked_reason",
+			"opened_by", "claimed_by", "created_at", "updated_at",
+		},
+		"checkpoints": {
+			"checkpoint_id", "task_id", "session_id", "workspace_id",
+			"note", "handoff", "created_at",
+		},
 	}
 
 	got := map[string][]string{}
