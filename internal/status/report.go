@@ -326,7 +326,10 @@ func repositoryObservation(repository doctor.Result) Observation {
 func observationOf(results ...doctor.Result) Observation {
 	looked, known := false, true
 	for _, result := range results {
-		if result.Code == app.CodeStartupIncomplete {
+		// Two ways a reading can be no reading: the startup sequence never
+		// populated its inputs, or the check named a condition it inferred
+		// rather than a value it looked up. Both are "nobody looked".
+		if result.Code == app.CodeStartupIncomplete || result.Metadata[doctor.MetadataNothingRead] == "true" {
 			known = false
 			continue
 		}

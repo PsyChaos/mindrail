@@ -814,6 +814,18 @@ func WorkspaceCheck(s Subject) Check {
 	}
 }
 
+// schemaHasWorkspaceTable reports whether this database has the migration that
+// creates the workspaces table, which is the difference between "there is
+// nothing to query" and "the query found no row".
+func schemaHasWorkspaceTable(s Subject) bool {
+	for _, applied := range s.Migrations {
+		if applied.Version >= workspace.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
+}
+
 func workspaceResult(s Subject) Result {
 	if !s.reached(stepRegisterWorkspace) {
 		h, _ := s.haltedAt()
@@ -855,8 +867,18 @@ func workspaceResult(s Subject) Result {
 		// from a second process that opened the file between the create and the
 		// migration commit. Saying "the database was queried and holds no row"
 		// there asserts a query that could not have run (finding F16).
-		if s.PendingCount > 0 {
-			return failure(StateUnavailable, "Workspace not registered", diagnosis{
+		//
+		// The test is whether the migration that creates the table has been
+		// applied, not whether any migration is pending. Those were the same
+		// question until MR-003 added a second migration, and then the count
+		// answered "the table is missing" for every database an older binary had
+		// written — where the table is present and holds the row (finding F01).
+		//
+		// The reading is marked as no reading at all, because that is what it
+		// is: nothing was looked up, so `status` publishes not_observed rather
+		// than "observed, registered: false" (finding F41).
+		if !schemaHasWorkspaceTable(s) {
+			result := failure(StateUnavailable, "Workspace not registered", diagnosis{
 				code: app.CodeWorkspaceNotInitialized,
 				diagnostic: fmt.Sprintf(
 					"The runtime schema is not established — %d %s still pending — so there is no workspace table to query for %s.",
@@ -864,6 +886,11 @@ func workspaceResult(s Subject) Result {
 				impact: "Mindrail cannot attribute runtime state to this worktree until the runtime schema is in place.",
 				next:   []string{initCommand},
 			})
+			if result.Metadata == nil {
+				result.Metadata = map[string]string{}
+			}
+			result.Metadata[MetadataNothingRead] = "true"
+			return result
 		}
 
 		return failure(StateUnavailable, "Workspace not registered", diagnosis{

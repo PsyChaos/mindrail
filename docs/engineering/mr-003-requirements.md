@@ -66,6 +66,25 @@ lines: `Schema version: 1 → 2`, and doctor's `applied` and `current_version`
 following it. Nothing else in either golden moved, which is the measurement this
 decision was written to make checkable.
 
+*Amended during the round-1 remediation (finding F01).* The schema version was
+not the only visible consequence, and the one that was missed is the one a user
+meets first. **On the first run after an upgrade, every existing database is
+exactly one migration behind**, and code written when there was a single
+migration read "some migration is pending" as "the runtime schema does not exist
+yet". Two readers did: `registerWorkspace` skipped the workspace lookup, and
+doctor's workspace check explained the result with "there is no workspace table
+to query". Both were true while migration 1 was the only migration and false the
+moment this decision added a second — so an upgraded repository, whose
+`workspaces` row is present and correct, was told it was not registered, and
+`status` never mentioned the pending migration because the workspace reading
+outranks it.
+
+Both now test whether the migration that creates the table
+(`workspace.TableSchemaVersion`) has been applied, rather than whether any
+migration is pending. The general rule this milestone learned: **a decision that
+adds a migration has to name every place that reads "pending" as "absent"**, and
+the next milestone to add one inherits the same obligation.
+
 `readable_schema_versions` and `write_schema_version` are the **knowledge**
 record window and are untouched. The two numbers are unrelated and the report
 prints both; a change to one that silently moved the other would be the defect

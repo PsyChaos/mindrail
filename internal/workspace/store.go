@@ -18,6 +18,17 @@ import (
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
+// TableSchemaVersion is the migration that creates the projects and workspaces
+// tables.
+//
+// A reader needs it to tell two conditions apart that were one condition while
+// there was only a single migration: a database with no schema at all, where
+// there is no workspaces table to query, and a database one or more migrations
+// behind this binary, where the table is there and holds the row. Treating the
+// second as the first told every worktree registered by an older binary that it
+// was not registered (finding F01).
+const TableSchemaVersion = 1
+
 // Project is one Git common directory: a repository and every worktree of it.
 type Project struct {
 	ID           string    `json:"project_id"` // "PRJ-<26>"

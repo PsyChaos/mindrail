@@ -911,7 +911,14 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 	// line of a WORKSPACE_REGISTRATION_FAILED error (finding F16). The condition
 	// is "not initialised yet", and the migration ledger already says so, so the
 	// lookup is simply not made.
-	if a.subject.PendingCount > 0 {
+	//
+	// The test is which migration is pending, not whether any is. It used to be
+	// the count, which was the same question while there was one migration and
+	// stopped being it the moment MR-003 added a second: every database written
+	// by an earlier binary is one behind, its workspaces table is there and
+	// holds the row, and the blanket skip reported the worktree as unregistered
+	// on the first run after an upgrade (finding F01).
+	if !a.schemaHasWorkspaceTable() {
 		a.logger.Debug("workspace lookup skipped: runtime schema not established",
 			slog.Int("pending_migrations", a.subject.PendingCount))
 		return nil
@@ -930,6 +937,21 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 
 	a.readCoordination(ctx)
 	return nil
+}
+
+// schemaHasWorkspaceTable reports whether the migration that creates the
+// workspaces table has been applied to this database.
+//
+// It reads the applied ledger rather than a schema_version number, because the
+// ledger is what the migrator itself is answerable for and a version derived
+// somewhere else would be a second reader of the same fact.
+func (a *App) schemaHasWorkspaceTable() bool {
+	for _, applied := range a.subject.Migrations {
+		if applied.Version >= workspace.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
 }
 
 // readCoordination fills the summary `status` publishes.

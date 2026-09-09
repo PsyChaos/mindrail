@@ -1,0 +1,121 @@
+package cli_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/PsyChaos/mindrail/internal/app"
+)
+
+// TestAWorktreeRegisteredByAnOlderBinaryIsStillRegistered is finding F01.
+//
+// MR-003 added the second migration, so on the first run after an upgrade every
+// existing database is exactly one behind. The workspace lookup was skipped
+// whenever anything was pending — a test that meant "the workspaces table does
+// not exist yet" while there was one migration and stopped meaning it when
+// there were two — so `status` reported `registered: false` about a table that
+// was there and held the row, and `doctor` explained it with "there is no
+// workspace table to query".
+//
+// The repository this builds is that repository: everything migration 2 created
+// removed, and its ledger row with it, which is byte for byte what the previous
+// binary left behind.
+func TestAWorktreeRegisteredByAnOlderBinaryIsStillRegistered(t *testing.T) {
+	repo := newInitializedRepo(t)
+	downgradeToSchemaOne(t, repo)
+
+	got := run(t, repo, "status", "--json")
+
+	var data struct {
+		Workspace struct {
+			Observation string `json:"observation"`
+			Registered  bool   `json:"registered"`
+			ID          string `json:"workspace_id"`
+		} `json:"workspace"`
+	}
+	decodeData(t, got.stdout, &data)
+
+	if !data.Workspace.Registered {
+		t.Errorf("registered = false for a worktree whose row is in the database:\n%s", got.stdout)
+	}
+	if data.Workspace.Observation != "observed" {
+		t.Errorf("observation = %q for a lookup that ran and found the row", data.Workspace.Observation)
+	}
+	if data.Workspace.ID == "" {
+		t.Error("the report carries no workspace id, so the row it found is not the one it reports")
+	}
+	if strings.Contains(got.stdout, string(app.CodeWorkspaceNotInitialized)) {
+		t.Errorf("the report calls an upgraded repository uninitialised:\n%s", got.stdout)
+	}
+
+	// The condition that is genuinely present has to be the one reported. Only
+	// `doctor` prints it: worst() ranks the workspace reading above the
+	// migration one, so while the workspace check was failing this sentence was
+	// never reached.
+	diagnosed := run(t, repo, "doctor", "--no-color")
+	if !strings.Contains(diagnosed.stdout, "Schema is behind this binary") {
+		t.Errorf("doctor does not report the pending migration:\n%s", diagnosed.stdout)
+	}
+
+	// And the remedy works: init applies the one missing migration and the
+	// repository comes back.
+	if applied := run(t, repo, "init", "--json"); applied.code != app.ExitSuccess {
+		t.Fatalf("init exited %d on an upgraded repository: %s", applied.code, applied.stdout)
+	}
+	after := run(t, repo, "status", "--json")
+	after.requireExit(t, app.ExitSuccess)
+	var upgraded struct {
+		Workspace struct {
+			ID string `json:"workspace_id"`
+		} `json:"workspace"`
+	}
+	decodeData(t, after.stdout, &upgraded)
+	if upgraded.Workspace.ID != data.Workspace.ID {
+		t.Errorf("init changed the workspace id from %s to %s; the upgrade is supposed to preserve identity",
+			data.Workspace.ID, upgraded.Workspace.ID)
+	}
+}
+
+// TestAWorkspaceNobodyLookedUpIsNotReportedAsUnregistered is finding F41.
+//
+// The other side of the same reading. Where the table genuinely does not exist
+// no lookup can be made, and the report used to publish `observation:
+// "observed"` beside `registered: false` — "observed" being its own word for
+// "the check ran and the values below it are findings", about a query that
+// could not have run.
+func TestAWorkspaceNobodyLookedUpIsNotReportedAsUnregistered(t *testing.T) {
+	repo := newRepo(t)
+	createUnmigratedDatabase(t, repo)
+
+	got := run(t, repo, "status", "--json")
+
+	var data struct {
+		Workspace struct {
+			Observation string `json:"observation"`
+			Registered  bool   `json:"registered"`
+		} `json:"workspace"`
+	}
+	decodeData(t, got.stdout, &data)
+
+	if data.Workspace.Observation != "not_observed" {
+		t.Errorf("observation = %q where there is no workspaces table to query, want not_observed:\n%s",
+			data.Workspace.Observation, got.stdout)
+	}
+	if data.Workspace.Registered {
+		t.Error("registered = true without a lookup")
+	}
+}
+
+// downgradeToSchemaOne removes everything MR-003's migration created, ledger row
+// included, which is the state a database written by the previous binary is in.
+func downgradeToSchemaOne(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_checkpoints_task`,
+		`DROP INDEX IF EXISTS idx_tasks_project`,
+		`DROP TABLE IF EXISTS checkpoints`,
+		`DROP TABLE IF EXISTS tasks`,
+		`DROP TABLE IF EXISTS sessions`,
+		`DELETE FROM schema_migrations WHERE version = 2`)
+}
