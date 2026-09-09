@@ -144,25 +144,35 @@ AgentSession, Task ve Checkpoint yaşam döngüsünü SQLite üzerinde kur. İlk
 
 #### Durum
 
-**Uygulandı, denetlenmedi.** Kutular bu yüzden işaretsiz: dört kriterin dördü de
-kod tarafından karşılanıyor ve testleri var, ama bu kodu bağımsız kimse
-notlandırmadı. MR-002'nin bulgu belgesinin birinci bölümü bu deponun ölçülmüş
-temel oranıdır — taze kodun kaç kusur taşıdığını yazan sayı odur — ve bir
-uygulayıcının kendi işini yeniden okuması o ölçüme cevap değildir.
+**Uygulandı ve denetlendi; remediasyon bekliyor.** Kutular bu yüzden işaretsiz.
 
 Sözleşme koda başlanmadan donduruldu ([mr-003-requirements.md](mr-003-requirements.md),
-`cd74767`), tasarım [mr-003-design.md](mr-003-design.md), uygulamanın kendi kaydı
-ise [mr-003-findings.md](mr-003-findings.md). `make verify` ve `make tidy-check`
-yeşil; 768 test (temel 732).
+`cd74767`), tasarım [mr-003-design.md](mr-003-design.md). Milestone'un senaryosu
+bir test olarak çalışıyor: iki ayrı AgentSession, aynı workspace'te, art arda,
+aynı Task'ı sürdürüyor — aralarında Go tarafında hiçbir şey taşınmadan, her adım
+veritabanını açıp kapatan ayrı bir komut çağrısı olarak. `make verify` ve
+`make tidy-check` yeşil; 768 test (temel 732).
 
-Milestone'un senaryosu bir test olarak çalışıyor: iki ayrı AgentSession, aynı
-workspace'te, art arda, aynı Task'ı sürdürüyor — aralarında Go tarafında hiçbir
-şey taşınmadan, her adım veritabanını açıp kapatan ayrı bir komut çağrısı olarak.
+**Birinci denetim turu** (`cd74767..f51478e`, yedi denetçi, 107 ajan) 50 bulgu
+önerdi, 46'sı çürütmeden sağ çıktı, birleştirilince **27 farklı kusur**: 5 HIGH,
+15 MEDIUM, 7 LOW. Özeti [mr-003-findings.md](mr-003-findings.md) §5'te, kanıtı
+[mr-003-audit-round-1.md](mr-003-audit-round-1.md) içinde.
 
-Uygulama sırasında iki kusur kendi kendini gösterdi ve ikisi de belgede adıyla
-kayıtlı: komutlar veritabanını salt-okunur açtığı için hiçbir şey yazamıyordu, ve
-mevcut "başlatılmamış depo" hata kodu bir başarısızlık nesnesinde kullanılamadığı
-için altıncı bir kod eklendi.
+Turun bir cümlelik kararı: **devir çalışıyor, açıklamalar çalışmıyor.** Durum
+makinesi beş ayrı saldırıya dayandı — reddedilen bir geçişi yazdıramadılar, iki
+talep sahibini birden kazandıramadılar, bir projenin görevlerini ötekinin
+sayımına sızdıramadılar; eşzamanlılık da yazma tarafında sağlam çıktı. Kırık
+olan, depoda *başka* bir şey bozukken yeni komutların ne söylediği: altı ayrı
+depo koşulu iki cümleye indirgeniyor ve hiçbirini gideremeyecek bir çare
+basılıyor. Yanında üç daha keskin kusur var — geçersiz UTF-8 taşıyan bir başlık
+satırı **yazıp sonra başarısız olduğunu bildiriyor** (ve tekrar denemek ikinci bir
+görev açıyor), "en yeni checkpoint" karşılaştırması yalnızca tek süreç içinde
+güvenilir, ve `mindrail init` tamamlanmış bir başlatma üzerine "başlatma bu
+adımdan önce durdu" yazıyor.
+
+Remediasyon brifingi on beş kalem hâlinde denetim belgesinin sonunda; her kalem
+neyi bozmaması gerektiğini ve düzeltmeyi hangi mutasyonun tuttuğunu adıyla
+söylüyor.
 
 ---
 

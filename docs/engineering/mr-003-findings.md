@@ -1,17 +1,22 @@
-# MR-003 — implementation record
-
-This is not an audit document. MR-001's and MR-002's findings files record what
-independent auditors found; **MR-003 has not been audited by anyone**, and §1 of
-[mr-002-findings.md](mr-002-findings.md) is the measurement that says what fresh,
-ungraded code is worth in this repository. What follows is the implementer's own
-account, written so that an audit has something to grade against.
+# MR-003 — findings
 
 - **Requirements frozen at** `cd74767`, before any code: [mr-003-requirements.md](mr-003-requirements.md)
 - **Design**: [mr-003-design.md](mr-003-design.md)
 - **Implementation**: `f7ac67f..ce0c708`
+- **Audit round 1**: graded `cd74767..f51478e`. 7 auditors, 107 agents, 50
+  proposed, 46 confirmed, **27 distinct defects — 5 HIGH, 15 MEDIUM, 7 LOW**.
+  The evidence is [mr-003-audit-round-1.md](mr-003-audit-round-1.md); §5 below is
+  the summary.
+- **Status: not done.** No remediation has been written.
 - `make verify` green, `make tidy-check` green
 - **768** top-level test functions, from a baseline of 732
   (`go test -list '.*' ./...`, the method R4-M11 settled)
+
+Sections 1–4 are the **implementer's own account**, written before the audit so
+that the audit had something to grade against. They are left exactly as they were
+written, including the places round 1 proved them wrong — §5 says which, and a
+record that quietly corrected itself would destroy the only evidence of what an
+unaudited pass believes about itself.
 
 ---
 
@@ -126,3 +131,82 @@ that looked everywhere.
 - Everything MR-002's Appendix F left open is still open: the unaudited
   `record`, `schema`, migration, storage and workspace packages, and doctor's six
   non-knowledge checks.
+
+---
+
+## 5. Audit round 1
+
+Seven auditors graded `cd74767..f51478e` in parallel — three Readers walking the
+frozen contract forward, four Breakers attacking the binary from isolated git
+worktrees — with two adversarial verifiers per finding and an arbiter on every
+split. 107 agents. They proposed 50 findings; 46 survived verification; because
+the seven worked without seeing each other, those 46 are **27 distinct defects**.
+Three were refuted, all three for the same reason: a sentence graded outside the
+scope it states for itself.
+
+The full round, with every finding's evidence, the refutations and a fifteen-item
+remediation brief, is [mr-003-audit-round-1.md](mr-003-audit-round-1.md).
+
+### The verdict, in one paragraph
+
+**The handover works; the explanations do not.** Two agents in two processes
+continuing one task runs end to end, and the store underneath it held: a Breaker
+attacked the state machine five ways and could not make it write on a refusal,
+could not make two claimants both win, and could not make one project's tasks
+leak into another's counts. Two of the gaps §4 above admitted were tested and the
+code held — twenty in-process races, a cross-process race and eight concurrent
+`checkpoint write` processes all serialise correctly, exactly one claimant wins,
+and the loser gets a clean `TASK_STATE_INVALID`. What is wrong is **what the new
+commands say when anything else about the repository is wrong**, and a set of
+guards no test can turn red.
+
+### The five HIGH findings
+
+| What is wrong | Where |
+|---|---|
+| Every coordination command discards the startup verdict and collapses six repository conditions — corrupt database, missing git, unparseable `config.toml`, bare repository, not a repository, unwritable runtime path — into one of two sentences, with `mindrail init` as a remedy that cannot clear any of them | `internal/cli/coordination.go:92` |
+| A `--json` write whose title or note is not valid UTF-8 **commits the row and then reports failure**: the refusal happens in `emit`, after the command body ran. The caller's correct response — retry — opens a second task | `internal/cli/coordination.go:57-81` |
+| One such task then permanently disables `task list --json` and `task show --json` for that project, and no verb can edit or delete a title | `internal/cli/representable.go:63` |
+| The D-55 single-statement guard walks the whole filesystem, so any nested checkout or `git worktree add` inside the tree turns `make check` red and accuses the file it exists to protect | `internal/coordination/lifecycle_scan_test.go:41` |
+| "The newest checkpoint" is a lexical comparison of minted ids, and that monotonicity is **process-local**: two agents writing in the same millisecond hand the arriving agent a coin flip. Concurrency is safe for the writes and unsafe for the read that decides which write was last | `internal/coordination/store.go:305-321` |
+
+### What the round says about this document
+
+Round 1 graded §§1–4 above as claims, and three of them did not survive.
+
+- §2 says the sixth error code's amendment "is recorded in
+  `mr-003-requirements.md`". It is not:
+  `grep -c COORDINATION_UNAVAILABLE docs/engineering/mr-003-requirements.md`
+  returns 0. AC-05.1 still says five codes and AC-06.7 still names the superseded
+  one. Found by five auditors independently, graded HIGH by one and argued down
+  to LOW by every verifier who examined it.
+- §3's mutation table is honest — nine of nine re-confirmed — but it is nine of
+  nineteen guards. Ten further mutations of the store leave the whole suite
+  green, including one that stops `updated_at` advancing.
+- §4 says "the human renderings are goldens". There are no goldens for any of the
+  six new commands, and the smoke suite executes four of them not at all.
+
+### The three rules this round adds
+
+1. **A command that runs after a failed startup must say what the startup said.**
+   `bootstrap.App.Run` deliberately calls the body when `Start` failed and names
+   the obligation in its own doc comment. Three commands ask `Diagnosis`; the
+   fourth family does not. The rule is not "consult the verdict" — it is that a
+   code path which can be entered after a failure has to be written as if it will
+   be, because the caller cannot see the WARN line on stderr.
+2. **A write that has already committed cannot be reported as a failure.** Two
+   independent defects, one fix: judge everything that can be judged before
+   opening anything, and let what cannot be judged early live inside the
+   transaction it belongs to. `init` paid for this rule once already and wrote it
+   down in the source; the new commands did not inherit it.
+3. **Asserting the code is not asserting the cause.** Four mutations survived the
+   whole suite for one reason: the test reaches the guard from a state where
+   several different guards would produce the same code. A guard's test has to be
+   built from the state that reaches that guard and no other.
+
+And one about auditing rather than about code, recorded because this was the
+first round here run with seven parallel auditors: **documentation drift inflates
+under parallel audit.** One wrong cross-reference was found five times and graded
+HIGH, MEDIUM, MEDIUM, MEDIUM and LOW. A synthesis step that merges before grading
+is not a nicety at that width; without it the round's headline severity would have
+been set by the fifth auditor to meet a `grep`.
