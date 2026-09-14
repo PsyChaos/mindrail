@@ -796,23 +796,24 @@ remaining gate.
 
 ## 6. TASK-06 — the command surface
 
-Commit `9aa7a2a`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
-green; **863** top-level test functions, from 857. Owns REQ-08. Its
-implementation overlapped TASK-05's gate window in the main tree — the
-process defect recorded under §5 — and it was committed only after that gate
-closed.
+Commit `9aa7a2a`, and `1431d9f` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **863** top-level test
+functions after both, from 857 (the gate added assertions to existing tests
+and no test function). Owns REQ-08. Its implementation overlapped TASK-05's
+gate window in the main tree — the process defect recorded under §5 — and it
+was committed only after that gate closed.
 
 ### What changed
 
 | Where | What |
 |---|---|
-| `internal/cli/lease.go` (new) | `mindrail lease acquire --file <path> \| --task <task-id>`, `lease renew <id>`, `lease release <id>`, `lease list`; the flags `--operation-id` (every writer) and `--expect-revision` (`task state`), each judged before the application starts — a malformed id, a revision below one, both targets or neither, an unrepresentable file key — with "Mindrail did not run" as the impact; `leaseTargetFlags` refuses invalid UTF-8 in `--file` by name and hands the store's own `FileTarget` refusal through with that impact; `attributed`, the part of every writer's result that says the session, whether it was minted, `replayed` and `operation_id`; `renderAttribution`, the human sentence for a replay ("This is the recorded result of operation …; nothing was written again"); `leaseResult` (lease, `renewed`, `superseded`, the task for a claim without a move) and `leaseListResult` (`[]`, never `null`); `renderLeaseLine`, one rendering of a lease's status for every command |
+| `internal/cli/lease.go` (new) | `mindrail lease acquire --file <path> \| --task <task-id>`, `lease renew <id>`, `lease release <id>`, `lease list`; the flags `--operation-id` (every writer) and `--expect-revision` (`task state`), each judged before the application starts — a malformed id, a revision below one, both targets or neither, an unrepresentable file key — with "Mindrail did not run" as the impact; `leaseTargetFlags` refuses invalid UTF-8 in `--file` by name and hands the store's own `FileTarget` refusal through with that impact; `attributed`, the part of every writer's result that says the session, whether it was minted, `replayed` and `operation_id`; `renderAttribution`, the human sentence for a replay ("This is the recorded result of operation …; nothing was written again"); `leaseResult` (lease, `renewed`, `superseded`, the task for a claim without a move) and `leaseListResult` (`[]`, never `null`); `renderLeaseLine`, the rendering of a lease's status `task show` and the three lease writers share; `task state`, `checkpoint write` and `lease list` print one-line forms of their own *(the first version of this cell said every command; the Breaker counted)* |
 | `internal/cli/task.go` | `task open` and `task state` take `--operation-id`, `task state` takes `--expect-revision` and calls `TransitionExpecting`; `taskResult` publishes `lease` (null after a release or for a fresh task) and `superseded`; the human rendering prints the revision, the lease held, and "Took over from session …, whose lease expired at …"; `task show` prints the newest tenure beside the claimant in its status — held until, expired at, released at with its reason — and no line for a task never claimed |
 | `internal/cli/checkpoint.go` | `--operation-id`; `checkpointResult` publishes `lease` — renewed, or released by a handoff — and prints it |
 | `internal/cli/coordination.go` | `session open` takes `--operation-id` and publishes `replayed` |
 | `internal/cli/root.go`, `internal/bootstrap/app.go`, `internal/cli/{coordination,doctor,init,status}.go` | `cli.Options.BusyTimeout`, carried through `bootstrap.Options` to `storage.Options`: a seam for tests that hold the lock and drive a command into `MINDRAIL_BUSY_RETRYABLE`, which at the production budget would cost five seconds per run. Zero is the default |
 | `internal/cli/testdata/task_show_human.golden` | One line: `Task TSK-… is OPEN.` → `Task TSK-… is OPEN (revision 1).` |
-| Tests | `internal/cli/lease_test.go` (six, new): `TestTheLeaseGroupHasFourVerbsAndTwoTargets` (AC-08.1: the four verbs in `--help`, no fifth, a file acquired/renewed/released, a handed-off task taken where it stands, both-or-neither targets refused before starting), `TestEveryWriterTakesAnOperationIDAndJudgesItFirst` (AC-08.2, AC-08.4: seven writers refuse `has space` at exit 2 before starting; a well-formed id records once and replays with `replayed: true`, the same `task` and `session`, one row; the human replay sentence), `TestExpectRevisionIsJudgedBeforeStartingAndThenByTheStore` (AC-08.2: `0`, `-1`, `x`, `1.5` refused before starting; `1` moves to revision 2; a stale `1` is `STATE_REVISION_CONFLICT` at 2), `TestTaskShowPrintsTheLeaseInEveryStatus` (AC-08.5: no line for a fresh task; held with the expiry; expired — the row back-dated by SQL, since the binary runs on the system clock — beside the claimant; released with its reason; and the read changed no row), `TestLeaseListAndTaskShowWriteNoRow` (AC-08.3's `[]`, AC-08.6 over four tables), `TestAMoveReportsTheLeaseAndATakeover` (the lease on `task state`'s wire and a takeover named, in JSON and for a person). `coordination_agreement_test.go`: the four lease commands join `coordinationCommands` (AC-08.8, through the uninitialised and schema-behind sweeps); six rows join `coordinationRefusals` (AC-08.7) — `LEASE_CONFLICT` (a second session's acquisition, cleared by the holder's release), `LEASE_NOT_HELD` (renewing a released lease, cleared by `lease acquire --file=…` as the remedy names it), `LEASE_NOT_FOUND` (cleared by `lease list`), `STATE_REVISION_CONFLICT` (cleared by `task show` and the revision it prints), `OPERATION_ID_CONFLICT` (cleared by a new id), `MINDRAIL_BUSY_RETRYABLE` (a held lock, cleared by the holder finishing; the matrix runs under a 200 ms busy budget, so the row costs a fraction of a second rather than five seconds twice). `coordination_representable_test.go`: `lease acquire --file` joins the refused-write table |
+| Tests | `internal/cli/lease_test.go` (six, new): `TestTheLeaseGroupHasFourVerbsAndTwoTargets` (AC-08.1: the four verbs in `--help`, no fifth, a file acquired/renewed/released, a handed-off task taken where it stands, both-or-neither targets refused before starting), `TestEveryWriterTakesAnOperationIDAndJudgesItFirst` (AC-08.2, AC-08.4: seven writers refuse `has space` at exit 2 before starting; a well-formed id records once and replays with `replayed: true`, the same `task` and `session`, one row; the human replay sentence), `TestExpectRevisionIsJudgedBeforeStartingAndThenByTheStore` (AC-08.2: `0`, `-1`, `x`, `1.5` refused before starting; `1` moves to revision 2; a stale `1` is `STATE_REVISION_CONFLICT` at 2), `TestTaskShowPrintsTheLeaseInEveryStatus` (AC-08.5: no line for a fresh task; held with the expiry; expired — the row back-dated by SQL, since the binary runs on the system clock — beside the claimant; released with its reason; and the read changed no row), `TestLeaseListAndTaskShowWriteNoRow` (AC-08.3's `[]`, AC-08.6 over four tables), `TestAMoveReportsTheLeaseAndATakeover` (the lease on `task state`'s wire and a takeover named, in JSON and for a person). `coordination_agreement_test.go`: the four lease commands join `coordinationCommands` (AC-08.8, through the uninitialised sweep; the schema-behind sweep in `upgrade_test.go` keeps a list of its own, and gained `lease list` and `lease acquire --file` in the gate — *the first version of this sentence claimed both sweeps, and the Reader found the second had no lease command in it*); six rows join `coordinationRefusals` (AC-08.7) — `LEASE_CONFLICT` (a second session's acquisition, cleared by the holder's release), `LEASE_NOT_HELD` (renewing a released lease, cleared by `lease acquire --file=…` as the remedy names it), `LEASE_NOT_FOUND` (cleared by `lease list`), `STATE_REVISION_CONFLICT` (cleared by `task show` and the revision it prints), `OPERATION_ID_CONFLICT` (cleared by a new id), `MINDRAIL_BUSY_RETRYABLE` (a held lock, cleared by the holder finishing; the matrix runs under a 200 ms busy budget, so the row costs a fraction of a second rather than five seconds twice). `coordination_representable_test.go`: `lease acquire --file` joins the refused-write table |
 
 ### The mutations, and what each turned red
 
@@ -851,4 +852,85 @@ was removed rather than kept.
 
 ### The gate
 
-*Filled after the Reader/Breaker pair has run.*
+Two agents over `9aa7a2a` and this record at `f854724`, with nothing else
+changing in the tree while they ran: a Reader (Sonnet) over the record, a
+Breaker (Fable) with the built binary over scratch repositories, sixteen
+processes at a time where the question was a race. Fix: `1431d9f`;
+`make check` (19 `ok`) and `make tidy-check` green after it; 863 top-level
+test functions, unchanged.
+
+**The Reader** checked 35 claims: 28 confirmed, **1 false**, 6 unconfirmed
+(the whole-suite counts and four mutations it did not re-run; C2, C3 and C6
+matched their recorded red lines verbatim). The false one was this record's
+"through the uninitialised and schema-behind sweeps": the schema-behind test
+keeps its own two-command list and ran no lease command, even though the
+binary answered a schema-2 database correctly for `lease list` and `lease
+acquire` when the Reader built it and tried. The sweep now runs both lease
+commands that need no id (corrected above, marked). One LOW: the matrix's
+name still says "four" over ten rows; the name stays because MR-003's records
+cite it, and its comment says so now. Its contract verdict: AC-08.1 met with
+the recorded amendment, AC-08.2 … AC-08.7 met, AC-08.8 met in behaviour with
+the record's account corrected.
+
+**The Breaker** produced five findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | `LEASE_NOT_HELD`'s remedy carried no `--session`. Run as printed, it minted a session that then held the file, and the session that had been refused was locked out of its own file for twenty minutes | predates (TASK-03's remedy; TASK-06's `lease renew` is what makes it reachable) | `leaseNotHeld` names the session the refused command ran under, for a file (`--file=… --session <caller>`) and for a task (`task state … --session <caller>`); `leaseConflict`'s "ask the holder to release" names the holder's session, since the holder is the one who can. `TestARemedyNamingAKeyIsACommandLineThatRuns`; G61 |
+| LOW | A replay in human mode printed "nothing was written again" beside "session … was opened for this run" — two sentences that contradict | `9aa7a2a` | A replayed write whose first delivery minted says which delivery opened the session and what to pass; `TestEveryWriterTakesAnOperationIDAndJudgesItFirst`'s last arm, with the session count unchanged; G62 |
+| LOW | Invalid UTF-8 in `--task` is judged by output mode: in JSON the envelope refuses it at emission as `PATH_NOT_REPRESENTABLE` at exit 2, for a person the store answers `TASK_NOT_FOUND` at exit 1 — while `--file` gets the D-77 refusal by name in both | predates (`task show <bad>` has answered this way since MR-003; identifiers are not free text and are not in the refused-flag list) | Recorded, not fixed: an id that is not valid UTF-8 names nothing, and both answers say so; the asymmetry with `--file` is that a file key is free text a caller wrote and an id is not |
+| LOW | This record said `renderLeaseLine` is one rendering for every command; three commands print forms of their own | record | Corrected above |
+| LOW | A file key containing a backtick breaks the remedy's own backtick delimiters: `` `mindrail lease acquire --file='a$b`c.go'` `` | predates (`ShellArgument` quotes for the shell, and the sentence quotes for the eye) | Recorded as a limit of remedies rendered as code spans; a key with a backtick is one this rule does not defend |
+
+Attacked and not broken, in one line each. Every remedy carried out as
+printed through `bash -c`: the back-dated conflict taken over with the old
+holder named; a non-holder's `lease release` refused naming the holder and
+minting nothing, the holder's succeeding; `--file='with space/file.go'`,
+`'it'\''s.go'` and `'-dash.go'` acquired under the right keys; `lease list`
+for the unknown id; `task show` then `--expect-revision 2` for the stale
+move; a new id for the conflict; `--to CLAIMED` for the state refusal.
+`--operation-id`: 128 accepted, 129, `opé`, `=-x`, ` -x`, `\xff` and a
+newline refused at exit 2 before starting, `""` and `=` carrying no id.
+`--expect-revision`: eleven malformed spellings refused before starting;
+`+1` and `01` read as 1. `--file`: a newline, a tab, DEL, `..`, `../x`, an
+absolute path, `C:\x.go`, `c:x.go`, `//x.go`, leading and trailing spaces,
+`.`, `./`, a blank, `a/../..` and `\xff` refused in both modes at exit 2;
+`a/../b.go` is `b.go`, `f\g.go` is `f/g.go`, a four-thousand-character key
+accepted. `--task` with a session id, a lease id or garbage is
+`TASK_NOT_FOUND`; both targets, neither, and `--file ''` exit 2 with no row
+written. Twenty command shapes under `--json` printed exactly one object and
+nothing else, `--verbose` included; `replayed` a boolean on all seven writers;
+`lease` null or an object on `task open`, `task state`, `checkpoint write`
+and `task show`, null after `COMPLETED`; `operation_id` absent unless given;
+a replay identical to its first delivery apart from `replayed`. Every human
+sentence composed: the minted session, the lease line, the takeover line, the
+replay, the handoff's "released; the next session may take the task", `task
+show` in all four statuses, `lease list` with none, one and five, a
+150-character key aligned. Twenty refusals before starting left `sessions`,
+`tasks`, `leases` and `operations` unchanged. An uninitialised repository is
+`COORDINATION_UNAVAILABLE` and a ledger rolled to 2 is `MIGRATION_FAILED`
+"up to 2 … need 3", both cleared by `mindrail init`; a planted version 4 is
+`RUNTIME_DB_SCHEMA_TOO_NEW`; no raw SQL error anywhere. Sixteen processes
+racing `lease acquire --file same.go`: one exit 0, fifteen `LEASE_CONFLICT`
+naming the winner, `lease list` one; sixteen `task open --operation-id
+sameop`: sixteen exit 0, fifteen `replayed:true`, one task, one record;
+sixteen `task state --to CLAIMED`: one win, fifteen conflicts, revision 2.
+The busy budget is reachable from no flag and no environment variable; a
+lock held by `sqlite3` gives exit 4, `MINDRAIL_BUSY_RETRYABLE`,
+`waited_ms 5004`, and readers answer in 20 ms under it.
+
+Not demonstrated, for the backlog: a holder whose lease has expired writes
+a checkpoint and is told nothing about its tenure having ended (the note is
+written and no lease is touched, as D-78 says; a sentence would help).
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G61 | the not-held remedy without `--session` | `TestARemedyNamingAKeyIsACommandLineThatRuns`: ``remedy [Run `mindrail lease acquire --file='with space/file.go'` to take it again.] does not quote the key as one argument and name the caller's session`` |
+| G62 | the replayed-and-minted sentence dropped | `TestEveryWriterTakesAnOperationIDAndJudgesItFirst`: `a replayed, minted write contradicts itself or says nothing about the session` |
+
+The sweep's two lease rows have no mutation of their own: removing them is
+removing a test, not changing the code under it, and the run stayed green
+as it should.
+
+**Carried forward from this gate:** the expired holder's silent checkpoint
+(backlog); remedies as code spans and keys with backticks (recorded limit).
