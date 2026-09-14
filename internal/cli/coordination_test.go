@@ -103,10 +103,13 @@ func TestTwoSequentialAgentsContinueOneTaskAcrossAProcessBoundary(t *testing.T) 
 	if carried.Task.State != "READY_TO_COMPLETE" {
 		t.Errorf("state = %q after the arriving agent moved it", carried.Task.State)
 	}
-	// The claim still names agent A. A move is not a claim, and rewriting it
-	// would lose which session took the task on in the first place.
-	if carried.Task.ClaimedBy != first {
-		t.Errorf("claimed_by = %q, want the original claimant %q", carried.Task.ClaimedBy, first)
+	// Agent A's handoff released the task's lease (decision D-78), so agent
+	// B's move took it over, and a takeover is a claim (decision D-68, which
+	// amends D-58): the claimant is now B. Until MR-004 the claim stayed with
+	// A, on the argument that a move is not a claim; the lease is what made
+	// it one.
+	if carried.Task.ClaimedBy != second {
+		t.Errorf("claimed_by = %q, want the arriving agent %q, which took the task over", carried.Task.ClaimedBy, second)
 	}
 }
 

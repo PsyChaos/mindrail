@@ -256,6 +256,7 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 		ProjectID: projectID,
 		CreatedAt: now,
 		UpdatedAt: now,
+		Revision:  1,
 	}
 
 	var write Write
@@ -269,10 +270,10 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO tasks (task_id, project_id, title, state, blocked_reason,
-				opened_by, claimed_by, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?)`,
+				opened_by, claimed_by, created_at, updated_at, revision)
+			 VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)`,
 			task.ID, task.ProjectID, task.Title, string(task.State),
-			task.OpenedBy, app.FormatTime(now), app.FormatTime(now))
+			task.OpenedBy, app.FormatTime(now), app.FormatTime(now), task.Revision)
 		return err
 	})
 	if err != nil {
@@ -283,23 +284,58 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 	return task, write, nil
 }
 
-// Transition moves a task through decision D-55's table.
+// Move is what Transition reports: the task as written, the lease the move
+// left active on it — nil after a release to OPEN or a terminal move — and the
+// expired tenure the move took over, when it did (decision D-67: a takeover is
+// reported, never silent).
+type Move struct {
+	Task       Task   `json:"task"`
+	Lease      *Lease `json:"lease"`
+	Superseded *Lease `json:"superseded"`
+}
+
+// Transition moves a task through decision D-55's table with no expectation
+// about its revision. It is TransitionExpecting with the expectation left
+// out; the command line passes what it was given, and a caller with no
+// reading of its own to be stale has nothing to expect.
+func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, to State, reason string) (Move, Write, error) {
+	return s.TransitionExpecting(ctx, taskID, by, to, reason, 0)
+}
+
+// TransitionExpecting moves a task through decision D-55's table, under the
+// lease and the revision MR-004 put in front of it.
 //
 // The whole operation is one transaction: the task is read, the move is judged
 // and the row is written without anything else being able to move it in
 // between. Reading outside the transaction and writing inside it would make the
 // refusal a statement about a state the task may already have left.
 //
-// It does not check who claimed the task. A second session moving a task the
-// first one claimed is the handover working (decision D-58); ownership becomes
-// enforceable in MR-004, where a lease makes "who may move this" a question with
-// a time bound behind it.
-func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, to State, reason string) (Task, Write, error) {
+// Three judgments run before the table, in this order (design §7):
+//
+//  1. Revision (decision D-72). A caller that read the task at revision n and
+//     expects n is refused with STATE_REVISION_CONFLICT if the row has moved
+//     on, before anything else is looked at — a caller whose reading is stale
+//     should not be told about the lease as if its reading were current. Zero
+//     expects nothing.
+//  2. Lease (decision D-67). A task whose active lease another session holds
+//     is LEASE_CONFLICT whatever the destination: the reason the move cannot
+//     happen is ownership, and a state refusal would read the same whether
+//     the lease had expired or not.
+//  3. The state table (D-55) and the blocked-reason rule (D-63), as before.
+//
+// Then the effect by destination: CLAIMED and the working states acquire or
+// renew the lease for the mover — taking over an expired tenure out loud —
+// and make the mover the claimant; OPEN releases and clears the claimant; the
+// terminal states release and leave the claimant as attribution (decision
+// D-68). The row is written with `revision = revision + 1 WHERE revision = ?`
+// against the revision read in this transaction; under BEGIN IMMEDIATE that
+// guard cannot fail, so no row affected is a defect and not a second conflict.
+func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attribution, to State, reason string, expectRevision int64) (Move, Write, error) {
 	reason = strings.TrimSpace(reason)
 
 	var (
-		updated Task
-		write   Write
+		move  Move
+		write Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		// One clock reading per write, and it is taken here, under the write
@@ -308,7 +344,8 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 		// so it has to follow commit order: a move that waited on the lock and
 		// committed second must not carry the earlier stamp, which is what a
 		// reading before BEGIN gave it (verification pass after the round-2
-		// remediation). A session minted here starts at this same instant.
+		// remediation). A session minted here starts at this same instant, and
+		// the lease is judged against it (decision D-65).
 		now := s.clock.Now().UTC()
 
 		resolved, err := s.attribute(ctx, tx, by, now)
@@ -326,6 +363,19 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 			return readFailed("the task", taskID, err)
 		}
 
+		if expectRevision > 0 && current.Revision != expectRevision {
+			return revisionConflict(current, expectRevision)
+		}
+
+		target := TaskTarget(taskID)
+		held, hasLease, err := unreleasedLeaseOn(ctx, tx, current.ProjectID, target, now)
+		if err != nil {
+			return err
+		}
+		if hasLease && held.Status == LeaseActive && held.Holder != sessionID {
+			return leaseConflict(held)
+		}
+
 		if !CanTransition(current.State, to) {
 			return transitionNotAvailable(taskID, current.State, to, current.ClaimedBy)
 		}
@@ -333,9 +383,10 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 			return blockedReasonMissing(taskID)
 		}
 
-		updated = current
+		updated := current
 		updated.State = to
 		updated.UpdatedAt = now
+		updated.Revision = current.Revision + 1
 
 		// A block carries its reason; anything else clears it, so a reader never
 		// meets a reason belonging to a block that was lifted.
@@ -344,29 +395,70 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 			updated.BlockedReason = reason
 		}
 
-		// The claim is recorded on the way in and released on the way out. OPEN
-		// is the release path (D-55), and a released task that kept its claimant
-		// would report itself as owned by a session that gave it up.
+		// The lease follows the destination (design §7). A move into CLAIMED or
+		// a working state is a claim: the mover acquires or renews, and becomes
+		// the claimant. OPEN is the release path and clears the claimant; the
+		// terminal states release and leave the claimant as attribution of the
+		// last claim (decision D-68).
 		switch to {
-		case StateClaimed:
+		case StateClaimed, StateInProgress, StateBlocked, StateReadyToComplete:
+			acquired, err := s.acquireIn(ctx, tx, current.ProjectID, sessionID, target, now)
+			if err != nil {
+				return err
+			}
+			move.Lease = &acquired.Lease
+			move.Superseded = acquired.Superseded
 			updated.ClaimedBy = sessionID
 		case StateOpen:
+			if hasLease {
+				if _, err := closeIn(ctx, tx, held, now, closeReason(held, ReleaseReasonReleased)); err != nil {
+					return err
+				}
+			}
 			updated.ClaimedBy = ""
+		case StateCompleted, StateAbandoned:
+			if hasLease {
+				if _, err := closeIn(ctx, tx, held, now, closeReason(held, ReleaseReasonFinished)); err != nil {
+					return err
+				}
+			}
 		}
 
-		_, err = tx.ExecContext(ctx,
-			`UPDATE tasks SET state = ?, blocked_reason = ?, claimed_by = ?, updated_at = ?
-			 WHERE task_id = ?`,
+		result, err := tx.ExecContext(ctx,
+			`UPDATE tasks SET state = ?, blocked_reason = ?, claimed_by = ?, updated_at = ?,
+				revision = revision + 1
+			 WHERE task_id = ? AND revision = ?`,
 			string(updated.State), nullable(updated.BlockedReason), nullable(updated.ClaimedBy),
-			app.FormatTime(updated.UpdatedAt), taskID)
-		return err
+			app.FormatTime(updated.UpdatedAt), taskID, current.Revision)
+		if err != nil {
+			return err
+		}
+		if affected, err := result.RowsAffected(); err != nil {
+			return err
+		} else if affected != 1 {
+			return fmt.Errorf("the task's revision moved under the write lock: %d rows updated at revision %d", affected, current.Revision)
+		}
+
+		move.Task = updated
+		return nil
 	})
 	if err != nil {
-		return Task{}, Write{}, s.adopt(ctx, "the task state", taskID, err)
+		return Move{}, Write{}, s.adopt(ctx, "the task state", taskID, err)
 	}
 	write.Timing = stats
 
-	return updated, write, nil
+	return move, write, nil
+}
+
+// closeReason is the reason a release path writes on the tenure it closes: the
+// path's own, unless the tenure had already run out — a tenure that expired is
+// recorded as expired whoever closes it and whichever way, so the history says
+// what happened to it rather than what the closer was doing.
+func closeReason(held Lease, pathReason string) string {
+	if held.Status == LeaseExpired {
+		return ReleaseReasonExpired
+	}
+	return pathReason
 }
 
 // FindTask returns the task with this id, or ErrTaskNotFound.
@@ -415,15 +507,31 @@ func (s *Store) ListTasks(ctx context.Context, projectID string, state State) ([
 	return tasks, nil
 }
 
+// Noted is what WriteCheckpoint reports: the checkpoint, and the task's lease
+// as the write left it — renewed when the writer held it, closed with reason
+// `handoff` when the writer held it and was leaving, nil when the writer held
+// nothing (decision D-78). A note is not a claim: a checkpoint by any other
+// session is written and touches no lease.
+type Noted struct {
+	Checkpoint Checkpoint `json:"checkpoint"`
+	Lease      *Lease     `json:"lease"`
+}
+
 // WriteCheckpoint appends a note to a task.
 //
 // Append-only (decision D-59). There is no Update and no Delete on this table,
 // and the absence is the feature: a handover note that could be rewritten after
 // the fact is one the arriving agent cannot rely on.
-func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attribution, workspaceID, note string, handoff bool) (Checkpoint, Write, error) {
+//
+// The task is read whole rather than probed for its id, since MR-004: the
+// probe selected only task_id, so a task row `task show`, `task list` and
+// `task state` refused as undecodable still took a checkpoint (MR-003 §7's
+// second LOW finding). It is also the read that says which project the lease
+// lives in.
+func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attribution, workspaceID, note string, handoff bool) (Noted, Write, error) {
 	note = strings.TrimSpace(note)
 	if note == "" {
-		return Checkpoint{}, Write{}, app.NewError(
+		return Noted{}, Write{}, app.NewError(
 			app.CodeCommandLineInvalid,
 			app.KindUsage,
 			"a checkpoint needs a note",
@@ -441,7 +549,10 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		CreatedAt:   s.clock.Now().UTC(),
 	}
 
-	var write Write
+	var (
+		noted Noted
+		write Write
+	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		resolved, err := s.attribute(ctx, tx, by, checkpoint.CreatedAt)
 		if err != nil {
@@ -450,8 +561,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		write = resolved
 		checkpoint.SessionID = resolved.Session.ID
 
-		var exists string
-		err = tx.QueryRowContext(ctx, `SELECT task_id FROM tasks WHERE task_id = ?`, taskID).Scan(&exists)
+		task, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE task_id = ?`, taskID))
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return taskNotFound(taskID)
@@ -463,20 +573,44 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		if handoff {
 			handoffValue = 1
 		}
-		_, err = tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO checkpoints (checkpoint_id, task_id, session_id, workspace_id,
 				note, handoff, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			checkpoint.ID, checkpoint.TaskID, checkpoint.SessionID, checkpoint.WorkspaceID,
-			checkpoint.Note, handoffValue, app.FormatTime(checkpoint.CreatedAt))
-		return err
+			checkpoint.Note, handoffValue, app.FormatTime(checkpoint.CreatedAt)); err != nil {
+			return err
+		}
+		noted.Checkpoint = checkpoint
+
+		// The holder's note renews; the holder's handoff releases; anyone
+		// else's touches nothing (decision D-78). The instant is the row's own
+		// stamp, which is the instant a session minted for this write began.
+		held, hasLease, err := unreleasedLeaseOn(ctx, tx, task.ProjectID, TaskTarget(taskID), checkpoint.CreatedAt)
+		if err != nil {
+			return err
+		}
+		if !hasLease || held.Status != LeaseActive || held.Holder != checkpoint.SessionID {
+			return nil
+		}
+		var after Lease
+		if handoff {
+			after, err = closeIn(ctx, tx, held, checkpoint.CreatedAt, ReleaseReasonHandoff)
+		} else {
+			after, err = renewIn(ctx, tx, held, checkpoint.CreatedAt)
+		}
+		if err != nil {
+			return err
+		}
+		noted.Lease = &after
+		return nil
 	})
 	if err != nil {
-		return Checkpoint{}, Write{}, s.adopt(ctx, "the checkpoint", checkpoint.ID, err)
+		return Noted{}, Write{}, s.adopt(ctx, "the checkpoint", checkpoint.ID, err)
 	}
 	write.Timing = stats
 
-	return checkpoint, write, nil
+	return noted, write, nil
 }
 
 // LastCheckpoint returns a task's newest checkpoint, or ErrCheckpointNotFound.
@@ -524,14 +658,31 @@ func (s *Store) Handover(ctx context.Context, taskID string) (Handover, error) {
 		return Handover{}, err
 	}
 
+	handover := Handover{Task: task}
+
 	checkpoint, err := s.LastCheckpoint(ctx, taskID)
 	switch {
 	case errors.Is(err, ErrCheckpointNotFound):
-		return Handover{Task: task}, nil
 	case err != nil:
 		return Handover{}, err
+	default:
+		handover.Checkpoint = &checkpoint
 	}
-	return Handover{Task: task, Checkpoint: &checkpoint}, nil
+
+	// The newest tenure in whatever status it is, so a claimant whose lease
+	// has run out is shown with the tenure's end rather than as if the claim
+	// still bound (decision D-68).
+	lease, err := scanLease(s.db.QueryRowContext(ctx,
+		selectLease+` WHERE project_id = ? AND target_kind = ? AND target_key = ? ORDER BY rowid DESC LIMIT 1`,
+		task.ProjectID, string(TargetTask), taskID), s.clock.Now().UTC())
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return Handover{}, readFailed("the lease on task "+taskID, taskID, err)
+	default:
+		handover.Lease = &lease
+	}
+	return handover, nil
 }
 
 // Summarize is what `status` publishes: the three counts a reader can act on,
@@ -590,7 +741,7 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 }
 
 const selectTask = `SELECT task_id, project_id, title, state, blocked_reason,
-	opened_by, claimed_by, created_at, updated_at FROM tasks`
+	opened_by, claimed_by, created_at, updated_at, revision FROM tasks`
 
 const selectCheckpoint = `SELECT checkpoint_id, task_id, session_id, workspace_id,
 	note, handoff, created_at FROM checkpoints`
@@ -627,7 +778,7 @@ func scanTask(row rowScanner) (Task, error) {
 		updatedAt string
 	)
 	if err := row.Scan(&task.ID, &task.ProjectID, &task.Title, &state, &reason,
-		&task.OpenedBy, &claimedBy, &createdAt, &updatedAt); err != nil {
+		&task.OpenedBy, &claimedBy, &createdAt, &updatedAt, &task.Revision); err != nil {
 		return Task{}, err
 	}
 

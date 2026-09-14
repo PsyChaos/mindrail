@@ -131,6 +131,11 @@ func TestNamingAGroupWithNoSubcommandIsAnEnvelope(t *testing.T) {
 // Nothing said so. The refusal named the two states and stopped there, which
 // tells an arriving agent that the task is taken and not who to hand over to —
 // on the one command in the group whose whole purpose is handover.
+//
+// Since MR-004 the refusal is LEASE_CONFLICT rather than TASK_STATE_INVALID
+// (decision D-67: the lease is judged before the state table, because the
+// reason the move cannot happen is ownership), and it names the holder, the
+// lease and the expiry. The clause F22 asked for holds under the new code.
 func TestASecondClaimNamesTheSessionHoldingIt(t *testing.T) {
 	repo := newInitializedRepo(t)
 
@@ -146,12 +151,15 @@ func TestASecondClaimNamesTheSessionHoldingIt(t *testing.T) {
 	}
 
 	payload := got.errorPayload(t)
-	if payload.Code != app.CodeTaskStateInvalid {
-		t.Fatalf("code = %q, want %q", payload.Code, app.CodeTaskStateInvalid)
+	if payload.Code != app.CodeLeaseConflict {
+		t.Fatalf("code = %q, want %q", payload.Code, app.CodeLeaseConflict)
 	}
-	if payload.Metadata["claimed_by"] != first {
-		t.Errorf("metadata claimed_by = %q, want the session holding it, %q",
-			payload.Metadata["claimed_by"], first)
+	if payload.Metadata["holder"] != first {
+		t.Errorf("metadata holder = %q, want the session holding it, %q",
+			payload.Metadata["holder"], first)
+	}
+	if payload.Metadata["expires_at"] == "" || payload.Metadata["lease_id"] == "" {
+		t.Errorf("metadata = %v, want the lease and its expiry named", payload.Metadata)
 	}
 	if !strings.Contains(payload.Why, first) {
 		t.Errorf("why = %q does not name the session holding the task", payload.Why)

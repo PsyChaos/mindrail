@@ -93,11 +93,11 @@ name, and the refusal lists the moves that are available from where the task is.
 
 			return runCoordination(cmd, "task state", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					task, write, err := s.store.Transition(ctx, args[0], s.attribution(handle), to, reason)
+					move, write, err := s.store.Transition(ctx, args[0], s.attribution(handle), to, reason)
 					if err != nil {
 						return nil, nil, err
 					}
-					result := taskResult{Task: task, Session: write.Session, SessionMinted: write.Minted}
+					result := taskResult{Task: move.Task, Session: write.Session, SessionMinted: write.Minted}
 					return result, result.RenderHuman, nil
 				})
 		},

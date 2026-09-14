@@ -40,6 +40,10 @@ type Task struct {
 	ClaimedBy     string    `json:"claimed_by,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// Revision starts at 1 and rises by one on every update of the row
+	// (decision D-72). A caller that read the task at n and asks for a move
+	// expecting n is refused if the row has moved on.
+	Revision int64 `json:"revision"`
 }
 
 // Checkpoint is a note one session left on one task.
@@ -72,6 +76,11 @@ type Checkpoint struct {
 type Handover struct {
 	Task       Task        `json:"task"`
 	Checkpoint *Checkpoint `json:"checkpoint"`
+	// Lease is the task's newest tenure in whatever status it is at the
+	// reading — active, expired or released — or nil for a task never
+	// claimed. It is what lets `task show` print a claimant beside the truth
+	// about the claim (decision D-68).
+	Lease *Lease `json:"lease"`
 }
 
 // CheckpointRef is the narrow view of a checkpoint that `status` publishes:

@@ -120,11 +120,11 @@ func (f fixture) task(t *testing.T, sessionID, title string) coordination.Task {
 func (f fixture) move(t *testing.T, taskID, sessionID string, to coordination.State, reason string) coordination.Task {
 	t.Helper()
 
-	task, _, err := f.store.Transition(t.Context(), taskID, coordination.NamedSession(sessionID), to, reason)
+	move, _, err := f.store.Transition(t.Context(), taskID, coordination.NamedSession(sessionID), to, reason)
 	if err != nil {
 		t.Fatalf("Transition(%s -> %s) = %v, want no error", taskID, to, err)
 	}
-	return task
+	return move.Task
 }
 
 // pathTo is the shortest walk from OPEN to each state, written out rather than
@@ -179,11 +179,12 @@ func TestATaskAndItsCheckpointSurviveAReopenedDatabase(t *testing.T) {
 	writer := first.session(t)
 
 	task := first.taskIn(t, writer.ID, coordination.StateBlocked)
-	checkpoint, _, err := first.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(writer.ID), first.spaceID,
+	noted, _, err := first.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(writer.ID), first.spaceID,
 		"stopped waiting for the upstream fix", true)
 	if err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
 	}
+	checkpoint := noted.Checkpoint
 	if err := first.db.Close(); err != nil {
 		t.Fatalf("closing the database: %v", err)
 	}
@@ -232,7 +233,11 @@ func TestATaskAndItsCheckpointSurviveAReopenedDatabase(t *testing.T) {
 // The second session is a different id and it moves a task the first one
 // claimed. That is the handover working rather than a conflict: MR-003 records
 // who acted and refuses nobody on the grounds of identity, and MR-004 is where a
-// lease makes ownership enforceable once two agents can run at once.
+// lease makes ownership enforceable once two agents can run at once — which is
+// why the first session's handoff checkpoint matters here: it releases the
+// lease (decision D-78), and the second session's move then acquires it and
+// becomes the claimant (decision D-68, which amends D-58: a takeover is a
+// claim). Until MR-004 the claim was left with the first session.
 func TestASecondSessionContinuesTheFirstsTask(t *testing.T) {
 	f := newFixture(t)
 	first := f.session(t)
@@ -258,10 +263,10 @@ func TestASecondSessionContinuesTheFirstsTask(t *testing.T) {
 	if moved.State != coordination.StateReadyToComplete {
 		t.Errorf("state = %s, want %s", moved.State, coordination.StateReadyToComplete)
 	}
-	// The claim is not rewritten by a move that is not a claim: attribution of
-	// the claim belongs to the session that made it.
-	if moved.ClaimedBy != first.ID {
-		t.Errorf("claimed_by = %q, want the original claimant %q", moved.ClaimedBy, first.ID)
+	// The move over a released lease is a takeover, and a takeover is a claim
+	// (decision D-68): the claimant is now the session that holds the task.
+	if moved.ClaimedBy != second.ID {
+		t.Errorf("claimed_by = %q, want the second session %q, which took the task over", moved.ClaimedBy, second.ID)
 	}
 }
 
@@ -334,11 +339,12 @@ func TestEveryTransitionTheTableAllowsIsWritten(t *testing.T) {
 			accepted++
 
 			task := f.taskIn(t, session.ID, from)
-			moved, _, err := f.store.Transition(t.Context(), task.ID, coordination.NamedSession(session.ID), to, "because the route needs one")
+			move, _, err := f.store.Transition(t.Context(), task.ID, coordination.NamedSession(session.ID), to, "because the route needs one")
 			if err != nil {
 				t.Errorf("Transition(%s -> %s) = %v, want no error", from, to, err)
 				continue
 			}
+			moved := move.Task
 			if moved.State != to {
 				t.Errorf("Transition(%s -> %s) returned state %s", from, to, moved.State)
 			}
@@ -449,11 +455,11 @@ func TestATimestampTieDoesNotDecideTheLastCheckpoint(t *testing.T) {
 	notes := []string{"first", "second", "third", "fourth"}
 	written := make([]coordination.Checkpoint, 0, len(notes))
 	for _, note := range notes {
-		checkpoint, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, note, false)
+		noted, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, note, false)
 		if err != nil {
 			t.Fatalf("WriteCheckpoint(%q) = %v, want no error", note, err)
 		}
-		written = append(written, checkpoint)
+		written = append(written, noted.Checkpoint)
 	}
 
 	for i := 1; i < len(written); i++ {
@@ -731,10 +737,11 @@ func TestTimestampsAreStoredAsUTC(t *testing.T) {
 	f := openFixture(t, filepath.Join(t.TempDir(), "mindrail.db"), app.FixedClock{Instant: baseInstant})
 	session := f.session(t)
 	task := f.task(t, session.ID, "a task with a timestamp")
-	checkpoint, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, "a note", false)
+	noted, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, "a note", false)
 	if err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
 	}
+	checkpoint := noted.Checkpoint
 
 	want := app.FormatTime(baseInstant)
 	for query, id := range map[string]string{

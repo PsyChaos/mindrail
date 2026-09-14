@@ -102,6 +102,10 @@ var exitForCode = map[app.Code]int{
 	app.CodeLeaseConflict: app.ExitFailed,
 	app.CodeLeaseNotHeld:  app.ExitFailed,
 	app.CodeLeaseNotFound: app.ExitFailed,
+
+	// And the revision refusal (D-72): the task exists, the session exists,
+	// and the caller's reading of the task is what is stale.
+	app.CodeStateRevisionConflict: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

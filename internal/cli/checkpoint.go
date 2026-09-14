@@ -46,13 +46,13 @@ func newCheckpointWriteCommand(o Options) *cobra.Command {
 
 			return runCoordination(cmd, "checkpoint write", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					checkpoint, write, err := s.store.WriteCheckpoint(
+					noted, write, err := s.store.WriteCheckpoint(
 						ctx, args[0], s.attribution(handle), s.space.ID, note, handoff)
 					if err != nil {
 						return nil, nil, err
 					}
 					result := checkpointResult{
-						Checkpoint:    checkpoint,
+						Checkpoint:    noted.Checkpoint,
 						Session:       write.Session,
 						SessionMinted: write.Minted,
 					}

@@ -37,22 +37,22 @@ func TestAMintedSessionStartsNoLaterThanTheRowItAttributes(t *testing.T) {
 			opened.Session.StartedAt, task.CreatedAt)
 	}
 
-	checkpoint, noted, err := f.store.WriteCheckpoint(t.Context(), task.ID, mint, f.spaceID, "a note under a minted session", false)
+	written, noted, err := f.store.WriteCheckpoint(t.Context(), task.ID, mint, f.spaceID, "a note under a minted session", false)
 	if err != nil {
 		t.Fatalf("WriteCheckpoint = %v, want no error", err)
 	}
-	if noted.Session.StartedAt.After(checkpoint.CreatedAt) {
+	if noted.Session.StartedAt.After(written.Checkpoint.CreatedAt) {
 		t.Errorf("the session started at %s, after the checkpoint it wrote was created at %s",
-			noted.Session.StartedAt, checkpoint.CreatedAt)
+			noted.Session.StartedAt, written.Checkpoint.CreatedAt)
 	}
 
 	moved, mover, err := f.store.Transition(t.Context(), task.ID, mint, coordination.StateClaimed, "")
 	if err != nil {
 		t.Fatalf("Transition = %v, want no error", err)
 	}
-	if mover.Session.StartedAt.After(moved.UpdatedAt) {
+	if mover.Session.StartedAt.After(moved.Task.UpdatedAt) {
 		t.Errorf("the session started at %s, after the move it made was stamped at %s",
-			mover.Session.StartedAt, moved.UpdatedAt)
+			mover.Session.StartedAt, moved.Task.UpdatedAt)
 	}
 
 	// The same question put to the rows rather than to the returned values,

@@ -27,22 +27,28 @@ import (
 // transaction, under the write lock, so the judgment and the write are about
 // the same instant (decision D-65).
 //
-// A task target is not acquired here. A task lease is taken by moving the task
-// (decision D-66), and the one hook the lease has into the lifecycle is
-// Transition; this method refuses a task target so that a second entry point
-// cannot grow.
+// A task target is the claim without a move (decision D-66 as amended in
+// TASK-04): a task already in a working state — CLAIMED, IN_PROGRESS,
+// BLOCKED or READY_TO_COMPLETE — is taken where it stands, its claimant
+// becomes the holder and its revision rises, and its state does not change.
+// The handover the design describes needs it: an agent that handed off an
+// IN_PROGRESS task released the lease, and the next agent has no move that
+// keeps the task IN_PROGRESS to take it with. An OPEN task is refused — its
+// claim is the move to CLAIMED, and OPEN has no active lease by decision
+// D-68 — and so is a task in a terminal state. Both paths run acquireIn and
+// write claimed_by in the same transaction, which is what keeps D-68 true.
 func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attribution, target Target) (Acquisition, Write, error) {
-	if target.Kind != TargetFile {
+	if projectID == "" {
+		return Acquisition{}, Write{}, noProject("a lease")
+	}
+	if _, err := ParseTargetKind(string(target.Kind)); err != nil {
 		return Acquisition{}, Write{}, app.NewError(
 			app.CodeCommandLineInvalid,
 			app.KindUsage,
-			fmt.Sprintf("a %s lease is not acquired directly", target.Kind),
+			err.Error(),
 			"Nothing was read and nothing was written.",
-			"Move the task with `mindrail task state <task-id> --to <STATE>`; the move takes the lease.",
+			"Pass --file with a repository-relative path, or --task with a task id.",
 		).WithMetadata("target_kind", string(target.Kind)).WithMetadata("target_key", target.Key)
-	}
-	if projectID == "" {
-		return Acquisition{}, Write{}, noProject("a lease")
 	}
 
 	var (
@@ -58,6 +64,15 @@ func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attributi
 		}
 		write = resolved
 
+		if target.Kind == TargetTask {
+			acquired, err := s.claimWhereItStands(ctx, tx, projectID, resolved.Session.ID, target.Key, now)
+			if err != nil {
+				return err
+			}
+			result = acquired
+			return nil
+		}
+
 		acquired, err := s.acquireIn(ctx, tx, projectID, resolved.Session.ID, target, now)
 		if err != nil {
 			return err
@@ -70,6 +85,46 @@ func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attributi
 	}
 	write.Timing = stats
 	return result, write, nil
+}
+
+// claimWhereItStands takes a task's lease without moving the task, for a task
+// that is in a working state, and makes the holder the claimant. The task row
+// is updated — claimed_by, updated_at, and the revision, which rises on every
+// update of the row (decision D-72).
+func (s *Store) claimWhereItStands(ctx context.Context, tx *sql.Tx, projectID, holder, taskID string, now time.Time) (Acquisition, error) {
+	task, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE task_id = ? AND project_id = ?`, taskID, projectID))
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Acquisition{}, taskNotFound(taskID)
+	case err != nil:
+		return Acquisition{}, readFailed("the task", taskID, err)
+	}
+	if task.State == StateOpen || len(TransitionsFrom(task.State)) == 0 {
+		return Acquisition{}, taskNotClaimableWhereItStands(task)
+	}
+
+	acquired, err := s.acquireIn(ctx, tx, projectID, holder, TaskTarget(taskID), now)
+	if err != nil {
+		return Acquisition{}, err
+	}
+	if acquired.Renewed {
+		// The holder already held it; the row's attribution is already right.
+		return acquired, nil
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET claimed_by = ?, updated_at = ?, revision = revision + 1
+		 WHERE task_id = ? AND revision = ?`,
+		holder, app.FormatTime(now), taskID, task.Revision)
+	if err != nil {
+		return Acquisition{}, err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return Acquisition{}, err
+	} else if affected != 1 {
+		return Acquisition{}, fmt.Errorf("the task's revision moved under the write lock: %d rows updated at revision %d", affected, task.Revision)
+	}
+	return acquired, nil
 }
 
 // acquireIn is the acquisition itself, inside a transaction the caller owns.

@@ -592,17 +592,20 @@ func TestARenewalNeverShortensATenure(t *testing.T) {
 	}
 }
 
-// TestATaskTargetIsNotAcquiredDirectly is decision D-66's refusal arm: the
-// task lease has one hook into the lifecycle, and it is not this one.
-func TestATaskTargetIsNotAcquiredDirectly(t *testing.T) {
-	f, _ := leaseFixture(t)
-	me := f.session(t)
-	task := f.task(t, me.ID, "a task whose lease comes from moving it")
+// TestATaskIsTakenWhereItStandsOnlyInAWorkingState is decision D-66 as
+// amended in TASK-04: `lease acquire --task` is the claim without a move. An
+// OPEN task is refused — its claim is the move to CLAIMED — and so is a
+// finished one; a task in a working state is taken, its claimant becomes the
+// holder, its revision rises, and its state does not change.
+func TestATaskIsTakenWhereItStandsOnlyInAWorkingState(t *testing.T) {
+	f, clock := leaseFixture(t)
+	me, next := f.session(t), f.session(t)
 
-	_, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), coordination.TaskTarget(task.ID))
-	payload := requireCode(t, err, app.CodeCommandLineInvalid)
-	if !strings.Contains(strings.Join(payload.NextAction, " "), "task state") {
-		t.Errorf("remedy %v does not send the caller to `task state`", payload.NextAction)
+	open := f.task(t, me.ID, "an open task is claimed by moving it")
+	_, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), coordination.TaskTarget(open.ID))
+	payload := requireCode(t, err, app.CodeTaskStateInvalid)
+	if !strings.Contains(strings.Join(payload.NextAction, " "), "--to CLAIMED") {
+		t.Errorf("remedy %v does not send the caller to the claim", payload.NextAction)
 	}
 	var rows int
 	if err := f.db.QueryRowContext(t.Context(), `SELECT count(*) FROM leases`).Scan(&rows); err != nil {
@@ -611,6 +614,49 @@ func TestATaskTargetIsNotAcquiredDirectly(t *testing.T) {
 	if rows != 0 {
 		t.Errorf("a refused task acquisition wrote %d lease rows", rows)
 	}
+
+	done := f.taskIn(t, me.ID, coordination.StateCompleted)
+	_, _, err = f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), coordination.TaskTarget(done.ID))
+	requireCode(t, err, app.CodeTaskStateInvalid)
+
+	// The handover: the holder hands an IN_PROGRESS task off, and the next
+	// session takes it where it stands.
+	working := f.taskIn(t, me.ID, coordination.StateInProgress)
+	if _, _, err := f.store.WriteCheckpoint(t.Context(), working.ID, coordination.NamedSession(me.ID), f.spaceID, "leaving", true); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Minute)
+	taken, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), coordination.TaskTarget(working.ID))
+	if err != nil {
+		t.Fatalf("AcquireLease on a handed-off IN_PROGRESS task = %v, want the claim", err)
+	}
+	if taken.Lease.Holder != next.ID || taken.Superseded != nil || taken.Renewed {
+		t.Errorf("acquisition = %+v, want a fresh tenure for the next session", taken)
+	}
+	task, err := f.store.FindTask(t.Context(), working.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.State != coordination.StateInProgress || task.ClaimedBy != next.ID || task.Revision != working.Revision+1 {
+		t.Errorf("task = %s claimed_by %q revision %d; want IN_PROGRESS, the next session, revision %d", task.State, task.ClaimedBy, task.Revision, working.Revision+1)
+	}
+	if !task.UpdatedAt.Equal(clock.Now()) {
+		t.Errorf("updated_at = %v, want the claim's instant %v", task.UpdatedAt, clock.Now())
+	}
+
+	// Taking what you already hold renews and leaves the row's revision alone:
+	// nothing about the row changed.
+	again, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), coordination.TaskTarget(working.ID))
+	if err != nil || !again.Renewed || again.Lease.ID != taken.Lease.ID {
+		t.Fatalf("second acquisition by the holder = %+v, %v; want a renewal under the same id", again, err)
+	}
+	if after, _ := f.store.FindTask(t.Context(), working.ID); after.Revision != task.Revision {
+		t.Errorf("revision = %d after a renewal, want unchanged %d", after.Revision, task.Revision)
+	}
+
+	// And an active lease held by another is a conflict here as everywhere.
+	_, _, err = f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), coordination.TaskTarget(working.ID))
+	requireCode(t, err, app.CodeLeaseConflict)
 }
 
 // TestLeaseWritersMintAndRefuseSessionsLikeTheOthers keeps decision D-61 on

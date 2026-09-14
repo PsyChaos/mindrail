@@ -3,6 +3,7 @@ package coordination
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -297,4 +298,54 @@ func noProject(what string) error {
 		"Pass the id of a project registered in this repository's runtime database.",
 		"Run `mindrail init` in the worktree if it has never been registered.",
 	)
+}
+
+// ErrRevisionConflict means the task is not at the revision the caller
+// expected (decision D-72): the move was decided on a reading that is no
+// longer current, and applying it would be the silent last-write-wins spec
+// §11 forbids.
+var ErrRevisionConflict = errors.New("task revision conflict")
+
+// revisionConflict reports a stale expectation. It names the revision and the
+// state the task actually has, because the caller's next step is to re-read
+// and decide again, and the remedy hands it the command that re-reads.
+func revisionConflict(task Task, expected int64) error {
+	return app.NewError(
+		app.CodeStateRevisionConflict,
+		app.KindFailed,
+		fmt.Sprintf("task %s is at revision %d and %s, not at revision %d", task.ID, task.Revision, task.State, expected),
+		"The task was left exactly as it was; nothing was written. The move was decided on a reading of the task that is no longer current.",
+		"Run `mindrail task show "+task.ID+"`, then re-run the move with --expect-revision "+
+			strconv.FormatInt(task.Revision, 10)+" if it still applies.",
+	).
+		WithMetadata("task_id", task.ID).
+		WithMetadata("expected_revision", strconv.FormatInt(expected, 10)).
+		WithMetadata("current_revision", strconv.FormatInt(task.Revision, 10)).
+		WithMetadata("state", string(task.State)).
+		WithCause(ErrRevisionConflict)
+}
+
+// taskNotClaimableWhereItStands reports a `lease acquire --task` on a task
+// that is not in a working state: an OPEN task is claimed by moving it to
+// CLAIMED, and a finished one is not claimed at all (decision D-66 as
+// amended). It is TASK_STATE_INVALID, the code for a move the lifecycle does
+// not have, because that is what it is.
+func taskNotClaimableWhereItStands(task Task) error {
+	var remedy string
+	switch task.State {
+	case StateOpen:
+		remedy = "Run `mindrail task state " + task.ID + " --to CLAIMED`; the claim is the move, and the move takes the lease."
+	default:
+		remedy = fmt.Sprintf("Task %s is %s, which is final; open a new task instead.", task.ID, task.State)
+	}
+	return app.NewError(
+		app.CodeTaskStateInvalid,
+		app.KindFailed,
+		fmt.Sprintf("task %s is %s, and a task is taken where it stands only in a working state", task.ID, task.State),
+		"The task was left exactly as it was; nothing was written.",
+		remedy,
+	).
+		WithMetadata("task_id", task.ID).
+		WithMetadata("from_state", string(task.State)).
+		WithCause(ErrTransitionNotAvailable)
 }

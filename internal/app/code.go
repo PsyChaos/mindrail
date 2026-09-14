@@ -172,6 +172,14 @@ const (
 
 	// CodeLeaseNotFound marks a lease id no row carries.
 	CodeLeaseNotFound Code = "LEASE_NOT_FOUND"
+
+	// CodeStateRevisionConflict marks a task move decided on a reading of the
+	// task that is no longer current: the caller expected revision n and the
+	// row has moved on (spec §11, decision D-72). It is the refusal that
+	// replaces silent last-write-wins, and it is its own code because the
+	// caller's next action — re-read, decide again — differs from every other
+	// refusal's.
+	CodeStateRevisionConflict Code = "STATE_REVISION_CONFLICT"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -210,6 +218,7 @@ var allCodes = sortedCodes([]Code{
 	CodeLeaseConflict,
 	CodeLeaseNotHeld,
 	CodeLeaseNotFound,
+	CodeStateRevisionConflict,
 })
 
 var codeSet = indexCodes(allCodes)
