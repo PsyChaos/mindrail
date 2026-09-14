@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/identity"
@@ -161,7 +162,16 @@ type Write struct {
 
 // attribute resolves an Attribution inside the transaction that carries the
 // write, either by finding the named session or by minting one.
-func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution) (Write, error) {
+//
+// now is the instant the caller stamped on its own row, and a minted session
+// starts then rather than at a second reading of the clock. The mint used to
+// happen first, in the CLI, so the session always started before the row it
+// opened; moved into the transaction with a clock read of its own, it always
+// started after it, and both fields are on the wire of `task open --json`
+// (audit round 2, §4.12). Round 1 asked for the mint to be placed inside the
+// write's transaction, which is a requirement on where the INSERT runs and not
+// on when the session begins — a session minted for a write begins with it.
+func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution, now time.Time) (Write, error) {
 	if !by.mint {
 		session, err := requireSession(ctx, tx, by.handle)
 		if err != nil {
@@ -177,7 +187,7 @@ func (s *Store) attribute(ctx context.Context, tx *sql.Tx, by Attribution) (Writ
 	session := Session{
 		ID:          identity.NewID(sessionIDPrefix),
 		WorkspaceID: by.workspaceID,
-		StartedAt:   s.clock.Now().UTC(),
+		StartedAt:   now,
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES (?, ?, ?, ?)`,
@@ -226,7 +236,7 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 
 	var write Write
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		resolved, err := s.attribute(ctx, tx, by)
+		resolved, err := s.attribute(ctx, tx, by, now)
 		if err != nil {
 			return err
 		}
@@ -262,12 +272,17 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, to State, reason string) (Task, Write, error) {
 	reason = strings.TrimSpace(reason)
 
+	// One clock reading per write, taken before the transaction as the other
+	// two writers take theirs, so a session minted here starts at the instant
+	// the move is stamped with.
+	now := s.clock.Now().UTC()
+
 	var (
 		updated Task
 		write   Write
 	)
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		resolved, err := s.attribute(ctx, tx, by)
+		resolved, err := s.attribute(ctx, tx, by, now)
 		if err != nil {
 			return err
 		}
@@ -291,7 +306,7 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 
 		updated = current
 		updated.State = to
-		updated.UpdatedAt = s.clock.Now().UTC()
+		updated.UpdatedAt = now
 
 		// A block carries its reason; anything else clears it, so a reader never
 		// meets a reason belonging to a block that was lifted.
@@ -398,7 +413,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 
 	var write Write
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		resolved, err := s.attribute(ctx, tx, by)
+		resolved, err := s.attribute(ctx, tx, by, checkpoint.CreatedAt)
 		if err != nil {
 			return err
 		}
