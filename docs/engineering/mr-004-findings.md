@@ -951,14 +951,14 @@ tree otherwise still.
 | `internal/coordination/model.go`, `store.go` | `Summary.LeasesActive` (`leases_active`): `Summarize` counts the project's leases through `ListLeases`, which keeps a row only while its status at the store's clock is active — an expired tenure is not counted and not closed (D-79), a released one is not read. The count is taken before the newest-checkpoint query, so a project with no checkpoint yet still reports it |
 | `internal/status/report.go`, `render.go` | `CoordinationInfo.LeasesActive` (`coordination.leases_active`) copied from the summary; one human line, `Leases active:`, rendered through the coordination block's own observation, so where that block is `not_observed` the line says so instead of printing a zero it did not read |
 | Eight goldens, one line each | `internal/status/testdata/{init_blocked_human,init_ready_human,status_blocked_human,status_ready_human}.golden` gain `  Leases active:     0`, `init_ready_json.golden` gains `"leases_active": 0`; `internal/cli/testdata/status_human.golden` the same line, `status_json.golden` `data.coordination.leases_active`, `init_json.golden` `data.status.coordination.leases_active`. Regenerated with `-update`, and the diff read: eight insertions, no other line moved (AC-09.3) |
-| Tests | `TestSummarizeCountsTheLeasesHeldRightNow` (`internal/coordination`, AC-09.1 at the store): a fresh project counts 0; two files, a third file released, and a task claimed count 3; the clock moved past the first file's expiry and not the others' counts 2; the expired row is still open and the task still `CLAIMED` afterwards. `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves` (`internal/cli`, AC-09.1 and AC-09.2 through the binary): `status --json` reports 0, then 2 with two files held, then 1 after one row is back-dated by SQL — the binary runs on the system clock, as in `task show`'s expired arm; readiness is the same string across none, some and expired, six components in each; the leases table has two rows after the three reads; the human rendering carries `Leases active:     1` |
+| Tests | `TestSummarizeCountsTheLeasesHeldRightNow` (`internal/coordination`, AC-09.1 at the store): a fresh project counts 0; two files, a third file released, and a task claimed count 3; the clock moved past the first file's expiry and not the others' counts 2; the expired row is still open and the task still `CLAIMED` afterwards. `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves` (`internal/cli`, AC-09.1 and AC-09.2 through the binary): `status --json` reports 0, then 2 with two files held, then 1 after one row is back-dated by SQL — the binary runs on the system clock, as in `task show`'s expired arm (`TestTaskShowPrintsTheLeaseInEveryStatus`, TASK-06, back-dates the row the same way); readiness is the same string across none, some and expired, six components in each; the leases table has two rows after the three reads; the human rendering carries `Leases active:     1` |
 
 ### The mutations, and what each turned red
 
 | # | Mutation | Red |
 |---|---|---|
 | S1 | `ListLeases` keeps every unreleased row, expired or not | `TestSummarizeCountsTheLeasesHeldRightNow`: `Summarize = {… LeasesActive:3}, <nil>; want two after the first lease expired` |
-| S2 | the report copies 0 instead of the summary's count | `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves`: `leases_active = 0 with two files held, want 2`, `leases_active = 0 with one lease expired, want 1`, and the human line, since it renders the report |
+| S2 | the report copies 0 instead of the summary's count | `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves`: `leases_active = 0 with two files held, want 2`, `leases_active = 0 with one lease expired, want 1`, and `the human rendering does not carry the count:`, since the line renders the report *(the first version of this cell described the third line instead of quoting it; the Reader)* |
 | S3 | the `Leases active` line dropped from the rendering | the same test: `the human rendering does not carry the count`; and in `internal/status`, `TestStatusRenderHumanGolden` and `TestInitReportGolden`: `output does not match testdata/status_ready_human.golden`, `…status_blocked_human…`, `…init_ready_human…`, `…init_blocked_human…` |
 
 ### Where this task departed from the freeze, and why
@@ -970,3 +970,78 @@ tree otherwise still.
   coordination block, beside the task counts, and carries that block's
   observation; a component would have needed a readiness rule, and D-62 says
   leases have none.
+
+### The gate
+
+Two agents over `e73d4ff` and this record at `5aa8838`, with nothing else
+changing in the tree while they ran — TASK-08's tests were drafted and run in
+a worktree of their own meanwhile: a Reader (Sonnet) over the record, a
+Breaker (Fable) with the built binary over scratch repositories, and the
+previous binary built from `0e13fe1` beside it for A/B. Fix: the commit
+after this one; `make check` (19 `ok`) and `make tidy-check` green after it;
+**866** top-level test functions, from 865.
+
+**The Reader** checked 18 claims: 16 confirmed, **1 refuted**, 1 unconfirmed.
+The refuted one is in the freeze, not in this record: AC-09.3 says the golden
+diff is "the new key, its human line, and `runtime.schema_version` 2 → 3",
+and the third item is not in `e73d4ff` — it landed with TASK-02's goldens
+(`aa8d1a2`, where `TableSchemaVersion` moved; the Reader's report names
+TASK-06 for it, and `git log` says TASK-02). AC-09.3 and design §11 now say
+so, marked *Amended*. Two LOWs: S2's third red line was described rather
+than quoted (corrected above, marked), and the "as in `task show`'s expired
+arm" comparison was not checked against the source (it is
+`TestTaskShowPrintsTheLeaseInEveryStatus`, named above now). Its contract
+verdict: AC-09.1 met, AC-09.2 met and asserted rather than assumed, AC-09.3
+met with the caveat recorded; REQ-09 met.
+
+**The Breaker** produced two findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | One unreleased lease row whose timestamp does not decode — `expires_at`, `renewed_at` or `acquired_at`, active or expired; released rows are not read — turns the whole coordination block of `status` to `indeterminate`, task counts included: `tasks_open=0 leases_active=0 observation=indeterminate readiness=READY` against the previous binary's `tasks_open=1 … observation=observed` on the same store. Readiness, exit code and the six components do not move, and the block is marked | `e73d4ff` wired the lease read into `Summarize`; the strict `scanLease` predates (`8c7107a`) | Recorded as the store's rule for damage — refused, not skipped — reaching one more reader, with the block's observation as the honest signal; design §11 says so, *Amended*. `TestADamagedLeaseRowLeavesStatusHonest` pins it: `indeterminate`, readiness and components unchanged, no parse text on the wire, `Leases active:     0 (indeterminate)` for a person; G71. A per-field observation would be a shape change the freeze does not allow, and naming the row is the `doctor` damaged-row check the backlog carries |
+| LOW | The damaged row is named nowhere a `status` or `doctor` user looks: `status --verbose` logs one DEBUG line with the generic code, `doctor` has no coordination check and says everything is OK, and only `lease list --json` names the row and the value | predates (`a399c6c`, `ce0c708`) | Backlog, folded into the `doctor` damaged-row check carried since TASK-02's gate |
+
+A note the Breaker made and did not grade: the expiry boundary is half-open
+— at the instant of `expires_at` the lease is already expired (`!now.Before`,
+`8c7107a`); with the expiry set 1.2 s ahead the count read 1 at once and 0
+two seconds later.
+
+Attacked and not broken, in one line each. A fresh repository: `0`, an
+integer, in `status --json`, in `init --json` under `data.status`, and the
+human line at column 21. Three files and a claim: 4; one released: 3; a file
+and the task back-dated to 2020: 1 — and the SHA-256 of the four tables'
+dump before four `status`, two `doctor` and one `init` equals the one after,
+`PRAGMA data_version` 2 → 2, the expired rows' `released_at` still NULL
+(D-79). Expiry eight seconds ahead counts, five seconds behind does not, an
+offset (`+03:00`) and nanoseconds decode; `''`, `not-a-time`, a space
+instead of `T` and a missing zone are `indeterminate` with exit 0 and no
+parser text; NULL is refused by the schema. Between none, one active, one
+expired and fifty active leases the JSON differs in `leases_active` and
+`duration_ms` only, `readiness` READY in all four, the six components
+identical. A project with no checkpoint reports the count and
+`last_checkpoint: null`. A database rolled back to schema 2: DEGRADED,
+`MIGRATION_FAILED` on `runtime_db`, the block `indeterminate`, no raw SQL
+error anywhere, and `init` brings the count back. Under a held
+`BEGIN IMMEDIATE` (WAL) `status` answers in 20 ms; under an EXCLUSIVE
+locking-mode holder it is the D-08 busy window at 5 s, predating. Two
+hundred leases acquired without a failure count 200 in 22 ms. A second
+linked worktree before `init` is BLOCKED with `not_observed`; after it the
+same project id, and its lease makes 201 in both worktrees — the count is per
+project. Sixteen `lease acquire` racing sixteen `status --json`: 32 exits 0,
+sixteen single JSON objects, counts climbing to 16. A/B against the previous
+binary on a healthy store: the one new key in `status --json` and
+`init --json`, one new line for a person, nothing else.
+
+Not demonstrated: `expires_at` equal to the instant of comparison (a process
+start is longer than a nanosecond); NULL `expires_at` (unreachable under
+STRICT); `lease acquire --json`'s single-object property under a write lock
+(its capture merged stderr; outside this task).
+
+| # | Mutation (gate fix) | Red |
+|---|---|---|
+| G71 | `Summarize` ignores a failed lease read | `TestADamagedLeaseRowLeavesStatusHonest`: `observation = "observed" over a lease row that does not decode, want indeterminate` and `the human rendering does not mark the count as indeterminate:` |
+
+**Carried forward from this gate:** the `doctor` damaged-row check, now
+with the lease timestamps among what it would name (backlog); a per-field
+observation for the coordination block, if a later milestone changes the
+shape (backlog).
