@@ -317,21 +317,41 @@ func TestTheReadCommandsMintNoSession(t *testing.T) {
 // The assertion has to be the row count. Two of these paths emit a
 // byte-identical envelope whether the session was minted or not, so a test that
 // read the payload would pass over the defect in either direction.
+//
+// The two blank-value cases also pin the envelope beyond the code. OpenTask and
+// WriteCheckpoint each carry their own blank-value refusal with the identical
+// code and why as the boundary's requireFlagText, so a missing
+// requireFlagText call at the command line falls through to the store's guard
+// and still reports CommandLineInvalid — only metadata.flag, the impact
+// sentence and the second next_action disagree, and that deletion was
+// invisible to all 19 packages until they were checked (audit round 2, §8 item
+// 7).
 func TestARefusedWriteMintsNoSession(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args func(task string) []string
 		code app.Code
+
+		// wantFlag is metadata.flag, and wantHelp is the command whose `--help`
+		// requireFlagText's second next_action names. Both are empty for the
+		// two cases that never reach requireFlagText, which skips the envelope
+		// checks below for them.
+		wantFlag string
+		wantHelp string
 	}{
 		{
-			name: "task open with no title",
-			args: func(string) []string { return []string{"task", "open"} },
-			code: app.CodeCommandLineInvalid,
+			name:     "task open with no title",
+			args:     func(string) []string { return []string{"task", "open"} },
+			code:     app.CodeCommandLineInvalid,
+			wantFlag: "title",
+			wantHelp: "mindrail task open --help",
 		},
 		{
-			name: "checkpoint write with no note",
-			args: func(task string) []string { return []string{"checkpoint", "write", task} },
-			code: app.CodeCommandLineInvalid,
+			name:     "checkpoint write with no note",
+			args:     func(task string) []string { return []string{"checkpoint", "write", task} },
+			code:     app.CodeCommandLineInvalid,
+			wantFlag: "note",
+			wantHelp: "mindrail checkpoint write --help",
 		},
 		{
 			name: "checkpoint write against a task that does not exist",
@@ -363,6 +383,27 @@ func TestARefusedWriteMintsNoSession(t *testing.T) {
 			if after := sessionCount(t, repo); after != before {
 				t.Errorf("a refusal that reports %q minted %d session(s); its impact says %q",
 					payload.Code, after-before, payload.Impact)
+			}
+
+			if tc.wantFlag == "" {
+				return
+			}
+			const wantImpact = "Mindrail did not run: nothing was read and nothing was written."
+			if payload.Impact != wantImpact {
+				t.Errorf("impact = %q, want %q", payload.Impact, wantImpact)
+			}
+			if got := payload.Metadata["flag"]; got != tc.wantFlag {
+				t.Errorf("metadata.flag = %q, want %q", got, tc.wantFlag)
+			}
+			hasHelp := false
+			for _, action := range payload.NextAction {
+				if strings.Contains(action, tc.wantHelp) {
+					hasHelp = true
+					break
+				}
+			}
+			if !hasHelp {
+				t.Errorf("next_action = %v, want an entry naming `%s`", payload.NextAction, tc.wantHelp)
 			}
 		})
 	}

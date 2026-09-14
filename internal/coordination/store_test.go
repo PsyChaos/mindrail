@@ -597,6 +597,54 @@ func TestAnUnknownTaskIsRefusedByNameRatherThanByAConstraint(t *testing.T) {
 	}
 }
 
+// TestANeverGivenWorkspaceIsRefusedByNameRatherThanByAConstraint is round 1's
+// F26 fix, finished. noWorkspace has two call sites — OpenSession's own, and
+// the one item 5 added inside attribute for a session minted for a write — and
+// audit round 2 found neither reached by a test (§4.8, §8 item 7): deleting
+// either guard left every package green, and a mint against a workspace that
+// was never given fell through to the foreign key instead, wrapped as
+// COORDINATION_WRITE_FAILED — the exact miswrite F26 asked this package not to
+// make.
+func TestANeverGivenWorkspaceIsRefusedByNameRatherThanByAConstraint(t *testing.T) {
+	for name, tc := range map[string]struct {
+		call func(t *testing.T, f fixture) error
+		why  string
+	}{
+		"OpenSession": {
+			call: func(t *testing.T, f fixture) error {
+				_, err := f.store.OpenSession(t.Context(), "", "")
+				return err
+			},
+			why: "a session needs a worktree to belong to, and none was given",
+		},
+		"OpenTask minting a session for the write": {
+			call: func(t *testing.T, f fixture) error {
+				_, _, err := f.store.OpenTask(t.Context(), f.projectID, coordination.MintFor(""), "a title")
+				return err
+			},
+			why: "a session minted for a write needs a worktree to belong to, and none was given",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			err := tc.call(t, f)
+
+			payload, ok := app.PayloadOf(err)
+			if !ok {
+				t.Fatalf("%s with no workspace = %v, which carries no domain payload", name, err)
+			}
+			if payload.Code != app.CodeCoordinationUnavailable {
+				t.Errorf("%s with no workspace reported %q, want %q: a foreign key failure wrapped as %q "+
+					"is the miswrite this guard exists to prevent",
+					name, payload.Code, app.CodeCoordinationUnavailable, app.CodeCoordinationWriteFailed)
+			}
+			if payload.Why != tc.why {
+				t.Errorf("%s with no workspace said %q, want %q", name, payload.Why, tc.why)
+			}
+		})
+	}
+}
+
 // TestSummarizeCountsTheActionableStatesAndNamesTheNewestNote is what `status`
 // publishes, and both arms of what it leaves out.
 func TestSummarizeCountsTheActionableStatesAndNamesTheNewestNote(t *testing.T) {
