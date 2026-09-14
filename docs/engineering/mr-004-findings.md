@@ -178,3 +178,91 @@ attempt to provoke it on this driver returned nil. Predates.
 **Carried forward from this gate:** `session open` through `InTx` (TASK-03);
 `init`'s second open budget under a lock (backlog); `SQLITE_LOCKED` in
 `isBusyError` (backlog).
+
+---
+
+## 2. TASK-02 — migration 000003, and a ledger that can read `ADD COLUMN`
+
+Commit `aa8d1a2`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
+green; **822** top-level test functions, from 817. Owns REQ-02.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `migrations/000003_lease_idempotency.sql` (new) | Design §5 as written: `leases` and `operations`, both `STRICT`; `idx_leases_active` — unique on `(project_id, target_kind, target_key) WHERE released_at IS NULL`; `idx_leases_holder`; `ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`. Its comments carry the decisions the columns rest on (D-64, D-65, D-71, D-72, D-73). `000001` and `000002` are untouched |
+| `migrations/shipped_test.go` | The third file's sha256 joins the pin, with the note that until MR-004 ships a change to that row is a change to a file no repository has applied, and is recorded here when it happens |
+| `internal/migration/columns.go` | `alterTablePattern` reads the added column's name when the form is `ADD [COLUMN]`; `alterations` sorts every `ALTER TABLE` into `added` (table → columns, lower-cased like the `CREATE` names) and `forgotten` (every other form). `alteredTables` is gone |
+| `internal/migration/load.go` | `Migration.Added`; `Altered` now means "altered in a form the checker cannot follow" |
+| `internal/migration/migrator.go` | `declaredColumns` extends a tracked table by its added columns before it forgets the tables other forms touched; a table an earlier form made it forget, or one with no `CREATE` to extend, gets nothing invented |
+| `internal/coordination/store.go` | `TableSchemaVersion` is 3, so `coordinationScope`'s gate refuses a ledger at 2 the way it refused a ledger at 1 (AC-02.5) |
+| `internal/cli/testdata/*.golden` | Four lines, exactly the ones D-73 named: `Schema version: 2 → 3` in `status_human`, and `version 2 → 3`, `applied: 2 → 3`, `current_version: 2 → 3` in `doctor_human`. `write_schema_version` and `readable_schema_versions` stay at 1 on the lines beside them |
+| `internal/cli/upgrade_test.go` | `TestCoordinationCommandsSendASchemaBehindDatabaseToInit` runs its two commands against two downgrades — to schema 1 (the MR-002 binary's database) and to schema 2 (the MR-003 binary's: every table present, no leases, no operations, no `revision`) — and asserts `MIGRATION_FAILED`, the `mindrail init` remedy, no raw `no such table` or `no such column` in `why`, and that `init` then clears it. `downgradeToSchemaOne` is now built on `downgradeToSchemaTwo` |
+| `internal/cli/agreement_hostilefs_linux_test.go` | The ready-band sweep's wide end moves from 256 KiB to 512, with the reason measured (below); the sweep gains the points 224, 240, 272, 288 around the two edges |
+| Tests | `internal/migration`: `TestStatusExpectsAColumnAMigrationAdded` and `TestStatusStillForgetsATableAnotherAlterTouched` (both arms of D-73, both spellings of `ADD COLUMN`), `TestATaskWrittenBeforeTheRevisionColumnStartsAtOne` (AC-02.3 on a row written at schema 2), `TestLoadReadsTheColumnsOfTheEmbeddedSchema` pins the two new tables' columns and that the embedded set's only `ALTER` is read as `{tasks: [revision]}` and forgets nothing, `tablesPerMilestone` gains version 3. `internal/coordination/lease_schema_test.go`: `TestTheDatabaseRefusesASecondActiveLeaseOnOneTarget` (AC-02.1 by direct `INSERT`, the released row not counting, the same path in a second project allowed) and `TestMigrationThreeLeavesTheObjectsTheDesignNames` (the four objects in `sqlite_master`, both tables `STRICT`, `revision` in `pragma_table_xinfo`, a task opened through the store at revision 1) |
+
+The existing `TestADatabaseAtTheOlderSchemaTakesOnlyTheNewMigration` is written
+over the embedded set's newest migration, so it now proves AC-02.3's first
+sentence — a database at schema 2 applies exactly migration 3 and reports 3 —
+without being edited.
+
+### A number the freeze did not have
+
+The hostile-filesystem test's wide end — "at a quarter-megabyte free everything
+has to work", MR-001's over-fire guard — went red: with three migrations
+`init` exited 4 (`RUNTIME_PATH_UNWRITABLE`) at 256 KiB free. Sweeping in
+16 KiB steps on the test's own tmpfs, with the migration file temporarily
+removed and then restored: with two migrations `init` fits at 240 KiB and not
+at 224; with three it fits at 288 and not at 272. The third migration costs
+about 48 KiB of headroom — two tables, two indexes and a schema rewrite, each a
+page in the database file and a frame in the log that is checkpointed after
+them. The wide end is now 512 KiB and the test's comment carries both edges,
+so the next migration's author starts with the number rather than with a red
+test. This is a consequence of D-73 the freeze did not name; it names no user
+condition, since a repository with under 300 KiB of free space was already
+inside the band where `init`'s answer and `status`'s answer are what the test
+holds together.
+
+### The mutations, and what each turned red
+
+Run as in §1: `sed` on the committed code under a 1 GB memory scope and a
+timeout, file restored and `cmp`'d. The migration-file mutations also turn the
+shipped-file pin red, as they should; that line is given once.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `alterations` never reads the column (`&& false` on the `ADD` branch) — every `ALTER` forgets, as before this task | `TestLoadReadsTheColumnsOfTheEmbeddedSchema`: `Added = map[], want exactly {tasks: [revision]}` and `migration 3 forgets [tasks]`; `TestStatusExpectsAColumnAMigrationAdded`: `Added[thing] = [], want [revision note]` |
+| M2 | `declaredColumns` never applies `Added` | `TestStatusExpectsAColumnAMigrationAdded`: `Status = <nil>, want ErrSchemaShapeChanged: the added column is gone and the checker must say so` |
+| M3 | `TableSchemaVersion` back to 2 | `TestCoordinationCommandsSendASchemaBehindDatabaseToInit`: `task list at schema 2 exited 0 on a schema-behind database, want 1` — the store does not read `revision` yet, so without the gate a schema-2 database answers as if it were current |
+| M4 | the index loses its `WHERE released_at IS NULL` | `TestTheDatabaseRefusesASecondActiveLeaseOnOneTarget`: `active lease after the first was released = … UNIQUE constraint failed: leases.project_id, leases.target_kind, leases.target_key (2067), want no error` |
+| M5 | `DEFAULT 1` → `DEFAULT 0` | `TestATaskWrittenBeforeTheRevisionColumnStartsAtOne`: `revision of a task written before the column = 0, want 1`; `TestMigrationThreeLeavesTheObjectsTheDesignNames`: `a newly opened task is at revision 0, want 1`; and the pin: `000003_lease_idempotency.sql has been edited after it was applied: sha256 9f2886…` |
+| M6 | the pattern requires the `COLUMN` keyword | `TestStatusExpectsAColumnAMigrationAdded`: `Added[thing] = [revision], want [revision note]: both spellings of ADD COLUMN are read` |
+
+### Where this task departed from the freeze, and why
+
+- **The shipped-file pin covers 000003 from today, not from the release.** The
+  pin's own comment said a row is gained "when it ships"; pinning now means an
+  edit to the file during the remaining tasks turns a test red and has to be
+  recorded here, which is the discipline the pin exists for. The comment says
+  so.
+- **AC-02.4's "dropping any of the three is reported as damaged" is proved on
+  a fixture table, not on `tasks`.** Dropping `revision` from the real `tasks`
+  under `foreign_keys = 1` needs the same rebuild the migration avoided;
+  `TestStatusExpectsAColumnAMigrationAdded` rebuilds a fixture table without
+  its added column and gets `ErrSchemaShapeChanged`, and
+  `TestLoadReadsTheColumnsOfTheEmbeddedSchema` pins that the real set's
+  `ADD COLUMN` is read as `revision` on `tasks`. The two tables' absence is
+  covered by the existing object check the upgrade test runs (`Status` after
+  the upgrade).
+- **The RENAME arm uses `RENAME COLUMN`, not `RENAME TO`.** AC-02.4 said "an
+  `ALTER TABLE … RENAME` in a fixture still forgets the table"; a `RENAME TO`
+  is already a schema *effect* (the old name is removed, the new has no
+  `CREATE`), so it never reached the column ledger. `RENAME COLUMN` is the
+  form that does, and the fixture pairs it with an `ADD COLUMN` in the same
+  file to show the forgetting wins.
+- **One test outside REQ-02's files was edited:** the hostile-filesystem
+  sweep, for the reason measured above.
+
+### The gate
+
+*Filled after the Reader/Breaker pair has run.*
