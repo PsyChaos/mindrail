@@ -381,6 +381,11 @@ func reachableFrom(t *testing.T, packages map[string]firstPartyPackage, start st
 // --- helpers ----------------------------------------------------------------
 
 // moduleInfo returns the module path and the directory its go.mod lives in.
+//
+// The directory comes from moduletree.Root rather than from a walk of this
+// test's own, so that this walker answers for the same real directory the
+// other three do — a checkout entered through a symlink used to leave this one
+// holding the link, which filepath.WalkDir does not descend.
 func moduleInfo(t *testing.T) (module, root string) {
 	t.Helper()
 
@@ -388,23 +393,23 @@ func moduleInfo(t *testing.T) (module, root string) {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	for {
-		candidate := filepath.Join(dir, "go.mod")
-		if data, readErr := os.ReadFile(candidate); readErr == nil {
-			for line := range strings.SplitSeq(string(data), "\n") {
-				if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
-					return strings.TrimSpace(rest), dir
-				}
-			}
-			t.Fatalf("%s has no module directive", candidate)
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test working directory")
-		}
-		dir = parent
+	root, err = moduletree.Root(dir)
+	if err != nil {
+		t.Fatalf("finding the module root above %s: %v", dir, err)
 	}
+
+	candidate := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(candidate)
+	if err != nil {
+		t.Fatalf("reading %s: %v", candidate, err)
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return strings.TrimSpace(rest), root
+		}
+	}
+	t.Fatalf("%s has no module directive", candidate)
+	return "", ""
 }
 
 func goSources(t *testing.T, dir string, includeTests bool) []string {

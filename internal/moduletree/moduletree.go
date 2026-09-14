@@ -37,6 +37,15 @@ func Root(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The real directory, not a link to it. filepath.WalkDir does not follow
+	// a symlink it is handed as the root — it reports the link as one entry
+	// and descends nothing — so a checkout reached through one would leave
+	// every walker inspecting zero files, and the vacuity guards firing on a
+	// healthy tree (verification pass after the round-2 remediation).
+	absolute, err = filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", err
+	}
 	for {
 		if _, statErr := os.Stat(filepath.Join(absolute, "go.mod")); statErr == nil {
 			return absolute, nil
