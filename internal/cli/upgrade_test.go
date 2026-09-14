@@ -136,7 +136,10 @@ func TestCoordinationCommandsSendASchemaBehindDatabaseToInit(t *testing.T) {
 		{"schema 2", "2", downgradeToSchemaTwo},
 	}
 	for _, downgrade := range downgrades {
-		for _, args := range [][]string{{"task", "list"}, {"session", "open"}} {
+		// The commands that succeed on a fresh repository, so the retry after
+		// `init` can be asserted to: the two MR-003 rows and, since MR-004's
+		// TASK-06 gate, the two lease commands that need no id.
+		for _, args := range [][]string{{"task", "list"}, {"session", "open"}, {"lease", "list"}, {"lease", "acquire", "--file", "src/behind.go"}} {
 			name := commandName(args) + " at " + downgrade.name
 			repo := newInitializedRepo(t)
 			downgrade.to(t, repo)

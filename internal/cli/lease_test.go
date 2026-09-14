@@ -155,6 +155,19 @@ func TestEveryWriterTakesAnOperationIDAndJudgesItFirst(t *testing.T) {
 	if !strings.Contains(human.stdout, "recorded result of operation op:open-1") {
 		t.Errorf("the human rendering of a replay does not say so:\n%s", human.stdout)
 	}
+
+	// A replayed write whose first delivery minted a session must not say the
+	// session "was opened for this run" beside "nothing was written again"
+	// (TASK-06's Breaker): it says which delivery opened it.
+	run(t, repo, "task", "open", "--title", "minted once", "--operation-id", "op:mint-1", "--json").requireExit(t, app.ExitSuccess)
+	replayed := run(t, repo, "task", "open", "--title", "minted once", "--operation-id", "op:mint-1", "--no-color")
+	replayed.requireExit(t, app.ExitSuccess)
+	if strings.Contains(replayed.stdout, "was opened for this run") || !strings.Contains(replayed.stdout, "Its first delivery opened session SES-") {
+		t.Errorf("a replayed, minted write contradicts itself or says nothing about the session:\n%s", replayed.stdout)
+	}
+	if n := rowCount(t, repo, "sessions"); n != 2 {
+		t.Errorf("sessions = %d, want 2: the replay minted nothing", n)
+	}
 }
 
 // TestExpectRevisionIsJudgedBeforeStartingAndThenByTheStore is AC-08.2's

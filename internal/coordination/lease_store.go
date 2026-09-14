@@ -272,7 +272,7 @@ func (s *Store) holderWrite(ctx context.Context, leaseID string, by Attribution,
 		}
 		switch lease.Status {
 		case LeaseExpired, LeaseReleased:
-			return leaseNotHeld(lease, verb)
+			return leaseNotHeld(lease, verb, resolved.Session.ID)
 		}
 		if lease.Holder != resolved.Session.ID {
 			return leaseConflict(lease)

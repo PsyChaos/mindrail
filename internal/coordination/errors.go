@@ -220,7 +220,7 @@ func leaseConflict(lease Lease) error {
 		fmt.Sprintf("%s is held by session %s until %s", lease.Target(), lease.Holder, app.FormatTime(lease.ExpiresAt)),
 		"Nothing was written; the lease stays with its holder.",
 		fmt.Sprintf("Wait until %s, when the lease expires, then try again.", app.FormatTime(lease.ExpiresAt)),
-		"Or ask the holder to release it: `mindrail lease release "+lease.ID+"`.",
+		"Or ask the holder to release it: `mindrail lease release "+lease.ID+" --session "+lease.Holder+"`.",
 	).
 		WithMetadata("lease_id", lease.ID).
 		WithMetadata("holder", lease.Holder).
@@ -232,8 +232,11 @@ func leaseConflict(lease Lease) error {
 
 // leaseNotHeld reports a renew or a release of a lease that has already
 // ended. The remedy depends on the kind, because a file is taken again with
-// `lease acquire` and a task by moving it (decision D-66).
-func leaseNotHeld(lease Lease, verb string) error {
+// `lease acquire` and a task by moving it (decision D-66), and it names the
+// session the refused command ran under: run without one, the remedy minted
+// a session that then held the file against the caller for twenty minutes
+// (TASK-06's Breaker).
+func leaseNotHeld(lease Lease, verb, caller string) error {
 	var why string
 	switch lease.Status {
 	case LeaseReleased:
@@ -251,9 +254,9 @@ func leaseNotHeld(lease Lease, verb string) error {
 	var remedy string
 	switch lease.TargetKind {
 	case TargetTask:
-		remedy = "Move the task with `mindrail task state " + lease.TargetKey + " --to <STATE>`; the move takes the lease again."
+		remedy = "Move the task with `mindrail task state " + lease.TargetKey + " --to <STATE> --session " + caller + "`; the move takes the lease again."
 	case TargetFile:
-		remedy = "Run `mindrail lease acquire --file=" + ShellArgument(lease.TargetKey) + "` to take it again."
+		remedy = "Run `mindrail lease acquire --file=" + ShellArgument(lease.TargetKey) + " --session " + caller + "` to take it again."
 	default:
 		// A kind this binary does not acquire — a row planted by hand, or one
 		// a later binary wrote — gets the sentence that is true of every kind

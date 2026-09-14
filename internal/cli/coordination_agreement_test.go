@@ -318,7 +318,8 @@ type coordinationRefusal struct {
 // TestTheFourCoordinationRefusalsAgreeAcrossBothRenderings is acceptance
 // criterion AC-09.1, which was written and never implemented (finding F13) —
 // and, since MR-004, its AC-08.7: the six codes that milestone added are
-// rows of the same matrix, each with its remedy carried out.
+// rows of the same matrix, each with its remedy carried out. The name keeps
+// MR-003's "four" because MR-003's records cite it; the matrix is ten rows.
 //
 // The criterion asks for the human rendering, the JSON envelope and the exit
 // code to be asserted together for each of four conditions. Every coordination

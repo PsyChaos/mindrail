@@ -276,18 +276,25 @@ type attributed struct {
 // renderAttribution prints what a person has to notice after a write: that a
 // session was minted for them, and that a replay wrote nothing.
 func (a attributed) renderAttribution(w io.Writer) error {
-	if a.Replayed {
-		if _, err := fmt.Fprintf(w,
-			"\nThis is the recorded result of operation %s; nothing was written again.\n", a.OperationID); err != nil {
-			return err
-		}
-	}
-	if a.SessionMinted {
-		if _, err := fmt.Fprintf(w,
+	switch {
+	case a.Replayed && a.SessionMinted:
+		// The two sentences must not contradict: nothing was written again,
+		// and the session was opened by the first delivery, not this run
+		// (TASK-06's Breaker).
+		_, err := fmt.Fprintf(w,
+			"\nThis is the recorded result of operation %s; nothing was written again.\n"+
+				"Its first delivery opened session %s; pass --session %s to keep later commands in it.\n",
+			a.OperationID, a.Session.ID, a.Session.ID)
+		return err
+	case a.Replayed:
+		_, err := fmt.Fprintf(w,
+			"\nThis is the recorded result of operation %s; nothing was written again.\n", a.OperationID)
+		return err
+	case a.SessionMinted:
+		_, err := fmt.Fprintf(w,
 			"\nNo --session was given, so session %s was opened for this run.\nPass --session %s to keep later commands in it.\n",
-			a.Session.ID, a.Session.ID); err != nil {
-			return err
-		}
+			a.Session.ID, a.Session.ID)
+		return err
 	}
 	return nil
 }

@@ -555,8 +555,23 @@ func TestARemedyNamingAKeyIsACommandLineThatRuns(t *testing.T) {
 	clock.Advance(coordination.LeaseTTL)
 	_, _, notHeld := f.store.RenewLease(t.Context(), held.Lease.ID, coordination.NamedSession(me.ID))
 	payload := requireCode(t, notHeld, app.CodeLeaseNotHeld)
-	if !strings.Contains(strings.Join(payload.NextAction, " "), "--file='with space/file.go'") {
-		t.Errorf("remedy %v does not quote the key as one argument", payload.NextAction)
+	if !strings.Contains(strings.Join(payload.NextAction, " "), "--file='with space/file.go' --session "+me.ID) {
+		t.Errorf("remedy %v does not quote the key as one argument and name the caller's session", payload.NextAction)
+	}
+
+	// Run without a session, the remedy would mint one that then held the
+	// file against the caller (TASK-06's Breaker); it names the caller. The
+	// conflict remedy names the holder, who is the one who can release.
+	other := f.session(t)
+	_, _, conflict := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(other.ID), mustFile(t, "src/theirs.go"))
+	if conflict != nil {
+		t.Fatal(conflict)
+	}
+	_, _, refused := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), mustFile(t, "src/theirs.go"))
+	conflictPayload := requireCode(t, refused, app.CodeLeaseConflict)
+	if !strings.Contains(strings.Join(conflictPayload.NextAction, " "), "lease release LSE-") ||
+		!strings.Contains(strings.Join(conflictPayload.NextAction, " "), "--session "+other.ID) {
+		t.Errorf("the conflict remedy %v does not name the holder's session, which is the one that can release", conflictPayload.NextAction)
 	}
 }
 
