@@ -353,3 +353,60 @@ planted value gets everywhere in this package.
 the CREATE side; the hand-added-column `init` loop and the data-losing
 rebuild remedy (backlog, both predate in class); index verification in
 `doctor` (unowned).
+
+---
+
+## 3. TASK-03 — the lease: one row per tenure, and the three verbs over a file
+
+Commit `8c7107a`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
+green; **835** top-level test functions, from 825. Owns REQ-03, REQ-04 and
+the three lease codes of REQ-07, plus the finding TASK-01's gate carried here.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/lease.go` (new) | `LeaseTTL` (20 min, D-69); `TargetKind` with `task` and `file` and `ParseTargetKind`; `Target`, `TaskTarget`, `FileTarget` — D-77's normalisation (backslashes read as separators, `path.Clean`, nothing else rewritten) and refusals (blank, invalid UTF-8, absolute, climbing above the root, the root itself), each `COMMAND_LINE_INVALID`; `LeaseStatus` (`active`, `expired`, `released`) judged in Go by `statusAt`; the four release reasons; `Lease` with design §5's column names plus `status`; `Acquisition` — the lease, whether the call renewed, the tenure it superseded |
+| `internal/coordination/lease_store.go` (new) | `AcquireLease` (file targets only; a task target is refused with the remedy to move the task, D-66), `RenewLease`, `ReleaseLease`, `FindLease`, `ListLeases`. Design §6's table is `acquireIn` and `holderWrite`: the clock read inside the transaction under the write lock, the session resolved there, the target's unreleased row read and judged at that instant, and — active/mine renew, active/other `LEASE_CONFLICT`, expired close-with-`expired`-and-insert naming the superseded tenure, none/released insert. `acquireIn` takes the caller's `*sql.Tx` and `now`, so `Transition` can run the same rule for a task target in TASK-04 |
+| `internal/coordination/errors.go` | `ErrLeaseConflict`, `ErrLeaseNotHeld`, `ErrLeaseNotFound`; `leaseConflict` (holder, expiry, lease id, target in metadata; remedy: wait until the expiry it names, or ask the holder to `lease release <id>`), `leaseNotHeld` (status and the remedy per kind — a move for a task, `lease acquire --file <key>` for a file), `leaseNotFound` (`mindrail lease list`), `noProject` beside `noWorkspace` |
+| `internal/coordination/store.go` | `Write.Timing storage.TxStats` (D-75); `OpenSession` runs through `InTxMeasured` — the bare `ExecContext` TASK-01's Breaker found is gone, and a busy `BEGIN` there now carries `waited_ms` like every other writer; `OpenTask`, `Transition` and `WriteCheckpoint` use `InTxMeasured` and fill `Timing` |
+| `internal/app/code.go`, `internal/cli/envelope_test.go` | `LEASE_CONFLICT`, `LEASE_NOT_HELD`, `LEASE_NOT_FOUND`, registered, all `ExitFailed` |
+| Tests | `internal/coordination/lease_store_test.go` (ten, new): `TestFileTargetIsNormalisedAndRefusedByTheRule` (ten keys normalised, nine refused, `ParseTargetKind` both arms), `TestTheLeaseTTLIsTwentyMinutes` (on the row written), `TestEveryCellOfTheLeaseTable` (AC-04.2: fifteen cells, each built the way a repository reaches it, the successes asserted on the re-read row and the refusals on the code, the metadata and the row left as found), `TestAcquiringOverAnExpiredTenureClosesItAndSaysSo` (AC-04.3, one second before expiry refused, at expiry taken over, the old row closed at the takeover's instant, one unreleased row), `TestAnAcquisitionByTheHolderRenewsUnderTheSameID`, `TestListLeasesReportsActiveOnesOldestFirstAndMarksNothing` (AC-04.4, D-79), `TestLeaseRefusalsCarryWhatACallerActsOn` (AC-04.5), `TestATaskTargetIsNotAcquiredDirectly` (D-66), `TestLeaseWritersMintAndRefuseSessionsLikeTheOthers` (D-61 on the new writers, `Timing` filled), `TestSessionOpenIsOneTransactionWithItsWait` (the carried finding) |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| L1 | `acquireIn` treats another session's active lease as the caller's own | `TestEveryCellOfTheLeaseTable/active,_another's_/_acquire`: `want LEASE_CONFLICT, got no error` |
+| L2 | `statusAt` uses `now.After(expires)` instead of `!now.Before(expires)` — the boundary instant counts as held | `TestAcquiringOverAnExpiredTenureClosesItAndSaysSo`: `AcquireLease at expiry = LEASE_CONFLICT: file src/auth.go is held by session SES-… until 2026-09-09T08:50:00Z, want the takeover` |
+| L3 | the takeover does not close the expired row before inserting | the same test: `AcquireLease at expiry = COORDINATION_WRITE_FAILED: the lease could not be written …` — the partial unique index refusing the second unreleased row, which is AC-02.1's guard holding behind a Go defect |
+| L4 | `holderWrite` skips the holder check | `…/active,_another's_/_renew` and `…/_release`: `want LEASE_CONFLICT, got no error` |
+| L5 | `ListLeases` lists every unreleased row | `TestListLeasesReportsActiveOnesOldestFirstAndMarksNothing`: `ListLeases = [{ID:LSE-… TargetKey:a.go …}], want only the second lease, active` |
+| L6 | `FileTarget` stops refusing a key that climbs above the root | `TestFileTargetIsNormalisedAndRefusedByTheRule`: `want COMMAND_LINE_INVALID, got no error` |
+| L7 | `renewIn` moves `renewed_at` and leaves `expires_at` | `…/active,_mine_/_acquire` and `…/_renew`: `expires_at = 2026-09-09 08:50:00 +0000 UTC, want now + TTL = … 08:51:00`; `TestAnAcquisitionByTheHolderRenewsUnderTheSameID`: `expires_at = …, want moved to now + TTL` |
+| L8 | `OpenSession` back to a bare `ExecContext` | `TestSessionOpenIsOneTransactionWithItsWait`: `session open under a held lock publishes no waited_ms: map[condition:locked subject_id:SES-…]` |
+| L9 | `LeaseTTL = 19 * time.Minute` | `TestTheLeaseTTLIsTwentyMinutes`: `LeaseTTL = 19m0s, want 20m (spec §59)` |
+
+### Where this task departed from the freeze, and why
+
+- **`AcquireLease` refuses a task target outright rather than not offering
+  it.** AC-04.1 lists the method without saying what a task target does; D-66
+  says a task lease is acquired only by moving the task. The refusal is a
+  usage error naming `task state`, so a caller of the domain API — MR-015's
+  tools — cannot grow a second entry point by accident.
+- **`AcquireLease` takes a `Target`, not a kind and a key.** The value is
+  built by `FileTarget` or `TaskTarget`, which is where D-77's rule lives; a
+  method taking two strings would let a caller pass a key nothing normalised.
+- **`Operation` is not yet a parameter.** The work breakdown gives it to
+  TASK-05 on every writer at once; the three lease writers will take it then,
+  as the four existing ones will.
+- **Two things beyond REQ-03/04's letter, both from earlier gates:**
+  `OpenSession` through `InTxMeasured` (TASK-01's gate, carried here), and
+  `Write.Timing` on all seven writers (D-75 said the store carries it; this is
+  the first task to touch the store).
+- **`noProject` is a new constructor** for a writer that belongs to a project
+  rather than a worktree; it is `noWorkspace`'s shape under the same code.
+
+### The gate
+
+*Filled after the Reader/Breaker pair has run.*
