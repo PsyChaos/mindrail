@@ -272,6 +272,20 @@ not appear in the JSON envelope: kernel-scope §3 requires collecting SQLite
 wait from the first implementation, and MR-019 owns the shape it is published
 in. AC-10.6 reads them from the store.
 
+*Amended during TASK-01's gate.* The seam is `storage.InTxMeasured`, which
+returns the `TxStats` **by value** beside the transaction's outcome; `InTx` is
+the same transaction without the numbers. The shape above planted one
+`*TxStats` in a context, and two goroutines running `InTx` under one context
+raced on it under `-race` (the Breaker's finding). A value per call cannot be
+shared by accident, so the store needs no rule about where it plants what.
+Two facts about the numbers, recorded because the Breaker measured them:
+`Waited` runs from the call to the lock and so includes database/sql's pool
+queueing — nothing for the one-goroutine command line, and the wait an
+interactive writer actually experiences otherwise; AC-10.6's eight goroutines
+over a pool of four therefore read pool queueing as well as SQLite's, and
+its bound is on `Held`, which is unaffected. A rolled-back transaction reports
+zero.
+
 ### D-76 — six codes, each with a remedy the others do not have
 
 | Code | Condition | Remedy |
@@ -339,6 +353,11 @@ they were closed.
   unchanged.
 - **AC-01.4** `InTx` records wait and hold into `*TxStats` when the context
   carries one, and touches nothing when it does not. Asserted both ways.
+
+  *Amended during TASK-01's gate (D-75 as amended).* `InTxMeasured` returns
+  the two numbers by value; a committed transaction fills them, a rolled-back
+  one reports zero, and `InTx` is the same transaction without them. The
+  concurrent-callers arm runs under `-race`.
 - **AC-01.5** There is no retry loop around `BeginTx` in `InTx`; a test with a
   50 ms contender still fails within 250 ms
   (`TestInTxTakesTheWriteLockAtBegin` stays fast).
