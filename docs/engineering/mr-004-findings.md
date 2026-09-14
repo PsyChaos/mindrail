@@ -19,6 +19,14 @@ confirmed one is not a distinct one; every sentence here is something that was
 run, not something believed; a number is given where a claim needs one and
 nowhere else.
 
+Every test count in this record is `go test -list '.*' ./... | grep -c
+'^Test'`, the command the definition of done names: the tests the default
+build runs. A static count of `^func Test` over the tracked files is seven
+higher at every commit — five `TestMain` functions and two tests behind the
+`smoke` build tag — and TASK-05's Reader, counting that way, read both of
+that task's numbers as off by exactly seven. Neither count is wrong; they
+count different things, and this is the one the record uses.
+
 ---
 
 ## 1. TASK-01 — the bounded wait, named and measured
@@ -647,15 +655,16 @@ state`'s wire, `task show`'s human rendering and the pins for `revision` and
 
 ## 5. TASK-05 — a repeated operation is answered from its record
 
-Commit `d4889f7`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
-green; **856** top-level test functions, from 849. Owns REQ-06 and
-`OPERATION_ID_CONFLICT` of REQ-07.
+Commit `d4889f7`, and `cbf4a61` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **856** top-level test
+functions after the first, from 849, and **857** after the second. Owns
+REQ-06 and `OPERATION_ID_CONFLICT` of REQ-07.
 
 ### What changed
 
 | Where | What |
 |---|---|
-| `internal/coordination/operation.go` (new) | `Operation{ID}`; `ValidOperationID` (D-71's grammar, `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`); `Store.Idempotent(id)` — a per-call view of the store bound to one operation; `requestHash` (SHA-256 over canonical JSON of the command name and the store's parameters, hex); `attributionKey` (`named:<handle>` or `mint:<workspace>`, so the session handle is part of the request); `replay` — the lookup inside the write transaction, before any other statement: not found → the write runs; found with the same command and hash → the recorded result is decoded and the `Write` returns `Replayed`; found with another → `OPERATION_ID_CONFLICT`; `record` — the insert after the write, in the same transaction, of `{session, minted, result}`; `refuseInvalidOperation` for the callers with no command line |
+| `internal/coordination/operation.go` (new) | `Operation{ID}`; `ValidOperationID` (D-71's grammar, `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`); `Store.Idempotent(id)` — a per-call view of the store bound to one operation; `requestHash` (SHA-256 over canonical JSON of the command name and the store's parameters, hex); `attributionKey` (`named:<handle>` or `mint:<workspace>`, so the session handle is part of the request for the six writers that take an `Attribution`; `OpenSession` takes none and hashes the workspace id and the label directly); `replay` — the lookup inside the write transaction, before any other statement: not found → the write runs; found with the same command and hash → the recorded result is decoded and the `Write` returns `Replayed`; found with another → `OPERATION_ID_CONFLICT`; `record` — the insert after the write, in the same transaction, of `{session, minted, result}`; `refuseInvalidOperation` for the callers with no command line |
 | `internal/coordination/store.go`, `lease_store.go` | All seven writers judge the bound id, hash their parameters before the transaction, replay first inside it, and record last; `Write` gains `OperationID` and `Replayed`. `holderWrite`'s command is `lease renew` or `lease release` by its verb |
 | `internal/coordination/errors.go` | `ErrOperationConflict`, `operationConflict` (the id, the recorded command and the attempted one; remedy: mint a new id) |
 | `internal/app/code.go`, `internal/cli/envelope_test.go` | `OPERATION_ID_CONFLICT`, registered, `ExitFailed` |
@@ -671,6 +680,12 @@ green; **856** top-level test functions, from 849. Owns REQ-06 and
 | O4 | `attributionKey` drops the session handle | `TestTheSameIDForADifferentRequestIsAConflict/a_different_session`: `want OPERATION_ID_CONFLICT, got no error`; `TestTheRequestHashIsStableAndSensitive`: `changing session produced the same hash as base` |
 | O6 | the store stops judging the id's grammar | `TestAnOperationIDMustBeAnIdentifier`: `want COMMAND_LINE_INVALID, got no error` |
 | O7 | `Idempotent` binds the id on the receiver instead of a copy | `TestTwoDeliveriesOfOneOperationSerialise` under `-race`: `WARNING: DATA RACE` — eight goroutines binding one store |
+
+There is no O5: the fifth edit run was a control that changed nothing
+(`return s.record(…)` rewritten as an `if err := …; err != nil { return err }`
+followed by `return nil`), it stayed green as a control should, and it is not
+a mutation. The gap in the numbering was left rather than renumbered so the
+logs under `/tmp/mut-O*.log` still match.
 
 AC-06.4 has no one-line falsifier: the record is inserted inside the
 transaction the write runs in, so a refusal rolls it back with everything
@@ -702,4 +717,77 @@ on a refused move retried after the lease's release.
 
 ### The gate
 
-*Filled after the Reader/Breaker pair has run.*
+Two agents over `d4889f7` and this record at `e20dee6`: a Reader (Sonnet)
+over the record, a Breaker (Fable) with throwaway tests over two
+`storage.Open` handles under `-race` and `sqlite3` for planted rows. Fix:
+`cbf4a61`; `make check` (19 `ok`) and `make tidy-check` green after it;
+**857** top-level test functions, from 856.
+
+**A process defect of this gate, on the orchestrator.** While the pair ran,
+TASK-06's command-line work was being written in the main tree — on the
+argument that the Reader ran only `internal/coordination` and `internal/app`.
+The mandated count builds every package, and for a stretch the in-progress
+`internal/cli` did not build, so the Reader saw the count move between 862
+and 754 across identical runs and had to fall back to a static count of the
+git objects. Nothing under audit was touched, and the Reader's verdicts stand;
+but a gate's environment is the tree, and the rule from here is the one the
+freeze's process implied: **nothing in the main tree changes while a gate
+runs.** TASK-06 was committed after this gate closed, as its own step.
+
+**The Reader** checked 22 claims: 18 confirmed, **1 false**, 3 unconfirmed;
+the three mutations it re-ran (O1, O2, O6) matched their recorded red lines
+arm by arm. The false claim was the test tally — "856 from 849" against its
+static count of 863 from 856 — which is the seven-test offset the preamble
+now explains: the two methods count different things, and the record's
+numbers are right by the method the definition of done names. Its two LOW:
+the numbering skipped O5 without saying why (said now, above), and the
+`attributionKey` sentence overstated uniformity — `OpenSession` takes no
+`Attribution` and hashes the workspace and the label directly (corrected in
+the table above). Its contract verdict: AC-06.2 … AC-06.6 met, AC-06.1 met
+with the recorded departure.
+
+**The Breaker** produced four findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | A `task open` record whose `result` carried no `task_id` — a hand-edited row, or a row a later binary wrote in another shape — replayed **without error** as a task with a freshly minted id that existed nowhere, a different one on every replay, `Replayed = true`, with the planted `project_id` leaking into it. The cause: `OpenTask` and `OpenSession` decoded the record into the value they had prepared for a fresh run, so a field the record lacked kept the fresh mint. The other five writers returned a visibly empty result | `d4889f7` | `replay` decodes into a zero value of the result's type and refuses a record whose result names no entity — every replayable result answers `recordedID()` — as `COORDINATION_READ_FAILED` naming the operation; what the record holds is what is returned. `TestARecordThatNamesNoEntityIsDamageNotAFreshMint`, all seven writers, the record drifted with `json_set`; O8 |
+| LOW | A record whose `result` is not JSON makes its id a permanent `COORDINATION_READ_FAILED`, and the remedy — run `doctor`, then re-run — cannot clear it: no shipped command removes an operations row | `d4889f7` | Recorded, not fixed: it is the rule of audit round 2 §4.7 (a row the store cannot decode is damage) meeting a table nothing repairs. The `doctor` damaged-row check stays unowned, now with the operations table among its readers; a caller's own way out is a new id |
+| LOW | A conflict for the same command with different parameters names the command twice and nothing else; the caller cannot see which parameter differed | `d4889f7` | Recorded, by design: the hash is opaque, and naming the differing parameter would mean storing the parameters, which the design keeps out of the record |
+| LOW | The record holds the whole result, so an idempotent checkpoint stores its note twice; ten thousand idempotent checkpoints added 4.5 MB of records (447 bytes each, 0.078 ms per write, a replay in 311 µs); no retention | `d4889f7`, D-71's design | Recorded with the numbers: D-71 chose no retention in 0.1 and this is its cost, measured |
+
+Attacked and not broken, in one line each. Two handles with clocks an hour
+apart delivering one id at once, thirty-two rounds each of `task open`,
+`task state`, `checkpoint write` and `lease acquire` under `-race`: every
+round one fresh and one replayed answer, equal, one entity row and one
+record. A replay under a clock two TTLs ahead returns the record's stamps and
+statuses, never the replayer's clock, marked `Replayed`. A replay after the
+world moved — the task taken on by another session, a lease released and
+re-acquired by someone else — returns the first delivery's truth with
+`Replayed = true` and writes nothing: rows untouched, no session minted.
+The hash: a trimmed reason, a trailing space in a title or label replay
+(they are trimmed before hashing, as before storing); `handoff` true against
+false, `lease renew` against `lease release`, two projects, composed against
+decomposed `é`, `expect-revision` 0 against 1, `named:X` against `mint:X` are
+all different requests. The grammar admits 128 characters and refuses 129,
+admits ULIDs, UUIDs and `a:b:c`, refuses `ünïcode`, a space and a slash — a
+choice D-71 wrote, costing an id-minting agent nothing. A bound view used for
+a second, different write answers `OPERATION_ID_CONFLICT`; used from two
+goroutines for different writes, one succeeds and one conflicts; the unbound
+store afterwards carries no id. A `RAISE(ABORT)` trigger on `operations`
+rolls the whole write back, minted session included, and the same id after
+the trigger is dropped runs fresh. `Idempotent("")` is the plain store;
+`Idempotent(" ")` is refused; the same request a day and a year later
+replays. A planted `result = '{}'` is refused as damaged; planted empty
+`request_hash` and `command` are conflicts; the row holds the session's
+timestamps and the lease's `expires_at` and `status`.
+
+Not demonstrated: a second delivery exhausting the busy budget at `BEGIN`
+and retrying, in thirty-two rounds.
+
+| # | Mutation (gate fix) | Red |
+|---|---|---|
+| O8 | the identity check after decoding dropped | `TestARecordThatNamesNoEntityIsDamageNotAFreshMint`: `want COORDINATION_READ_FAILED, got no error`, in every writer's arm |
+
+**Carried forward from this gate:** the `doctor` damaged-row check, now with
+`operations` among its readers (unowned); the process rule above, for every
+remaining gate.
