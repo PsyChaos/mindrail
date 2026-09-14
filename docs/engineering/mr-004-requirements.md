@@ -103,6 +103,19 @@ refused by identity for anyone but the holder.
 
 `lease acquire` takes `--file` and nothing else in MR-004.
 
+*Amended during TASK-04.* `lease acquire` also takes `--task <id>`: **the
+claim without a move.** The handover design §7 describes releases the lease
+of a task that is almost always `IN_PROGRESS`, and D-55 has no
+`IN_PROGRESS → IN_PROGRESS`, so the next agent had no move that kept the
+task where it was and could not take it. On a task in a working state —
+`CLAIMED`, `IN_PROGRESS`, `BLOCKED`, `READY_TO_COMPLETE` — `--task` takes the
+lease where the task stands, makes the holder the claimant and raises the
+revision, and does not touch the state; an `OPEN` task is refused with the
+remedy `--to CLAIMED`, and a finished one as final. Both entry points run the
+same acquisition and write `claimed_by` in one transaction (D-68); the
+lifecycle table is still consulted in one place, because this path does not
+consult it.
+
 ### D-67 — the lease is judged before the state table, and an expired lease is taken over out loud
 
 `Transition` judges, in order and inside one transaction: the caller's
@@ -473,6 +486,9 @@ they were closed.
 
 - **AC-08.1** The four `lease` subcommands of design §10 exist with those names
   and flags; `lease acquire` has `--file` and no `--task`. No fifth verb.
+
+  *Amended during TASK-04 (D-66 as amended).* `lease acquire` has `--file` and
+  `--task`, exactly one of which is given.
 - **AC-08.2** Every writer — the four existing and the three new — takes
   `--operation-id`; `task state` takes `--expect-revision`. A malformed id or a
   revision below 1 is refused before the application starts, exit 2, with

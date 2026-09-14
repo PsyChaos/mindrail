@@ -483,3 +483,91 @@ concurrent `OpenSession` mint sixteen ids; a one-mebibyte label is stored.
 surface (MR-015's, backlog); the `doctor` damaged-row check, now with lease
 rows among its readers (unowned); the writer's-clock consequence under D-65
 (recorded, by design).
+
+---
+
+## 4. TASK-04 — the lease and the revision in front of every task move
+
+Commit `ac8f1d0`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
+green; **845** top-level test functions, from 837. Owns REQ-05 and
+`STATE_REVISION_CONFLICT` of REQ-07.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/store.go` | `Transition` is `TransitionExpecting` with no expectation; `TransitionExpecting` runs design §7's three judgments inside the one transaction, in order — the expected revision (`STATE_REVISION_CONFLICT`, D-72), the task's unreleased lease judged at the clock read under the lock (`LEASE_CONFLICT` for another session's active tenure, D-67), then D-55's table and D-63's reason — and the effect by destination: `CLAIMED` and the working states run `acquireIn` for the mover (renew when held, take over when expired, insert when none) and make the mover the claimant; `OPEN` closes the tenure and clears the claimant; the terminal states close it and keep the claimant (D-68). A tenure that had already expired is closed with reason `expired` whichever path closes it (`closeReason`). The row is written with `revision = revision + 1 WHERE revision = ?` against the revision read in the transaction, and zero rows affected is a defect. Both return `Move{Task, Lease, Superseded}`. `WriteCheckpoint` reads the task whole (the MR-003 §7 LOW: a damaged row took notes), then — for the holder — renews, or on `--handoff` closes with reason `handoff`; anyone else's note touches no lease (D-78); it returns `Noted{Checkpoint, Lease}`. `Handover` carries the task's newest tenure in whatever status, for `task show`. `OpenTask` writes `revision = 1`; `selectTask`/`scanTask` carry it |
+| `internal/coordination/lease_store.go` | `AcquireLease` accepts a task target as **the claim without a move** (D-66 amended, below): `claimWhereItStands` reads the task, refuses `OPEN` and the terminal states with `TASK_STATE_INVALID` (remedy: `--to CLAIMED`, or "final"), runs `acquireIn`, and — unless the holder already held it — writes `claimed_by`, `updated_at` and `revision + 1` on the task row |
+| `internal/coordination/model.go` | `Task.Revision`; `Handover.Lease` |
+| `internal/coordination/errors.go` | `ErrRevisionConflict`, `revisionConflict` (current revision and state, expected revision, remedy `task show` then `--expect-revision <current>`); `taskNotClaimableWhereItStands` |
+| `internal/app/code.go`, `internal/cli/envelope_test.go` | `STATE_REVISION_CONFLICT`, registered, `ExitFailed` |
+| `internal/cli/task.go`, `checkpoint.go` | Read `move.Task` and `noted.Checkpoint`; nothing new is published yet (TASK-06) |
+| Tests | `internal/coordination/lifecycle_lease_test.go` (eight, new): `TestEveryDestinationHasItsLeaseEffect` (design §7's table, seven arms), `TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination` (AC-05.2, all seven destinations, row re-read), `TestAStaleRevisionIsRefusedBeforeAnythingElse` (AC-05.4/05.5: judged before the lease, row unchanged, +1 per move and on nothing else, zero expects nothing), `TestTheInvariantHoldsAfterEveryLegalTransition` (AC-05.1: thirteen pairs × two starting states, D-68 checked after each, and the expired tenure's reason on every path), `TestTheTableIsUnchangedByTheLease` (AC-05.7, 36 refusals), `TestAHoldersCheckpointRenewsAndAHandoffReleases` (AC-05.6, three arms, and the handover replayed), `TestACheckpointOnADamagedTaskRowIsRefused`, `TestHandoverReportsTheNewestTenure`. `lease_store_test.go`: `TestATaskTargetIsNotAcquiredDirectly` became `TestATaskIsTakenWhereItStandsOnlyInAWorkingState`. Three MR-003 tests were amended to the rules that changed, with the decision named in each: `TestASecondSessionContinuesTheFirstsTask` and `TestTwoSequentialAgentsContinueOneTaskAcrossAProcessBoundary` (the arriving agent is now the claimant, D-68), `TestASecondClaimNamesTheSessionHoldingIt` (`LEASE_CONFLICT` naming the holder, not `TASK_STATE_INVALID`, D-67) |
+
+### A gap in the freeze, and the amendment it needed
+
+Design §7's handover reads: *A writes `checkpoint write --handoff` and exits —
+the lease is released; agent B, a new session, moves the task to `IN_PROGRESS`
+and acquires it.* That works from `CLAIMED`. The task an agent hands off is
+almost always `IN_PROGRESS`, and D-55 has no `IN_PROGRESS → IN_PROGRESS`: B
+had no move that kept the task where it was, so the first test of the
+handover replay was refused with `TASK_STATE_INVALID … cannot move to
+IN_PROGRESS; it is claimed by session A`. D-66 ("a task lease is acquired only
+by moving the task") had closed the one door B needed.
+
+The amendment, recorded here and in the requirements: **`lease acquire
+--task <id>` is the claim without a move.** It is allowed on a task in a
+working state — `CLAIMED`, `IN_PROGRESS`, `BLOCKED`, `READY_TO_COMPLETE` — and
+it takes the lease where the task stands, makes the holder the claimant and
+raises the revision, without touching the state. An `OPEN` task is refused
+with the remedy `--to CLAIMED` (its claim *is* the move, and `OPEN` has no
+active lease by D-68); a finished task is refused as final. Both entry points
+run `acquireIn` and write `claimed_by` in one transaction, which is what D-68
+rests on; the lifecycle table is still consulted in exactly one place, because
+this path does not move the task. The alternative — letting a self-transition
+mean "take over" — would have changed D-55's table, which forty-nine pairs of
+tests and the CLI's help text state. Design §10's "there is no `lease acquire
+--task`" and AC-08.1's "no `--task`" are amended in place.
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| T41 | the lease judgment skipped | `TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination`: `code = TASK_STATE_INVALID, want LEASE_CONFLICT: task TSK-… is IN_PROGRESS and cannot move to OPEN; it is claimed by session SES-…` |
+| T42 | the revision judgment skipped | `TestAStaleRevisionIsRefusedBeforeAnythingElse`: `code = LEASE_CONFLICT, want STATE_REVISION_CONFLICT: task TSK-… is held by session SES-… until …` — the next judgment answering for the one removed |
+| T44 | the `UPDATE` writes `revision = revision` | the same test, the same line: the first move returned revision 2 and left the row at 1, so the stale caller's expectation of 1 was met and the lease answered instead |
+| T45 | `CLAIMED` and the working moves leave `claimed_by` as it was | `TestEveryDestinationHasItsLeaseEffect`: `task = claimed_by "" revision 2, want the mover and revision 2` and `after CLAIMED: claimed_by = "" while the active lease is held by "SES-…"`; the invariant test the same after `IN_PROGRESS` |
+| T46 | `OPEN` does not close the tenure | `the tenure is active (""), want released (released)` and `after OPEN: an OPEN task holds an active lease LSE-…` |
+| T47 | the terminal moves do not close it | `the tenure is active (""), want released (finished)`, twice |
+| T48 | `--handoff` renews instead of releasing | `TestAHoldersCheckpointRenewsAndAHandoffReleases`: `handoff.Lease = &{… Status:active …}` where released with reason handoff was wanted |
+| T49 | a stranger's checkpoint renews too | the same test: `a stranger's checkpoint reports a lease &{…}` |
+| T410 | the task probe back to `SELECT task_id, project_id` | `TestACheckpointOnADamagedTaskRowIsRefused`: `want COORDINATION_READ_FAILED, got no error` |
+| T411 | `Handover` leaves `Lease` nil | `TestHandoverReportsTheNewestTenure`: `Handover(held) = <nil>, <nil>; want the active tenure` |
+| T412 | `claimWhereItStands` admits an `OPEN` task | `TestATaskIsTakenWhereItStandsOnlyInAWorkingState`: `want TASK_STATE_INVALID, got no error` |
+| T413 | `closeReason` always writes the path's reason | `TestTheInvariantHoldsAfterEveryLegalTransition`: `the expired tenure is released ("released") after the move to OPEN, want released (expired)` and `("finished") after the move to ABANDONED` |
+
+### Where this task departed from the freeze, and why
+
+- **D-66 is amended** as described above; the task-target refusal TASK-03
+  recorded is replaced by the working-state rule.
+- **`TransitionExpecting` beside `Transition`**, rather than one method with
+  a revision parameter every caller passes. Twenty-one call sites pass no
+  expectation and never will; the command line calls `TransitionExpecting`
+  with what it was given, zero included.
+- **The revision is judged before the lease** as design §7 orders, and T42
+  shows what the order buys: a stale caller is told its reading is stale, not
+  who holds the task as if its reading were current.
+- **`WriteCheckpoint` judges the lease at the row's own stamp**, which is read
+  before the transaction like the other inserting writers' (verification pass
+  after MR-003's round 2), not at a second reading under the lock. A lease
+  that ran out during the lock wait is renewed if it was the writer's and left
+  alone if it was not, and neither is a wrong answer.
+- **Three MR-003 tests changed their expectation**, each with the decision
+  that changed it in its comment: the arriving agent becomes the claimant
+  (D-68 amends D-58), and a second claim is `LEASE_CONFLICT` naming the holder
+  (D-67 in front of D-55). The claim F22 asked for — that the refusal names
+  the session holding the task — holds under the new code.
+
+### The gate
+
+*Filled after the Reader/Breaker pair has run.*

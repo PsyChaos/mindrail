@@ -384,7 +384,7 @@ jitter where jitter can matter, and the number.
 Four new commands in one group, and two flags on the existing writers.
 
 ```bash
-mindrail lease acquire --file <path> [--session <id>] [--operation-id <id>]
+mindrail lease acquire --file <path> | --task <task-id>  [--session <id>] [--operation-id <id>]
 mindrail lease renew   <lease-id>    [--session <id>] [--operation-id <id>]
 mindrail lease release <lease-id>    [--session <id>] [--operation-id <id>]
 mindrail lease list                                   # active leases, any kind
@@ -395,12 +395,16 @@ mindrail task state       …  [--operation-id <id>] [--expect-revision <n>]
 mindrail checkpoint write …  [--operation-id <id>]
 ```
 
-There is no `lease acquire --task`. A task lease is acquired by moving the task
-(D-66), so the lifecycle stays stated in one place and the lease has one hook
-into it rather than two. `lease renew` and `lease release` take any lease id,
-task or file, and are refused by identity for anyone but the holder — they are
-how an agent running a thirty-minute test suite keeps its task, and how one
-steps away without a note.
+`lease acquire --task <id>` is the claim without a move (D-66 as amended
+during TASK-04): a task already in a working state is taken where it stands,
+the holder becomes the claimant, and the state does not change. It exists
+because the handover in §7 releases the lease of a task that is almost always
+`IN_PROGRESS`, and D-55 has no move that keeps a task `IN_PROGRESS`. An
+`OPEN` task is claimed by moving it to `CLAIMED`, and `--task` refuses it with
+that remedy. `lease renew` and `lease release` take any lease id, task or
+file, and are refused by identity for anyone but the holder — they are how an
+agent running a thirty-minute test suite keeps its task, and how one steps
+away without a note.
 
 Every writer honours `--json` and the standard envelope, mints a session when
 `--session` is absent and says so, and refuses an unrepresentable text flag
