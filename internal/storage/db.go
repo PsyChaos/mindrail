@@ -343,14 +343,18 @@ func classifyOpenError(path string, cause error) error {
 	case isDiskFullError(cause):
 		return diskFullOpenFailure(path, cause)
 	case isBusyError(cause):
-		// Left alone deliberately, and this is the guard rather than an
-		// optimisation. openWithinBusyBudget decides whether to wait by asking
-		// isBusyError of what this returns, so a diagnosis that replaced the
-		// driver's error here would turn a lock another `mindrail init` releases
-		// a millisecond later into a permanent failure. It also keeps the probe
-		// below off the retry loop, which runs this every 20ms for up to five
-		// seconds.
-		return openFailure(path, cause)
+		// Handed through bare, and this is the guard rather than an
+		// optimisation. waitOpen decides whether to wait by asking isBusyError
+		// of what this returns, so a diagnosis that replaced the driver's error
+		// here would turn a lock another `mindrail init` releases a millisecond
+		// later into a permanent failure; and waitOpen is the one caller, so
+		// it is waitOpen that names the exhaustion, once. This branch used to
+		// return openFailure, and the busy exhaustion then carried that object
+		// in its cause — one error naming two codes, RUNTIME_DB_UNAVAILABLE
+		// inside MINDRAIL_BUSY_RETRYABLE (TASK-01's Breaker). It also keeps the
+		// probe below off the retry loop, which runs this on every step of the
+		// ladder for up to five seconds.
+		return cause
 	}
 
 	// One condition the driver's result code cannot name, so the filesystem is

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,6 +247,41 @@ func TestAnOpenRefusedForTheWholeBudgetIsRetryable(t *testing.T) {
 		if next == "Run `mindrail init` if this repository has not been initialised yet." {
 			t.Errorf("next_action %q is the remedy for a missing database, not for a held one", next)
 		}
+	}
+}
+
+// TestABusyOpenIsNamedOnce is TASK-01's Breaker finding on the open path: the
+// busy branch of classifyOpenError used to wrap the driver's error in
+// openFailure, so the exhaustion waitOpen then built carried that object as
+// its cause — one error object naming two codes, RUNTIME_DB_UNAVAILABLE
+// inside MINDRAIL_BUSY_RETRYABLE. The branch now hands the driver's error
+// through bare, and waitOpen is the one place that names it.
+func TestABusyOpenIsNamedOnce(t *testing.T) {
+	busy := errors.Unwrap(genuineBusyError(t)) // the bare driver error under InTx's wrapper
+	if !isBusyError(busy) {
+		t.Fatalf("isBusyError(%v) = false; the fixture lost the driver's error", busy)
+	}
+
+	classified := classifyOpenError("/repo/.git/mindrail/mindrail.db", busy)
+	if !isBusyError(classified) {
+		t.Fatalf("classifyOpenError(busy) = %v, want the driver's error kept so waitOpen can retry on it", classified)
+	}
+	if _, isDomain := app.PayloadOf(classified); isDomain {
+		t.Errorf("classifyOpenError(busy) = %v, want no diagnosis of its own: waitOpen names the exhaustion", classified)
+	}
+
+	clock := &virtualClock{now: time.Unix(1_700_000_000, 0)}
+	_, err := waitOpen(t.Context(), "/repo/.git/mindrail/mindrail.db", 100*time.Millisecond, clock.retrier(0),
+		func() (*DB, error) { return nil, classified })
+	payload, ok := app.PayloadOf(err)
+	if !ok || payload.Code != app.CodeBusyRetryable {
+		t.Fatalf("waitOpen = %v, want MINDRAIL_BUSY_RETRYABLE", err)
+	}
+	if strings.Contains(err.Error(), string(app.CodeRuntimeDBUnavailable)) {
+		t.Errorf("the busy open failure names a second code in its own text: %q", err.Error())
+	}
+	if strings.Contains(payload.Cause, string(app.CodeRuntimeDBUnavailable)) {
+		t.Errorf("payload.Cause = %q, names the code this condition no longer carries", payload.Cause)
 	}
 }
 

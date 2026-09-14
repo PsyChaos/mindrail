@@ -179,56 +179,90 @@ func TestInTxTakesTheWriteLockAtBegin(t *testing.T) {
 	}
 }
 
-// TestInTxReportsItsWaitAndHoldWhenAsked is AC-01.4 (decision D-75): a caller
-// that asks gets the two numbers spec §11 wants measured, a committed
-// transaction fills them, and a refused one leaves them alone — there is no
-// Write to carry them on, and a number from a transaction that did not land
-// would be the write-wait figure of nothing.
+// TestInTxReportsItsWaitAndHoldWhenAsked is AC-01.4 (decision D-75, as amended
+// by TASK-01's gate): a caller that asks gets the two numbers spec §11 wants
+// measured, by value, a committed transaction fills them, and a refused one
+// reports zero — there is no Write to carry them on, and a number from a
+// transaction that did not land would be the write-wait figure of nothing.
 func TestInTxReportsItsWaitAndHoldWhenAsked(t *testing.T) {
 	db := openTemp(t, storage.Options{})
 
-	ctx, stats := storage.WithTxStats(t.Context())
 	const hold = 20 * time.Millisecond
-	err := storage.InTx(ctx, db.DB, func(context.Context, *sql.Tx) error {
+	stats, err := storage.InTxMeasured(t.Context(), db.DB, func(context.Context, *sql.Tx) error {
 		time.Sleep(hold)
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("InTx = %v, want no error", err)
+		t.Fatalf("InTxMeasured = %v, want no error", err)
 	}
 	if stats.Held < hold {
 		t.Errorf("stats.Held = %v, want at least the %v the body held the lock", stats.Held, hold)
 	}
-	if stats.Waited < 0 || stats.Waited > time.Second {
-		t.Errorf("stats.Waited = %v on an idle database, want a small non-negative wait", stats.Waited)
+	if stats.Waited <= 0 || stats.Waited > time.Second {
+		t.Errorf("stats.Waited = %v on an idle database, want a small positive wait", stats.Waited)
 	}
 
-	// A second transaction under the same stats replaces the numbers rather
-	// than adding to them: each Write reports its own transaction.
-	if err := storage.InTx(ctx, db.DB, func(context.Context, *sql.Tx) error { return nil }); err != nil {
-		t.Fatalf("second InTx = %v, want no error", err)
+	// Each call reports its own transaction: an empty one after a held one
+	// does not carry the earlier hold.
+	again, err := storage.InTxMeasured(t.Context(), db.DB, func(context.Context, *sql.Tx) error { return nil })
+	if err != nil {
+		t.Fatalf("second InTxMeasured = %v, want no error", err)
 	}
-	if stats.Held >= hold {
-		t.Errorf("stats.Held = %v after an empty transaction, want it replaced rather than accumulated", stats.Held)
+	if again.Held >= hold {
+		t.Errorf("stats.Held = %v for an empty transaction, want less than the %v the previous one held", again.Held, hold)
 	}
 
-	// A refused transaction writes nothing into them.
+	// A refused transaction reports nothing.
 	refused := errors.New("caller decided to abort")
-	before := *stats
-	err = storage.InTx(ctx, db.DB, func(context.Context, *sql.Tx) error {
+	rolledBack, err := storage.InTxMeasured(t.Context(), db.DB, func(context.Context, *sql.Tx) error {
 		time.Sleep(hold)
 		return refused
 	})
 	if !errors.Is(err, refused) {
-		t.Fatalf("InTx = %v, want the caller's refusal", err)
+		t.Fatalf("InTxMeasured = %v, want the caller's refusal", err)
 	}
-	if *stats != before {
-		t.Errorf("stats = %+v after a rolled-back transaction, want %+v untouched", *stats, before)
+	if rolledBack != (storage.TxStats{}) {
+		t.Errorf("stats = %+v for a rolled-back transaction, want zero", rolledBack)
 	}
 
-	// And a context that never asked is served without one.
+	// And InTx is the same transaction without the numbers.
 	if err := storage.InTx(t.Context(), db.DB, func(context.Context, *sql.Tx) error { return nil }); err != nil {
-		t.Fatalf("InTx without stats = %v, want no error", err)
+		t.Fatalf("InTx = %v, want no error", err)
+	}
+}
+
+// TestInTxMeasuredSharesNothingBetweenCallers is the Breaker finding that
+// reshaped the seam: the first version planted one *TxStats in a context, and
+// two goroutines under that context raced on it. By value there is nothing to
+// share; this runs under -race in `make verify` and is the assertion that stays
+// true.
+func TestInTxMeasuredSharesNothingBetweenCallers(t *testing.T) {
+	db := openTemp(t, storage.Options{})
+	ctx := t.Context()
+
+	const goroutines, each = 4, 20
+	var wg sync.WaitGroup
+	results := make([][]storage.TxStats, goroutines)
+	for g := range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range each {
+				stats, err := storage.InTxMeasured(ctx, db.DB, func(context.Context, *sql.Tx) error { return nil })
+				if err != nil {
+					t.Errorf("InTxMeasured = %v, want no error", err)
+					return
+				}
+				results[g] = append(results[g], stats)
+			}
+		}()
+	}
+	wg.Wait()
+
+	for g, stats := range results {
+		if len(stats) != each {
+			t.Errorf("goroutine %d recorded %d transactions, want %d", g, len(stats), each)
+		}
 	}
 }
 
