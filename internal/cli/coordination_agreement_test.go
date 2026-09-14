@@ -3,12 +3,16 @@ package cli_test
 import (
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/cli"
 	"github.com/PsyChaos/mindrail/internal/coordination"
+	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
 // coordinationCommands is every command MR-003 added, as the argument list that
@@ -18,7 +22,10 @@ import (
 // in one shared body, and a command that stopped calling it would be invisible
 // to a test over `task list`.
 func coordinationCommands() [][]string {
-	const absentTask = "TSK-0000000000000000000000000"
+	const (
+		absentTask  = "TSK-0000000000000000000000000"
+		absentLease = "LSE-0000000000000000000000000"
+	)
 
 	return [][]string{
 		{"session", "open"},
@@ -27,6 +34,11 @@ func coordinationCommands() [][]string {
 		{"task", "show", absentTask},
 		{"task", "list"},
 		{"checkpoint", "write", absentTask, "--note", "something"},
+		// MR-004's four, through the same shared body.
+		{"lease", "acquire", "--file", "src/something.go"},
+		{"lease", "renew", absentLease},
+		{"lease", "release", absentLease},
+		{"lease", "list"},
 	}
 }
 
@@ -304,7 +316,9 @@ type coordinationRefusal struct {
 }
 
 // TestTheFourCoordinationRefusalsAgreeAcrossBothRenderings is acceptance
-// criterion AC-09.1, which was written and never implemented (finding F13).
+// criterion AC-09.1, which was written and never implemented (finding F13) —
+// and, since MR-004, its AC-08.7: the six codes that milestone added are
+// rows of the same matrix, each with its remedy carried out.
 //
 // The criterion asks for the human rendering, the JSON envelope and the exit
 // code to be asserted together for each of four conditions. Every coordination
@@ -321,7 +335,12 @@ func TestTheFourCoordinationRefusalsAgreeAcrossBothRenderings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, args := tc.setup(t)
 
-			structured := run(t, repo, append(slices.Clone(args), "--json")...)
+			// A short busy budget: the locked row would otherwise wait the
+			// production five seconds on each of its two runs, and no other
+			// row meets the lock.
+			options := cli.Options{BusyTimeout: 200 * time.Millisecond}
+
+			structured := runWith(t, repo, options, append(slices.Clone(args), "--json")...)
 			if structured.code != tc.exit {
 				t.Fatalf("exit = %d, want %d\n%s", structured.code, tc.exit, structured.stdout)
 			}
@@ -340,7 +359,7 @@ func TestTheFourCoordinationRefusalsAgreeAcrossBothRenderings(t *testing.T) {
 			// of these four refusals writes nothing — which is finding F02's
 			// fix, asserted separately — and it is necessary, because the
 			// sentences name ids a second repository would mint differently.
-			human := run(t, repo, append(slices.Clone(args), "--no-color")...)
+			human := runWith(t, repo, options, append(slices.Clone(args), "--no-color")...)
 			if human.code != structured.code {
 				t.Errorf("the human run exits %d and the --json run exits %d for one condition",
 					human.code, structured.code)
@@ -452,7 +471,210 @@ func coordinationRefusals() []coordinationRefusal {
 				return nil
 			},
 		},
+
+		// MR-004's six (AC-08.7, decision D-76).
+		{
+			name: "a target another session holds",
+			code: app.CodeLeaseConflict,
+			exit: app.ExitFailed,
+			setup: func(t *testing.T) (string, []string) {
+				repo := newInitializedRepo(t)
+				holder := sessionID(t, repo)
+				acquireFile(t, repo, holder, "src/held.go")
+				return repo, []string{"lease", "acquire", "--file", "src/held.go", "--session", sessionID(t, repo)}
+			},
+			// The remedy names the holder's release; carried out, the target
+			// is free and the refused acquisition succeeds. The id in the
+			// printed remedy belongs to the first repository, so the lease is
+			// found again in this one, the way onlyTaskIn finds a task.
+			clear: func(t *testing.T, repo string, actions []string) []string {
+				t.Helper()
+				if !remedyMentions(actions, "mindrail lease release LSE-") {
+					t.Fatalf("the remedy does not name the holder's release: %v", actions)
+				}
+				lease := onlyLeaseOn(t, repo, "src/held.go")
+				run(t, repo, "lease", "release", lease.ID, "--session", lease.Holder, "--json").requireExit(t, app.ExitSuccess)
+				return nil
+			},
+		},
+		{
+			name: "a lease this session no longer holds",
+			code: app.CodeLeaseNotHeld,
+			exit: app.ExitFailed,
+			setup: func(t *testing.T) (string, []string) {
+				repo := newInitializedRepo(t)
+				me := sessionID(t, repo)
+				id := acquireFile(t, repo, me, "src/given-up.go")
+				run(t, repo, "lease", "release", id, "--session", me, "--json").requireExit(t, app.ExitSuccess)
+				return repo, []string{"lease", "renew", id, "--session", me}
+			},
+			// The remedy is to acquire again, and it names the file.
+			clear: func(t *testing.T, repo string, actions []string) []string {
+				t.Helper()
+				if !remedyMentions(actions, "lease acquire --file=src/given-up.go") {
+					t.Fatalf("the remedy does not name the acquisition: %v", actions)
+				}
+				return []string{"lease", "acquire", "--file", "src/given-up.go", "--session", sessionID(t, repo)}
+			},
+		},
+		{
+			name: "an unknown lease",
+			code: app.CodeLeaseNotFound,
+			exit: app.ExitFailed,
+			setup: func(t *testing.T) (string, []string) {
+				repo := newInitializedRepo(t)
+				return repo, []string{"lease", "renew", "LSE-0000000000000000000000000", "--session", sessionID(t, repo)}
+			},
+			clear: func(t *testing.T, repo string, actions []string) []string {
+				t.Helper()
+				if !remedyMentions(actions, "lease list") {
+					t.Fatalf("the remedy does not name `lease list`: %v", actions)
+				}
+				return []string{"lease", "list"}
+			},
+		},
+		{
+			name: "a move decided on a stale reading",
+			code: app.CodeStateRevisionConflict,
+			exit: app.ExitFailed,
+			setup: func(t *testing.T) (string, []string) {
+				repo := newInitializedRepo(t)
+				me := sessionID(t, repo)
+				task := openTask(t, repo, me, "a task read at revision 1 and moved since")
+				run(t, repo, "task", "state", task, "--to", "CLAIMED", "--session", me, "--json").requireExit(t, app.ExitSuccess)
+				return repo, []string{"task", "state", task, "--to", "IN_PROGRESS", "--session", me, "--expect-revision", "1"}
+			},
+			// The remedy is to re-read and retry with the revision the task is
+			// at, which `task show` prints.
+			clear: func(t *testing.T, repo string, actions []string) []string {
+				t.Helper()
+				if !remedyMentions(actions, "mindrail task show") {
+					t.Fatalf("the remedy does not send the caller to re-read: %v", actions)
+				}
+				task := onlyTaskIn(t, repo)
+				shown := run(t, repo, "task", "show", task, "--json")
+				shown.requireExit(t, app.ExitSuccess)
+				var data struct {
+					Task struct {
+						Revision  int64  `json:"revision"`
+						ClaimedBy string `json:"claimed_by"`
+					} `json:"task"`
+				}
+				decodeData(t, shown.stdout, &data)
+				return []string{"task", "state", task, "--to", "IN_PROGRESS", "--session", data.Task.ClaimedBy,
+					"--expect-revision", strconv.FormatInt(data.Task.Revision, 10)}
+			},
+		},
+		{
+			name: "an operation id reused for a different request",
+			code: app.CodeOperationIDConflict,
+			exit: app.ExitFailed,
+			setup: func(t *testing.T) (string, []string) {
+				repo := newInitializedRepo(t)
+				me := sessionID(t, repo)
+				run(t, repo, "task", "open", "--title", "the first request", "--session", me, "--operation-id", "op-1", "--json").requireExit(t, app.ExitSuccess)
+				return repo, []string{"task", "open", "--title", "a different request", "--session", me, "--operation-id", "op-1"}
+			},
+			// The remedy is a new id.
+			clear: func(t *testing.T, repo string, actions []string) []string {
+				t.Helper()
+				if !remedyMentions(actions, "new operation id") {
+					t.Fatalf("the remedy does not say to mint a new id: %v", actions)
+				}
+				return []string{"task", "open", "--title", "a different request", "--session", sessionID(t, repo), "--operation-id", "op-2"}
+			},
+		},
+		{
+			name: "a database another process holds past the budget",
+			code: app.CodeBusyRetryable,
+			exit: app.ExitUnavailable,
+			setup: func(t *testing.T) (string, []string) {
+				repo := newInitializedRepo(t)
+				holdWriteLockOn(t, repo)
+				return repo, []string{"session", "open"}
+			},
+			// The remedy is to wait for the other command to finish and run
+			// this one again: carrying it out is letting the holder go.
+			clear: func(t *testing.T, repo string, actions []string) []string {
+				t.Helper()
+				if !remedyMentions(actions, "run this one again") {
+					t.Fatalf("the remedy does not say to run the command again: %v", actions)
+				}
+				releaseWriteLockOn(t, repo)
+				return nil
+			},
+		},
 	}
+}
+
+// onlyLeaseOn reads the single active lease on a file off `lease list`, so a
+// remedy closure does not have to be handed one through the row.
+func onlyLeaseOn(t *testing.T, repo, path string) coordination.Lease {
+	t.Helper()
+	listed := run(t, repo, "lease", "list", "--json")
+	listed.requireExit(t, app.ExitSuccess)
+	var data struct {
+		Leases []coordination.Lease `json:"leases"`
+	}
+	decodeData(t, listed.stdout, &data)
+	var found []coordination.Lease
+	for _, lease := range data.Leases {
+		if lease.TargetKind == coordination.TargetFile && lease.TargetKey == path {
+			found = append(found, lease)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the repository holds %d active leases on %s, want exactly 1", len(found), path)
+	}
+	return found[0]
+}
+
+// heldWriteLocks remembers the lock holdWriteLockOn took on each repository,
+// so the busy row's remedy — the other command finishing — can be carried
+// out by releasing it.
+var heldWriteLocks = struct {
+	sync.Mutex
+	release map[string]func()
+}{release: map[string]func(){}}
+
+// holdWriteLockOn takes the runtime database's write lock through a second
+// handle and holds it until the test ends or releaseWriteLockOn is called,
+// which is what another Mindrail command in the middle of a write looks like
+// to this one.
+func holdWriteLockOn(t *testing.T, repo string) {
+	t.Helper()
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatalf("open runtime database: %v", err)
+	}
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("take the write lock: %v", err)
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			_ = tx.Rollback()
+			_ = db.Close()
+		})
+	}
+	heldWriteLocks.Lock()
+	heldWriteLocks.release[repo] = release
+	heldWriteLocks.Unlock()
+	t.Cleanup(release)
+}
+
+// releaseWriteLockOn lets the holder go: the other command finished.
+func releaseWriteLockOn(t *testing.T, repo string) {
+	t.Helper()
+	heldWriteLocks.Lock()
+	release, held := heldWriteLocks.release[repo]
+	delete(heldWriteLocks.release, repo)
+	heldWriteLocks.Unlock()
+	if !held {
+		t.Fatalf("no write lock is held on %s", repo)
+	}
+	release()
 }
 
 // onlyTaskIn returns the id of the single task in a repository, so a remedy

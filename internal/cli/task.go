@@ -51,18 +51,24 @@ func newTaskOpenCommand(o Options) *cobra.Command {
 				return refuseBeforeStarting(cmd, "task open", o, refusal)
 			}
 
+			operation, refusal := operationIDFlag(cmd)
+			if refusal != nil {
+				return refuseBeforeStarting(cmd, "task open", o, refusal)
+			}
+
 			return runCoordination(cmd, "task open", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					task, write, err := s.store.OpenTask(ctx, s.projectID(), s.attribution(handle), title)
+					task, write, err := s.store.Idempotent(operation).OpenTask(ctx, s.projectID(), s.attribution(handle), title)
 					if err != nil {
 						return nil, nil, err
 					}
-					result := taskResult{Task: task, Session: write.Session, SessionMinted: write.Minted}
+					result := taskResult{Task: task, attributed: attributed{Session: write.Session, SessionMinted: write.Minted, Replayed: write.Replayed, OperationID: write.OperationID}}
 					return result, result.RenderHuman, nil
 				})
 		},
 	}
 	cmd.Flags().String(flagTitle, "", "what the task is, in one line")
+	cmd.Flags().String(flagOperationID, "", "an id this request carries, so a retry of it is answered from the first delivery")
 	cmd.Flags().String(flagSession, "", "the session id this run is attributed to; one is minted if omitted")
 	return cmd
 }
@@ -90,20 +96,35 @@ name, and the refusal lists the moves that are available from where the task is.
 			if err != nil {
 				return refuseBeforeStarting(cmd, "task state", o, err)
 			}
+			operation, refusal := operationIDFlag(cmd)
+			if refusal != nil {
+				return refuseBeforeStarting(cmd, "task state", o, refusal)
+			}
+			expect, refusal := expectRevisionFlag(cmd)
+			if refusal != nil {
+				return refuseBeforeStarting(cmd, "task state", o, refusal)
+			}
 
 			return runCoordination(cmd, "task state", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					move, write, err := s.store.Transition(ctx, args[0], s.attribution(handle), to, reason)
+					move, write, err := s.store.Idempotent(operation).TransitionExpecting(ctx, args[0], s.attribution(handle), to, reason, expect)
 					if err != nil {
 						return nil, nil, err
 					}
-					result := taskResult{Task: move.Task, Session: write.Session, SessionMinted: write.Minted}
+					result := taskResult{
+						Task:       move.Task,
+						Lease:      move.Lease,
+						Superseded: move.Superseded,
+						attributed: attributed{Session: write.Session, SessionMinted: write.Minted, Replayed: write.Replayed, OperationID: write.OperationID},
+					}
 					return result, result.RenderHuman, nil
 				})
 		},
 	}
 	cmd.Flags().String(flagTo, "", "the state to move to: "+stateList())
 	cmd.Flags().String(flagReason, "", "why, required when moving to BLOCKED")
+	cmd.Flags().String(flagOperationID, "", "an id this request carries, so a retry of it is answered from the first delivery")
+	cmd.Flags().String(flagExpectRevision, "", "the revision `task show` printed; the move is refused if the task has moved on")
 	cmd.Flags().String(flagSession, "", "the session id this run is attributed to; one is minted if omitted")
 	return cmd
 }
@@ -209,15 +230,19 @@ func stateList() string {
 // SessionMinted is on the wire rather than implied, because "you are working
 // under a session you did not name" is something an agent has to be able to
 // notice: one that wanted continuity and forgot --session would otherwise carry
-// on under a fresh identity in silence.
+// on under a fresh identity in silence. Lease is the task's lease as the write
+// left it — null after a release or for a fresh task — and Superseded the
+// expired tenure a move took over, when it did (decision D-67: reported, never
+// silent).
 type taskResult struct {
-	Task          coordination.Task    `json:"task"`
-	Session       coordination.Session `json:"session"`
-	SessionMinted bool                 `json:"session_minted"`
+	Task       coordination.Task   `json:"task"`
+	Lease      *coordination.Lease `json:"lease"`
+	Superseded *coordination.Lease `json:"superseded,omitempty"`
+	attributed
 }
 
 func (r taskResult) RenderHuman(w io.Writer, _ bool) error {
-	if _, err := fmt.Fprintf(w, "Task %s is %s.\n  %s\n", r.Task.ID, r.Task.State, r.Task.Title); err != nil {
+	if _, err := fmt.Fprintf(w, "Task %s is %s (revision %d).\n  %s\n", r.Task.ID, r.Task.State, r.Task.Revision, r.Task.Title); err != nil {
 		return err
 	}
 	if r.Task.BlockedReason != "" {
@@ -225,14 +250,19 @@ func (r taskResult) RenderHuman(w io.Writer, _ bool) error {
 			return err
 		}
 	}
-	if r.SessionMinted {
-		if _, err := fmt.Fprintf(w,
-			"\nNo --session was given, so session %s was opened for this run.\nPass --session %s to keep later commands in it.\n",
-			r.Session.ID, r.Session.ID); err != nil {
+	if r.Lease != nil {
+		if _, err := fmt.Fprintf(w, "  Lease %s: held by session %s until %s.\n",
+			r.Lease.ID, r.Lease.Holder, app.FormatTime(r.Lease.ExpiresAt)); err != nil {
 			return err
 		}
 	}
-	return nil
+	if r.Superseded != nil {
+		if _, err := fmt.Fprintf(w, "  Took over from session %s, whose lease expired at %s.\n",
+			r.Superseded.Holder, app.FormatTime(r.Superseded.ExpiresAt)); err != nil {
+			return err
+		}
+	}
+	return r.renderAttribution(w)
 }
 
 // handoverResult is what `task show` publishes.
@@ -242,7 +272,7 @@ type handoverResult struct {
 
 func (r handoverResult) RenderHuman(w io.Writer, _ bool) error {
 	task := r.Task
-	if _, err := fmt.Fprintf(w, "Task %s is %s.\n  %s\n", task.ID, task.State, task.Title); err != nil {
+	if _, err := fmt.Fprintf(w, "Task %s is %s (revision %d).\n  %s\n", task.ID, task.State, task.Revision, task.Title); err != nil {
 		return err
 	}
 	if task.BlockedReason != "" {
@@ -252,6 +282,16 @@ func (r handoverResult) RenderHuman(w io.Writer, _ bool) error {
 	}
 	if task.ClaimedBy != "" {
 		if _, err := fmt.Fprintf(w, "  Claimed by: %s\n", task.ClaimedBy); err != nil {
+			return err
+		}
+	}
+	// The lease beside the claimant, in whatever status it is, so a reader is
+	// never shown a claimant as if the claim still bound (decision D-68).
+	if r.Lease != nil {
+		if _, err := fmt.Fprintf(w, "  Lease %s:\n", r.Lease.ID); err != nil {
+			return err
+		}
+		if err := renderLeaseLine(w, *r.Lease); err != nil {
 			return err
 		}
 	}

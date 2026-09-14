@@ -65,6 +65,14 @@ func TestARefusedWriteWritesNothing(t *testing.T) {
 			table: "checkpoints",
 			args:  func(task string) []string { return []string{"checkpoint", "write", task, "--note", badBytes} },
 		},
+		{
+			// MR-004: the file key is free text the caller wrote, and it reaches
+			// the leases table unchanged apart from cleaning.
+			name:  "lease acquire",
+			flag:  "file",
+			table: "leases",
+			args:  func(string) []string { return []string{"lease", "acquire", "--file", badBytes} },
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newInitializedRepo(t)

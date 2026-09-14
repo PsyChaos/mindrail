@@ -47,11 +47,12 @@ func runInit(cmd *cobra.Command, o Options) error {
 
 	started := time.Now()
 	application := bootstrap.New(bootstrap.Options{
-		StartDir: inv.startDir,
-		Mode:     bootstrap.ModeInit,
-		Runner:   inv.runner(),
-		Logger:   inv.logger,
-		Environ:  inv.environ,
+		StartDir:    inv.startDir,
+		Mode:        bootstrap.ModeInit,
+		Runner:      inv.runner(),
+		BusyTimeout: inv.opts.BusyTimeout,
+		Logger:      inv.logger,
+		Environ:     inv.environ,
 	})
 	defer shutdown(cmd.Context(), application, inv.logger)
 
@@ -122,11 +123,12 @@ func (inv invocation) refuseUnrepresentableRepository(ctx context.Context) error
 	}
 
 	probe := bootstrap.New(bootstrap.Options{
-		StartDir: inv.startDir,
-		Mode:     bootstrap.ModeReadOnly,
-		Runner:   inv.runner(),
-		Logger:   inv.logger,
-		Environ:  inv.environ,
+		StartDir:    inv.startDir,
+		Mode:        bootstrap.ModeReadOnly,
+		Runner:      inv.runner(),
+		BusyTimeout: inv.opts.BusyTimeout,
+		Logger:      inv.logger,
+		Environ:     inv.environ,
 	})
 	defer shutdown(ctx, probe, inv.logger)
 

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -30,6 +31,13 @@ import (
 type Options struct {
 	// Runner executes git subprocesses. nil means git.NewExecRunner().
 	Runner git.CommandRunner
+
+	// BusyTimeout is how long a command waits for the runtime database's
+	// write lock before MINDRAIL_BUSY_RETRYABLE; zero means storage's
+	// default, five seconds (decision D-08). It is a seam for the tests that
+	// hold the lock and drive a command into the refusal, which at the
+	// production budget would cost five seconds per row.
+	BusyTimeout time.Duration
 }
 
 const rootLong = `Mindrail is a local engineering gate for AI coding agents.
@@ -106,6 +114,7 @@ func NewRootWith(o Options) *Root {
 		newSessionCommand(o),
 		newTaskCommand(o),
 		newCheckpointCommand(o),
+		newLeaseCommand(o),
 	)
 
 	// A help command of our own, because cobra's prints the whole root help on

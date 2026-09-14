@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/coordination"
 )
 
@@ -34,6 +35,10 @@ func newCheckpointWriteCommand(o Options) *cobra.Command {
 			note, _ := cmd.Flags().GetString(flagNote)
 			handoff, _ := cmd.Flags().GetBool(flagHandoff)
 			handle, _ := cmd.Flags().GetString(flagSession)
+			operation, refusal := operationIDFlag(cmd)
+			if refusal != nil {
+				return refuseBeforeStarting(cmd, "checkpoint write", o, refusal)
+			}
 
 			// The note is judged before the application starts, for the same
 			// reason `task state` parses --to there: an empty note is a mistake
@@ -46,15 +51,15 @@ func newCheckpointWriteCommand(o Options) *cobra.Command {
 
 			return runCoordination(cmd, "checkpoint write", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					noted, write, err := s.store.WriteCheckpoint(
+					noted, write, err := s.store.Idempotent(operation).WriteCheckpoint(
 						ctx, args[0], s.attribution(handle), s.space.ID, note, handoff)
 					if err != nil {
 						return nil, nil, err
 					}
 					result := checkpointResult{
-						Checkpoint:    noted.Checkpoint,
-						Session:       write.Session,
-						SessionMinted: write.Minted,
+						Checkpoint: noted.Checkpoint,
+						Lease:      noted.Lease,
+						attributed: attributed{Session: write.Session, SessionMinted: write.Minted, Replayed: write.Replayed, OperationID: write.OperationID},
 					}
 					return result, result.RenderHuman, nil
 				})
@@ -63,14 +68,17 @@ func newCheckpointWriteCommand(o Options) *cobra.Command {
 	cmd.Flags().String(flagNote, "", "where the work stands, for whoever picks it up")
 	cmd.Flags().Bool(flagHandoff, false, "mark this as the note left on the way out")
 	cmd.Flags().String(flagSession, "", "the session id this run is attributed to; one is minted if omitted")
+	cmd.Flags().String(flagOperationID, "", "an id this request carries, so a retry of it is answered from the first delivery")
 	return cmd
 }
 
-// checkpointResult is what `checkpoint write` publishes.
+// checkpointResult is what `checkpoint write` publishes. Lease is the task's
+// lease as the note left it — renewed, or released by a handoff — and null
+// when the writer held none (decision D-78).
 type checkpointResult struct {
-	Checkpoint    coordination.Checkpoint `json:"checkpoint"`
-	Session       coordination.Session    `json:"session"`
-	SessionMinted bool                    `json:"session_minted"`
+	Checkpoint coordination.Checkpoint `json:"checkpoint"`
+	Lease      *coordination.Lease     `json:"lease"`
+	attributed
 }
 
 func (r checkpointResult) RenderHuman(w io.Writer, _ bool) error {
@@ -82,11 +90,17 @@ func (r checkpointResult) RenderHuman(w io.Writer, _ bool) error {
 		r.Checkpoint.ID, r.Checkpoint.TaskID, marker, r.Checkpoint.Note); err != nil {
 		return err
 	}
-	if r.SessionMinted {
-		_, err := fmt.Fprintf(w,
-			"\nNo --session was given, so session %s was opened for this run.\nPass --session %s to keep later commands in it.\n",
-			r.Session.ID, r.Session.ID)
-		return err
+	if r.Lease != nil {
+		switch r.Lease.Status {
+		case coordination.LeaseReleased:
+			if _, err := fmt.Fprintf(w, "  Lease %s released; the next session may take the task.\n", r.Lease.ID); err != nil {
+				return err
+			}
+		default:
+			if _, err := fmt.Fprintf(w, "  Lease %s renewed until %s.\n", r.Lease.ID, app.FormatTime(r.Lease.ExpiresAt)); err != nil {
+				return err
+			}
+		}
 	}
-	return nil
+	return r.renderAttribution(w)
 }

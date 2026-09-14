@@ -116,6 +116,7 @@ type Options struct {
 	MigrationFS        fs.FS // nil => migrations.FS
 	SchemaFS           fs.FS // nil => schemas.KnowledgeFS
 	Recorder           Recorder
+	BusyTimeout        time.Duration // 0 => storage.DefaultBusyTimeout
 }
 
 // InitResult carries what only ModeInit produces. It is separate from
@@ -656,8 +657,9 @@ func (a *App) openSQLite(ctx context.Context) error {
 	}
 
 	db, err := storage.Open(ctx, storage.Options{
-		Path:     a.subject.Paths.DBPath,
-		ReadOnly: a.opts.Mode == ModeReadOnly,
+		Path:        a.subject.Paths.DBPath,
+		ReadOnly:    a.opts.Mode == ModeReadOnly,
+		BusyTimeout: a.opts.BusyTimeout,
 	})
 	if err != nil {
 		a.subject.DBErr = err

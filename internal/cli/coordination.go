@@ -70,11 +70,12 @@ func runCoordination(cmd *cobra.Command, name string, o Options,
 	}
 
 	application := bootstrap.New(bootstrap.Options{
-		StartDir: inv.startDir,
-		Mode:     bootstrap.ModeWrite,
-		Runner:   inv.runner(),
-		Logger:   inv.logger,
-		Environ:  inv.environ,
+		StartDir:    inv.startDir,
+		Mode:        bootstrap.ModeWrite,
+		Runner:      inv.runner(),
+		BusyTimeout: inv.opts.BusyTimeout,
+		Logger:      inv.logger,
+		Environ:     inv.environ,
 	})
 	defer shutdown(cmd.Context(), application, inv.logger)
 
@@ -323,29 +324,42 @@ the checkpoints you write are attributed to one run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			label, _ := cmd.Flags().GetString(flagLabel)
+			operation, refusal := operationIDFlag(cmd)
+			if refusal != nil {
+				return refuseBeforeStarting(cmd, "session open", o, refusal)
+			}
 
 			return runCoordination(cmd, "session open", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					session, _, err := s.store.OpenSession(ctx, s.space.ID, label)
+					session, write, err := s.store.Idempotent(operation).OpenSession(ctx, s.space.ID, label)
 					if err != nil {
 						return nil, nil, err
 					}
-					result := sessionResult{Session: session}
+					result := sessionResult{Session: session, Replayed: write.Replayed, OperationID: write.OperationID}
 					return result, result.RenderHuman, nil
 				})
 		},
 	}
 	cmd.Flags().String(flagLabel, "", "a name you will recognise this run by")
+	cmd.Flags().String(flagOperationID, "", "an id this request carries, so a retry of it is answered from the first delivery")
 	return cmd
 }
 
 // sessionResult is what `session open` publishes.
 type sessionResult struct {
-	Session coordination.Session `json:"session"`
+	Session     coordination.Session `json:"session"`
+	Replayed    bool                 `json:"replayed"`
+	OperationID string               `json:"operation_id,omitempty"`
 }
 
 func (r sessionResult) RenderHuman(w io.Writer, _ bool) error {
-	_, err := fmt.Fprintf(w, "Session %s opened.\nPass --session %s to the commands that belong to this run.\n",
-		r.Session.ID, r.Session.ID)
-	return err
+	if _, err := fmt.Fprintf(w, "Session %s opened.\nPass --session %s to the commands that belong to this run.\n",
+		r.Session.ID, r.Session.ID); err != nil {
+		return err
+	}
+	if r.Replayed {
+		_, err := fmt.Fprintf(w, "\nThis is the recorded result of operation %s; nothing was written again.\n", r.OperationID)
+		return err
+	}
+	return nil
 }
