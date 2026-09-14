@@ -7,14 +7,23 @@
   proposed, 46 confirmed, **27 distinct defects — 5 HIGH, 15 MEDIUM, 7 LOW**.
   The evidence is [mr-003-audit-round-1.md](mr-003-audit-round-1.md); §5 below is
   the summary.
-- **Round-1 remediation**: all fifteen items of the audit's brief, `c29efa3..e7e946c`.
-  §6 below is the record.
-- **Status: remediated, not re-audited.** A remediation pass in this repository
-  is audited: MR-002's first remediation closed 22 findings and introduced 11,
-  and all eleven came from the fix pass. Round 2 grades this one.
+- **Round-1 remediation**: all fifteen items of the audit's brief, `c29efa3`
+  through `e7e946c` — thirteen commits, items 8–10 sharing one. §6 below is the
+  record.
+- **Audit round 2**: graded the round-1 remediation. 9 auditors, 85 agents, 30
+  distinct claims, **17 confirmed — 0 HIGH, 4 MEDIUM, 13 LOW**; all 27 of round
+  1's defects closed in the code, 7 of the 17 new ones wrong sentences about
+  work that was done. The evidence is
+  [mr-003-audit-round-2.md](mr-003-audit-round-2.md).
+- **Round-2 remediation**: all nine items of round 2's brief, `0f94e23` through
+  `0ea96d5`. §7 below is the record.
+- **Status: remediated twice; no round 3 proposed.** Round 2 found zero HIGH,
+  and its remediation is small enough that a third 85-agent round would not pay
+  for itself. The next gate is per task in MR-004, not per milestone.
 - `make check` green, `make verify` green, `make tidy-check` green
-- **799** top-level test functions, from 768 at the audit and 732 at the freeze
-  (`go test -list '.*' ./...`, the method R4-M11 settled)
+- **805** top-level test functions, from 799 after the round-1 remediation, 768
+  at the audit and 732 at the freeze (`go test -list '.*' ./...`, the method
+  R4-M11 settled)
 
 Sections 1–4 are the **implementer's own account**, written before the audit so
 that the audit had something to grade against. They are left exactly as they were
@@ -287,7 +296,7 @@ functions, from 768 at `3f5ab3e`, counted with `go test -list '.*' ./...`.
 | 10 | F04 | (test only) a write failure is named by the storage layer first | removing the `storage.WriteFailure` call — all four writers red on `COORDINATION_WRITE_FAILED` |
 | 11 | F21 | An accepted move advances `updated_at`; abandoning keeps the claimant. Not test-only: the same commit gave `Attribution` a `mint` flag, made `attribute` dispatch on it instead of on an empty handle, and moved what `MintFor("")` answers from `SESSION_NOT_FOUND` to the no-workspace error — `COORDINATION_UNAVAILABLE` once item 13 coded it. *(Corrected during the round-2 remediation, §4.14: this row said "(test only)".)* | `updated_at = updated_at`, and adding `ABANDONED` to the clearing branch |
 | 12 | F13, F35 | A coordination agreement matrix: AC-09.1's four conditions asserted across the envelope, the human rendering and the exit code, with the printed remedy carried out | `RenderError` dropping its "Next" section — all four rows red, item 2's halted-startup test green. *Corrected during the round-2 remediation (§4.6): this cell said "reverting item 2 — the startup rows red", a mutation that fails item 2's own test and none of these four* |
-| 13 | F44, F46, F26 | `COORDINATION_READ_FAILED` wraps the read paths; `CoordinationErr` gives the block `indeterminate`; the empty-workspace guards are coded | reverting one read wrap — `code: ""`. Removing the indeterminate route — `not_observed` over a read that ran |
+| 13 | F44, F46, F26 | `COORDINATION_READ_FAILED` wraps the read paths; `CoordinationErr` gives the block `indeterminate`; the empty-workspace guards are coded | Unwrapping `FindTask`'s scan — `task show` publishes `code: ""`; unwrapping `ListTasks`'s scan — `task list` does. Each red on its own, since the round-2 remediation drove a damaged `tasks` row through both. *(Corrected during the round-2 remediation, §4.2: this cell said "reverting one read wrap — `code: """ for ten wraps, and round 2 showed no test reached any of them — the sweep's rows were all answered by item 2's startup verdict before a store read ran.)* Removing the indeterminate route — `not_observed` over a read that ran |
 | 14 | F33, F34, F22, F48, F49 | The usage envelope publishes the full command path; a group named without a subcommand is an envelope under `--json`; the self-transition refusal names the claimant; the project-scoped checkpoint query stops sorting the project; the "Last checkpoint" line has a subject | `cmd.Name()`, help under `--json`, the dropped `claimed_by`, the join instead of `EXISTS` — each red |
 | 15 | F15, F05, F14, F23, F47, F06, F25, F18, F16, F17, F07 | The ledger, plus two things it turned out to be cheaper to fix than to record: AC-03.5 is now enforced by an allow-list, and the four unexecuted renderings have goldens | `internal/coordination` importing `internal/git` — red. `sessionResult.RenderHuman` panicking — red, where before it was green in 18 packages and in `make smoke` |
 
@@ -358,3 +367,78 @@ judgment a second audit should grade rather than take on trust.
   `internal/migration`, which round 1 added.
 - **Linux only.** No macOS or Windows path behaviour has been exercised by
   anyone, in any round.
+
+---
+
+## 7. The round-2 remediation
+
+All nine items of round 2's brief (`mr-003-audit-round-2.md` §8), plus one
+carried-forward test repair the brief named but did not number. The commits run
+from `0f94e23` to `0ea96d5` inclusive: twelve, of which eleven are items — one
+each, item 9 being two — and one (`043457e`) is round 2's own record entering
+the tree; this section and the graph refresh follow them. Items 2, 3, 5 and 7
+were written by one subagent each in its own worktree and item 9 was decided and
+written by a second model; every mutation below was re-run by the orchestrator
+in the main tree before the commit was taken, whoever wrote the fix. Sections
+1–4 and 6 are corrected in place with a marker where round 2 proved a sentence
+wrong; nothing in them was rewritten silently.
+
+`make check`, `make tidy-check` and `make verify` are green. **805** top-level
+test functions, from 799 at `24069aa` (`go test -list '.*' ./...`).
+
+### What changed, and what proves it
+
+| # | Round 2 | What the fix does | The mutation that turns the new test red |
+|---|---|---|---|
+| 1 | §4.1 | `coordinationScope` refuses a database whose ledger is short of the coordination migration with `MIGRATION_FAILED` / "Schema is behind this binary" and `mindrail init` as the remedy, after the workspace lookup that F01 requires to succeed. `coordination.TableSchemaVersion` is the second constant of `workspace.TableSchemaVersion`'s kind | removing the check — `task list` answers `COORDINATION_READ_FAILED` and `session open` `COORDINATION_WRITE_FAILED`, both sending the reader to `mindrail doctor`; `TestAWorktreeRegisteredByAnOlderBinaryIsStillRegistered` stays green either way |
+| 2 | §4.2 | `TestNoCoordinationFailureReachesTheWireUncoded` gains a second sweep: a `tasks` row with an unparseable `created_at`, driven through `task show` and `task list`. Test-only; no `emit` backstop, because the sweep reaches both sites | unwrapping `FindTask`'s scan — `task show` publishes `code: ""`; unwrapping `ListTasks`'s scan — `task list` does; each on its own |
+| 3 | §4.3 | `TestTheUnrepresentablePathRemediesBothWork` runs the refusal first and asserts the location form's code, its message ("in this report") and that the second `next_action` names a rename, before renaming | both `locationTypes` entries `false` — red on the message, `TestAStoredValueIsNotReportedAsAPath` green |
+| 4 | §4.4 | AC-04.4 and design §4 amended in place to `ORDER BY rowid DESC`; the same-timestamp test renamed `TestATimestampTieDoesNotDecideTheLastCheckpoint` and its comment says what it cannot tell apart; the F37 test's comment binds it to AC-04.4 | `ORDER BY checkpoint_id DESC` at both sites — the F37 test red on all three readers, the renamed test green; `ORDER BY created_at DESC` — both red |
+| 5 | §4.5 | `moduletree.SkipDir` escapes the root before the name check; `lifecycle_scan_test.go` and `storage/arch_test.go` fail when the walk inspected nothing; the moduletree fixture's root is now `.mindrail` | the one-line move reverted — `SkipDir(…/.mindrail) = true, want false`. In a copy of the tree under a dot-named directory with a seven-state file planted in `internal/cli` and a driver import in `internal/doctor`, both guards fire; before the fix both packages were `ok` |
+| 6 | §4.6 | §3 and §6 record the falsifier of the AC-09.1 matrix; nothing executable | `RenderError` dropping its "Next" section — all four rows red, the halted-startup test green; the reverse mutation flips exactly which one fails |
+| 7 | §4.8 | `TestANeverGivenWorkspaceIsRefusedByNameRatherThanByAConstraint` pins both `noWorkspace` sites; `TestARefusedWriteMintsNoSession` asserts `metadata.flag`, the impact sentence and the `--help` remedy for the two `requireFlagText` boundaries | deleting `attribute`'s guard — `COORDINATION_WRITE_FAILED` for `COORDINATION_UNAVAILABLE`; deleting `requireFlagText` from `task open` — `metadata.flag = ""`; the same from `checkpoint write` — the same, each alone |
+| 8 | §4.9–§4.11, §4.13–§4.17 | The ledger: the golden test's name, the 1.2 ms figure in three places, row 11's "(test only)", AC-04.6's "all six", the task list's "on beş commit", the F37 fixture's ids (26 characters, one millisecond), the `EXISTS` rewrite's empty-project cost, `migrations/README.md` | nothing executable in the ledger itself. Added beside it, because §4.17's weight is in its last clause: `TestAnAppliedMigrationFileIsNeverEdited` pins both shipped files' sha256 — editing one word of the `.sql` comment turns it red, where before `go test ./...` was fully green |
+| 9a | §4.7 | A precondition read that fails inside a write transaction is `COORDINATION_READ_FAILED` naming the row that could not be read — `requireSession`'s scan, and the task reads in `Transition` and `WriteCheckpoint` — so `task show` and `task state` give one damaged row one code. AC-05.1 amended in place | unwrapping `requireSession`'s scan — `task open --session` publishes `COORDINATION_WRITE_FAILED` with a `subject_id` naming a task no statement attempted; `TestAPreconditionReadThatFailsIsReportedAsAReadOfThatRow` red on the same arm at store level |
+| 9b | §4.12 | `attribute` takes the write's own `now`; `Transition` reads the clock once, before the transaction, like the other two writers | reading the clock again inside `attribute` — `TestAMintedSessionStartsNoLaterThanTheRowItAttributes` red on all three writers, and the SQL count of rows attributed to a later session is 1 |
+| + | §8, carried forward | `TestConcurrentInitAcrossProcessesWaits` sums the migrations each racer applied and asserts the set once per fresh database, instead of one applier per round — an invariant that stopped holding at `000002` because `Up` takes each migration in its own transaction. Three of five subagents met the old assertion red once today, under load, with the ledger correct each time | none claimed: this is a repair of a test's arithmetic, not a new guard. Ten runs green in isolation, and green inside the three `make` targets above |
+
+### Where this pass departed from the brief, and why
+
+- **Item 3 asserts the remedy's text and still performs the rename itself.**
+  The brief said to read the second `next_action` and "carry it out". Parsing a
+  path out of prose to execute it would pin the sentence's grammar rather than
+  its meaning; the test now asserts the code, the location form's message and
+  that the remedy names a rename, then renames. The mutation the brief named
+  goes red on the message.
+- **Item 8's two literal checks do not return what the brief predicted, on
+  purpose.** `grep -rn "1.2 ms" internal/ docs/` still matches: the figure is
+  kept where it is true — 1,000 tasks — and quoted in each correction note.
+  `grep -c 'TestHumanOutputGolden' mr-003-findings.md` returns 2, because the
+  corrected sentence now names both tests and says which one still loops over
+  `status` and `doctor` only; a reader grepping for the old name finds the
+  correction rather than nothing.
+- **Item 9a was applied to three reads, not one.** §4.7 named `requireSession`.
+  `Transition`'s and `WriteCheckpoint`'s task reads returned a bare error from
+  inside the same kind of transaction, and `task state` on a damaged task row
+  already disagreed with `task show` — the rule "the code follows what happened
+  to the row" is only a rule if it holds at all three.
+- **Item 9b touched `Transition` too.** The brief counted two call sites;
+  `Transition` is the third, and it had no captured `now` to pass — it read the
+  clock inside the transaction for `updated_at` as well. It now reads once.
+- **Item 5's vacuity guards say "no files … were inspected", not the brief's
+  quoted "no first-party packages were parsed".** The two existing guards do
+  not share wording either, and neither of the two new walkers builds a
+  package map; the message names what each actually counts.
+- **A tenth item was done that the brief listed as backlog.** The concurrency
+  test's false red is the last row above. It was moved forward because it
+  fires under exactly the load a per-task gate produces, and because the brief
+  had already written the fix.
+
+### What this pass did not close
+
+Unchanged from §6, and round 2 §6 has the reasons: the four surviving store
+mutations (two need a fixture registering a second project), the two
+`commandsUnderTest` invariants that do not reach the coordination commands,
+MR-002's Appendix F leftovers, `internal/workspace` and `internal/migration`
+beyond the one test above, and every platform that is not Linux.
+`docs/adr/0002-sqlite-driver.md` is still Proposed.

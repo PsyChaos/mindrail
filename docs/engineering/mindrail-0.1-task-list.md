@@ -190,6 +190,23 @@ iç içe checkout'ta yeşil kalıyor, ve "en yeni checkpoint" veritabanının at
 sıra oldu. Ayrıntısı ve bu geçişin brifingden ayrıldığı üç yer
 [mr-003-findings.md](mr-003-findings.md) §6'da.
 
+**İkinci denetim** remediasyonun kendisini notladı: 9 denetçi, 85 ajan, 30
+ayrık iddia, **17 doğrulanan — 0 HIGH, 4 MEDIUM, 13 LOW**. Yirmi yedi kusurun
+yirmi yedisi kodda kapanmış; yeni on yedinin yedisi yapılmış işi yanlış anlatan
+cümle, altısı iddia ettiğinden azını doğrulayan test, dördü davranış — ve o
+dördün yalnızca birine bir kullanıcı ulaşıyor: eski sürümün açtığı bir
+veritabanında `task list`, "şema geride, `init` çalıştır" yerine `doctor`'a
+gönderiyordu. Kanıt [mr-003-audit-round-2.md](mr-003-audit-round-2.md); tur
+oranı ölçmek için vardı — MR-002'nin ilk remediasyonu 22 kapatıp 11 açmıştı,
+bununki 27 kapatıp 16 açtı, oran düzelmedi ama şiddet çöktü.
+
+**İkinci remediasyon** (`0f94e23`'ten `0ea96d5`'e, dokuz kalem, on iki commit —
+biri denetim kaydının kendisi, 9. kalem iki commit) dokuz kalemin dokuzunu
+kapattı ve brifingin backlog'a bıraktığı bir test onarımını öne aldı; her
+mutasyon ana ağaçta yeniden çalıştırıldıktan sonra commit alındı. Üçüncü tur
+önerilmiyor: sıfır HIGH. Kaydı ve brifingten ayrıldığı altı yer
+[mr-003-findings.md](mr-003-findings.md) §7'de. 805 test.
+
 ---
 
 ### [ ] MR-004 — Güvenli lease, idempotency ve optimistic revision

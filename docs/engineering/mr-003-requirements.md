@@ -399,6 +399,17 @@ would tell the arriving agent anything.
   which AC-04.6 forbids and which a caller cannot branch on. It is the read
   counterpart of `COORDINATION_WRITE_FAILED` and takes the same exit class for
   the same reason.
+
+  *Amended during the round-2 remediation (round 2, §4.7).* The code follows
+  what happened to the row, not the verb of the command: a row a write
+  transaction finds and cannot decode — the session `task open --session`
+  names, the task `task state` or `checkpoint write` is about to touch — is
+  `COORDINATION_READ_FAILED` naming that row in `metadata.subject_id`;
+  `COORDINATION_WRITE_FAILED` is reserved for a row that did not reach the
+  database. Before this, a session whose `started_at` could not be parsed was
+  published from `task open` as a failure to write a task whose id no statement
+  had attempted, and the same damaged task row answered `task show` with one
+  code and `task state` with the other.
 - **AC-05.2** No existing `app.Code` value changes spelling or meaning.
 - **AC-05.3** Each new code maps to exit 1 (`ExitFailed`) except where the
   command line itself is wrong, which stays exit 2 through the existing usage
