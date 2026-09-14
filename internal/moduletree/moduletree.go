@@ -62,12 +62,15 @@ func Root(dir string) (string, error) {
 // about itself, and a walk that reads them attributes a second module's
 // contents to this one.
 func SkipDir(root, path string) bool {
+	// The root is never skipped, whatever its own name or its own go.mod would
+	// otherwise imply: both rules below exist to recognise a path as something
+	// other than this module's own root, and the root can never be that.
+	if path == root {
+		return false
+	}
 	name := filepath.Base(path)
 	if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "graphify-out" {
 		return true
-	}
-	if path == root {
-		return false
 	}
 	_, err := os.Stat(filepath.Join(path, "go.mod"))
 	return err == nil

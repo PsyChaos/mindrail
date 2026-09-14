@@ -43,7 +43,11 @@ func TestRootReportsThatThereIsNoModule(t *testing.T) {
 // a nested checkout carries a copy of every file in this module, and a walk
 // that reads those copies attributes a second module's contents to this one.
 func TestSkipDirKeepsTheWalkInsideThisModule(t *testing.T) {
-	root := t.TempDir()
+	// The root's own basename starts with a dot on purpose: this project's own
+	// tooling creates linked worktrees under .claude/worktrees/, and a checkout
+	// living under a dot-prefixed directory of its own must not make the root
+	// escape below unreachable.
+	root := filepath.Join(t.TempDir(), ".mindrail")
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.test\n")
 
 	nested := filepath.Join(root, "mode-b")

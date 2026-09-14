@@ -82,6 +82,7 @@ func TestDriverImportUnreachableFromOtherPackages(t *testing.T) {
 	root := moduleRoot(t)
 	storageDir := filepath.Join(root, "internal", "storage")
 
+	inspected := 0
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -98,6 +99,7 @@ func TestDriverImportUnreachableFromOtherPackages(t *testing.T) {
 		if filepath.Dir(path) == storageDir {
 			return nil // covered, file by file, by TestDriverImportConfinedToStorage
 		}
+		inspected++
 
 		for _, imported := range fileImports(t, path) {
 			if imported == driverModule || strings.HasPrefix(imported, driverModule+"/") {
@@ -121,6 +123,12 @@ func TestDriverImportUnreachableFromOtherPackages(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walk %s: %v", root, err)
+	}
+	// A walk that visits nothing outside internal/storage would leave the loop
+	// above with no file to ever call t.Errorf on, and the test would pass while
+	// confining nothing.
+	if inspected == 0 {
+		t.Fatal("no files outside internal/storage were inspected; the confinement check would be vacuous")
 	}
 }
 

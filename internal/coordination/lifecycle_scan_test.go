@@ -31,6 +31,7 @@ func lifecycleLiteralsOutsideThisPackage(t *testing.T) []string {
 		needles = append(needles, `"`+string(state)+`"`)
 	}
 
+	inspected := 0
 	var offenders []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		switch {
@@ -51,6 +52,7 @@ func lifecycleLiteralsOutsideThisPackage(t *testing.T) []string {
 		case !strings.HasSuffix(path, ".go"):
 			return nil
 		}
+		inspected++
 
 		body, readErr := os.ReadFile(path)
 		if readErr != nil {
@@ -71,6 +73,13 @@ func lifecycleLiteralsOutsideThisPackage(t *testing.T) []string {
 	})
 	if err != nil {
 		t.Fatalf("walking %s: %v", root, err)
+	}
+	// An empty offender list is supposed to mean nothing outside this package
+	// spells the lifecycle out. It would mean exactly the same thing if the walk
+	// never left the root, so absence of offenders alone cannot be the pass
+	// condition.
+	if inspected == 0 {
+		t.Fatal("no files outside internal/coordination were inspected; the lifecycle check would be vacuous")
 	}
 	return offenders
 }
