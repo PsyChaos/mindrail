@@ -21,6 +21,18 @@ const (
 	checkpointIDPrefix = "CKP"
 )
 
+// TableSchemaVersion is the migration that creates the sessions, tasks and
+// checkpoints tables.
+//
+// It exists for the same split workspace.TableSchemaVersion does, one step
+// later: a database written by an older binary has its workspaces table and
+// the row in it, so the upgrade lookup succeeds, but it has no coordination
+// tables to query. A caller that resolves the workspace and then uses this
+// store anyway answers with the SQL error and a remedy that cannot clear it,
+// where the condition is one `mindrail init` genuinely fixes (audit round 2,
+// §4.1).
+const TableSchemaVersion = 2
+
 // selectNewestCheckpointOfProject is the query `status` runs on every start.
 //
 // EXISTS rather than a join, and the difference is the whole cost of it. A join

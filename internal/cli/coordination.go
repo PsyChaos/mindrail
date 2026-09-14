@@ -112,11 +112,12 @@ func runCoordination(cmd *cobra.Command, name string, o Options,
 
 // coordinationScope refuses a repository that has no coordination state.
 //
-// The two conditions are separate readings and both mean "run init", but they
-// are not the same fact: one is "there is no runtime database", the other is
-// "there is one and this worktree is not in it". Naming them separately in the
-// diagnostic is what tells a reader whether their `init` failed or was never
-// run here.
+// The conditions are separate readings and all mean "run init", but they are
+// not the same fact: "there is no runtime database", "there is one and this
+// worktree is not in it", and "there is one, the worktree is in it, and the
+// schema is a migration behind this binary". Naming them separately in the
+// diagnostic is what tells a reader whether their `init` failed, was never run
+// here, or has a migration left to apply.
 func coordinationScope(a *bootstrap.App) (scope, error) {
 	store := a.Coordination()
 	if store == nil {
@@ -130,7 +131,45 @@ func coordinationScope(a *bootstrap.App) (scope, error) {
 			"this worktree is not registered in the runtime database, so it has no project to hold tasks")
 	}
 
+	// The coordination tables are a later migration than the workspace row,
+	// and the gap between the two is the state every existing repository is in
+	// on its first run after an upgrade: the lookup above succeeds — that is
+	// the whole of finding F01 — and the store below would then be handed a
+	// database with no sessions, tasks or checkpoints table, which answers
+	// with a SQL error and a remedy `mindrail doctor` cannot clear while the
+	// same disk's `status` names the one that works. Refusing here keeps one
+	// condition on one code and one working remedy (audit round 2, §4.1).
+	if !schemaHasCoordinationTables(a) {
+		return scope{}, schemaBehind()
+	}
+
 	return scope{app: a, store: store, space: space}, nil
+}
+
+// schemaHasCoordinationTables reports whether the migration that creates the
+// coordination tables has been applied, read from the migration ledger for the
+// same reason bootstrap's workspace test reads it there: the ledger is what the
+// migrator itself is answerable for.
+func schemaHasCoordinationTables(a *bootstrap.App) bool {
+	for _, applied := range a.Subject().Migrations {
+		if applied.Version >= coordination.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
+}
+
+// schemaBehind is the answer `status` and `doctor` give a database whose
+// migrations have not been applied, carried by the coordination commands so
+// the remedy printed is the one that clears the condition.
+func schemaBehind() error {
+	return app.NewError(
+		app.CodeMigrationFailed,
+		app.KindFailed,
+		"Schema is behind this binary: the migration that creates the sessions, tasks and checkpoints tables has not been applied",
+		"Commands that need the newer schema cannot run; nothing was read and nothing was written.",
+		"Run `mindrail init` to apply the pending migrations, then re-run the command.",
+	)
 }
 
 // coordinationTextFlags are the flags whose value is free text the caller wrote,

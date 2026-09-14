@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -103,6 +104,53 @@ func TestAWorkspaceNobodyLookedUpIsNotReportedAsUnregistered(t *testing.T) {
 	}
 	if data.Workspace.Registered {
 		t.Error("registered = true without a lookup")
+	}
+}
+
+// TestCoordinationCommandsSendASchemaBehindDatabaseToInit is audit round 2, §4.1.
+//
+// The repository the fixture above builds — migration 1 applied, migration 2
+// pending — is the state every existing database is in on its first run after
+// an upgrade, and the workspace lookup rightly succeeds in it. The six
+// coordination commands then held a store over a database with no sessions,
+// tasks or checkpoints table, and answered `task list --json` with
+// COORDINATION_READ_FAILED sending the reader to `mindrail doctor`, which
+// exits 0 and clears nothing, while `status` on the same bytes called the
+// condition MIGRATION_FAILED and printed the remedy that works. One
+// condition, two codes, two remedies; this pins the one whose remedy clears.
+func TestCoordinationCommandsSendASchemaBehindDatabaseToInit(t *testing.T) {
+	for _, args := range [][]string{{"task", "list"}, {"session", "open"}} {
+		name := commandName(args)
+		repo := newInitializedRepo(t)
+		downgradeToSchemaOne(t, repo)
+
+		got := run(t, repo, append(slices.Clone(args), "--json")...)
+		if got.code != app.ExitFailed {
+			t.Fatalf("%s exited %d on a schema-behind database, want %d\n%s",
+				name, got.code, app.ExitFailed, got.stdout)
+		}
+		payload := got.errorPayload(t)
+		if payload.Code != app.CodeMigrationFailed {
+			t.Errorf("`status` calls this condition %q and `%s` calls it %q; one condition has one code\n%s",
+				app.CodeMigrationFailed, name, payload.Code, got.stdout)
+		}
+		if !strings.Contains(strings.Join(payload.NextAction, " "), "mindrail init") {
+			t.Errorf("%s does not send the reader to the command that clears the condition: %v",
+				name, payload.NextAction)
+		}
+		if strings.Contains(payload.Why, "no such table") {
+			t.Errorf("%s publishes the raw SQL error as the whole cause:\n%s", name, got.stdout)
+		}
+
+		// The remedy works on this disk, which is the part the doctor remedy
+		// could not do: init applies the missing migration and the same
+		// command then succeeds on the same repository.
+		if applied := run(t, repo, "init", "--json"); applied.code != app.ExitSuccess {
+			t.Fatalf("%s: init exited %d on an upgraded repository: %s",
+				name, applied.code, applied.stdout)
+		}
+		after := run(t, repo, append(slices.Clone(args), "--json")...)
+		after.requireExit(t, app.ExitSuccess)
 	}
 }
 
