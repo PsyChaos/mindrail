@@ -272,16 +272,20 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, to State, reason string) (Task, Write, error) {
 	reason = strings.TrimSpace(reason)
 
-	// One clock reading per write, taken before the transaction as the other
-	// two writers take theirs, so a session minted here starts at the instant
-	// the move is stamped with.
-	now := s.clock.Now().UTC()
-
 	var (
 		updated Task
 		write   Write
 	)
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		// One clock reading per write, and it is taken here, under the write
+		// lock, not before the transaction the way the two inserting writers
+		// take theirs. updated_at replaces an earlier value on the same row,
+		// so it has to follow commit order: a move that waited on the lock and
+		// committed second must not carry the earlier stamp, which is what a
+		// reading before BEGIN gave it (verification pass after the round-2
+		// remediation). A session minted here starts at this same instant.
+		now := s.clock.Now().UTC()
+
 		resolved, err := s.attribute(ctx, tx, by, now)
 		if err != nil {
 			return err
