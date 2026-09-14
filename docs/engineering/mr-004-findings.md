@@ -642,3 +642,64 @@ lease release <id>`, a command that does not exist until then.
 **Carried forward from this gate:** the takeover and the lease on `task
 state`'s wire, `task show`'s human rendering and the pins for `revision` and
 `lease` (TASK-06).
+
+---
+
+## 5. TASK-05 — a repeated operation is answered from its record
+
+Commit `d4889f7`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
+green; **856** top-level test functions, from 849. Owns REQ-06 and
+`OPERATION_ID_CONFLICT` of REQ-07.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/operation.go` (new) | `Operation{ID}`; `ValidOperationID` (D-71's grammar, `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`); `Store.Idempotent(id)` — a per-call view of the store bound to one operation; `requestHash` (SHA-256 over canonical JSON of the command name and the store's parameters, hex); `attributionKey` (`named:<handle>` or `mint:<workspace>`, so the session handle is part of the request); `replay` — the lookup inside the write transaction, before any other statement: not found → the write runs; found with the same command and hash → the recorded result is decoded and the `Write` returns `Replayed`; found with another → `OPERATION_ID_CONFLICT`; `record` — the insert after the write, in the same transaction, of `{session, minted, result}`; `refuseInvalidOperation` for the callers with no command line |
+| `internal/coordination/store.go`, `lease_store.go` | All seven writers judge the bound id, hash their parameters before the transaction, replay first inside it, and record last; `Write` gains `OperationID` and `Replayed`. `holderWrite`'s command is `lease renew` or `lease release` by its verb |
+| `internal/coordination/errors.go` | `ErrOperationConflict`, `operationConflict` (the id, the recorded command and the attempted one; remedy: mint a new id) |
+| `internal/app/code.go`, `internal/cli/envelope_test.go` | `OPERATION_ID_CONFLICT`, registered, `ExitFailed` |
+| Tests | `operation_test.go` (six, new): the seven writers in one table — `TestWithoutAnOperationEveryWriterRecordsNothing` (AC-06.1), `TestTheSameOperationTwiceIsOneWriteAndOneRecord` (AC-06.2: one entity row, one operation row, the second answer equal to the first and `Replayed`, seven arms), `TestTheSameIDForADifferentRequestIsAConflict` (AC-06.3: a different title, a different session, a minted session for a named one, a different command — nothing written), `TestARefusedOperationRecordsNothing` (AC-06.4: a `LEASE_CONFLICT` under an id records nothing; the same id after the release succeeds and records), `TestTwoDeliveriesOfOneOperationSerialise` (AC-06.5: eight goroutines, one task, one record, seven replays, under `-race`), `TestAnOperationIDMustBeAnIdentifier`. `operation_internal_test.go`: `TestTheRequestHashIsStableAndSensitive` (AC-06.6: equal for equal parameters, different for each of six changed fields and for the command name; a named session and a workspace with one id key differently) |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| O1 | `replay` never compares the recorded command and hash | `TestTheSameIDForADifferentRequestIsAConflict`: `want OPERATION_ID_CONFLICT, got no error`, in every arm |
+| O2 | `record` never inserts | `TestTheSameOperationTwiceIsOneWriteAndOneRecord`: `after the first session open the operations table holds 0 rows, want 1`, and the same for every writer |
+| O3 | `replay` decodes the record and reports it not found | the same test: `second session open = COORDINATION_WRITE_FAILED: the agent session could not be written …, want the replay` — the write ran again and the operations table's primary key refused the second record |
+| O4 | `attributionKey` drops the session handle | `TestTheSameIDForADifferentRequestIsAConflict/a_different_session`: `want OPERATION_ID_CONFLICT, got no error`; `TestTheRequestHashIsStableAndSensitive`: `changing session produced the same hash as base` |
+| O6 | the store stops judging the id's grammar | `TestAnOperationIDMustBeAnIdentifier`: `want COMMAND_LINE_INVALID, got no error` |
+| O7 | `Idempotent` binds the id on the receiver instead of a copy | `TestTwoDeliveriesOfOneOperationSerialise` under `-race`: `WARNING: DATA RACE` — eight goroutines binding one store |
+
+AC-06.4 has no one-line falsifier: the record is inserted inside the
+transaction the write runs in, so a refusal rolls it back with everything
+else, and a mutation that moved the insert after the transaction would be a
+different design rather than a slipped line. The test exercises the property
+on a refused move retried after the lease's release.
+
+### Where this task departed from the freeze, and why
+
+- **The operation is bound with `Idempotent(id)`, not passed to every
+  writer.** AC-06.1 says all seven "take `Operation`". A parameter on seven
+  signatures would be the zero value at every call but the command line's
+  and would touch some seventy call sites; a per-call view carries the same
+  fact — zero binding, zero effect — and cannot be shared between two writes
+  by accident without the second answering `OPERATION_ID_CONFLICT`. The
+  command line binds one id, performs one write, and lets the view go.
+- **The replay lookup runs before the session is resolved**, so a replayed
+  write mints nothing: the recorded `Write` says which session the first
+  delivery ran under and whether it minted, and the second delivery repeats
+  that answer rather than minting a second identity.
+- **The result recorded is the writer's own type** (`Session`, `Task`,
+  `Move`, `Noted`, `Acquisition`, `Lease`), marshalled with the JSON tags the
+  wire already uses, so a replay decodes into the same Go value the first
+  delivery returned and `TestTheSameOperationTwiceIsOneWriteAndOneRecord`
+  compares the two with `reflect.DeepEqual`.
+- **A blank id is no binding**, not a refusal: `Idempotent("")` is the plain
+  store, so a command line that received no `--operation-id` can bind what it
+  was given without a branch.
+
+### The gate
+
+*Filled after the Reader/Breaker pair has run.*
