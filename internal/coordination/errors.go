@@ -251,8 +251,13 @@ func leaseNotHeld(lease Lease, verb string) error {
 	switch lease.TargetKind {
 	case TargetTask:
 		remedy = "Move the task with `mindrail task state " + lease.TargetKey + " --to <STATE>`; the move takes the lease again."
+	case TargetFile:
+		remedy = "Run `mindrail lease acquire --file=" + ShellArgument(lease.TargetKey) + "` to take it again."
 	default:
-		remedy = "Run `mindrail lease acquire --file " + lease.TargetKey + "` to take it again."
+		// A kind this binary does not acquire — a row planted by hand, or one
+		// a later binary wrote — gets the sentence that is true of every kind
+		// rather than a command that would be wrong for it.
+		remedy = "Acquire the target again with the command that takes a " + string(lease.TargetKind) + " lease."
 	}
 
 	return app.NewError(

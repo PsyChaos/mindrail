@@ -98,7 +98,7 @@ func openFixture(t *testing.T, path string, clock app.Clock) fixture {
 func (f fixture) session(t *testing.T) coordination.Session {
 	t.Helper()
 
-	session, err := f.store.OpenSession(t.Context(), f.spaceID, "")
+	session, _, err := f.store.OpenSession(t.Context(), f.spaceID, "")
 	if err != nil {
 		t.Fatalf("OpenSession = %v, want no error", err)
 	}
@@ -612,7 +612,7 @@ func TestANeverGivenWorkspaceIsRefusedByNameRatherThanByAConstraint(t *testing.T
 	}{
 		"OpenSession": {
 			call: func(t *testing.T, f fixture) error {
-				_, err := f.store.OpenSession(t.Context(), "", "")
+				_, _, err := f.store.OpenSession(t.Context(), "", "")
 				return err
 			},
 			why: "a session needs a worktree to belong to, and none was given",

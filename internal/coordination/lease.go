@@ -70,11 +70,23 @@ func TaskTarget(taskID string) Target { return Target{Kind: TargetTask, Key: tas
 // without a command line in front of it, so the rule lives here and the CLI
 // meets it by calling this.
 func FileTarget(raw string) (Target, error) {
-	if strings.TrimSpace(raw) == "" {
+	switch {
+	case strings.TrimSpace(raw) == "":
 		return Target{}, fileTargetInvalid(raw, "is empty")
-	}
-	if !utf8.ValidString(raw) {
+	case !utf8.ValidString(raw):
 		return Target{}, fileTargetInvalid(raw, "is not valid UTF-8")
+	case strings.TrimSpace(raw) != raw:
+		// Two keys that differ only by a trailing space would be two targets
+		// on one file — two agents each holding "the" lease (TASK-03's
+		// Breaker). A name that really begins or ends with whitespace is not
+		// a name this rule can tell from a stray one, and is refused.
+		return Target{}, fileTargetInvalid(raw, "begins or ends with whitespace")
+	case strings.ContainsFunc(raw, func(r rune) bool { return r < ' ' || r == 0x7f }):
+		return Target{}, fileTargetInvalid(raw, "contains a control character")
+	case len(raw) >= 2 && raw[1] == ':' && isASCIILetter(raw[0]):
+		// A drive prefix is absolute where it comes from, and names nothing
+		// relative to a repository root anywhere.
+		return Target{}, fileTargetInvalid(raw, "is absolute; a lease names a path relative to the repository root")
 	}
 
 	// Backslashes are read as separators and the path is cleaned; nothing
@@ -89,6 +101,28 @@ func FileTarget(raw string) (Target, error) {
 		return Target{}, fileTargetInvalid(raw, "names the repository root rather than a file in it")
 	}
 	return Target{Kind: TargetFile, Key: key}, nil
+}
+
+func isASCIILetter(b byte) bool { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
+
+// ShellArgument renders a target key for a remedy that is a command line to
+// run: quoted when the shell would otherwise split it or read it as a flag,
+// bare when it is already safe. `--file=<key>` in the remedy keeps a key that
+// begins with a dash from being read as an option (TASK-03's Breaker: the
+// remedy for `with space/file.go` leased `with`).
+func ShellArgument(key string) string {
+	safe := true
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '/', r == '_', r == '-':
+		default:
+			safe = false
+		}
+	}
+	if safe && !strings.HasPrefix(key, "-") {
+		return key
+	}
+	return "'" + strings.ReplaceAll(key, "'", `'\''`) + "'"
 }
 
 func fileTargetInvalid(raw, what string) error {

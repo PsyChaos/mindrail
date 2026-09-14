@@ -116,7 +116,11 @@ func TestFileTargetIsNormalisedAndRefusedByTheRule(t *testing.T) {
 		}
 	}
 
-	for _, raw := range []string{"", "   ", "/etc/passwd", "..", "../x.go", "a/../../x.go", ".", "./", "src/\xff.go"} {
+	for _, raw := range []string{"", "   ", "/etc/passwd", "..", "../x.go", "a/../../x.go", ".", "./", "src/\xff.go",
+		// TASK-03's gate: a drive prefix is absolute where it comes from; a
+		// key with a control character or with whitespace at either end could
+		// name one file twice.
+		`C:\x`, "C:/x", "c:", "src/auth.go ", " src/auth.go", "src/auth.go\n", "src/au\rth.go", "a\tb"} {
 		_, err := coordination.FileTarget(raw)
 		payload := requireCode(t, err, app.CodeCommandLineInvalid)
 		if app.ExitCode(err) != app.ExitUsage {
@@ -518,8 +522,73 @@ func TestLeaseRefusalsCarryWhatACallerActsOn(t *testing.T) {
 	// The remedy for a file lease that is no longer held is an acquisition
 	// naming the key (a task lease's is a move; TASK-04 exercises that arm).
 	notHeldPayload, _ := app.PayloadOf(notHeld)
-	if !strings.Contains(strings.Join(notHeldPayload.NextAction, " "), "lease acquire --file src/auth.go") {
+	if !strings.Contains(strings.Join(notHeldPayload.NextAction, " "), "lease acquire --file=src/auth.go") {
 		t.Errorf("the file remedy does not name the acquisition: %v", notHeldPayload.NextAction)
+	}
+}
+
+// TestARemedyNamingAKeyIsACommandLineThatRuns is TASK-03's Breaker finding:
+// the not-held remedy printed the key bare, so for `with space/file.go` the
+// command it told the reader to run leased `with`, and for a key beginning
+// with a dash it was read as an option. The key is rendered as one shell
+// argument in the `--file=` form.
+func TestARemedyNamingAKeyIsACommandLineThatRuns(t *testing.T) {
+	for key, want := range map[string]string{
+		"src/auth.go":          "src/auth.go",
+		"with space/file.go":   "'with space/file.go'",
+		"-rf":                  "'-rf'",
+		"it's.go":              `'it'\''s.go'`,
+		"a$b.go":               "'a$b.go'",
+		"dir/sub-dir/file_1.c": "dir/sub-dir/file_1.c",
+	} {
+		if got := coordination.ShellArgument(key); got != want {
+			t.Errorf("ShellArgument(%q) = %s, want %s", key, got, want)
+		}
+	}
+
+	f, clock := leaseFixture(t)
+	me := f.session(t)
+	held, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), mustFile(t, "with space/file.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(coordination.LeaseTTL)
+	_, _, notHeld := f.store.RenewLease(t.Context(), held.Lease.ID, coordination.NamedSession(me.ID))
+	payload := requireCode(t, notHeld, app.CodeLeaseNotHeld)
+	if !strings.Contains(strings.Join(payload.NextAction, " "), "--file='with space/file.go'") {
+		t.Errorf("remedy %v does not quote the key as one argument", payload.NextAction)
+	}
+}
+
+// TestARenewalNeverShortensATenure is the same gate's clock finding: a
+// renewal computed from a clock that stepped back would move expires_at
+// earlier and open an early takeover. The expiry only moves forward.
+func TestARenewalNeverShortensATenure(t *testing.T) {
+	f, clock := leaseFixture(t)
+	me, other := f.session(t), f.session(t)
+	held, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), mustFile(t, "src/auth.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clock.Advance(-10 * time.Minute)
+	renewed, _, err := f.store.RenewLease(t.Context(), held.Lease.ID, coordination.NamedSession(me.ID))
+	if err != nil {
+		t.Fatalf("RenewLease under a clock that stepped back = %v", err)
+	}
+	if !renewed.ExpiresAt.Equal(held.Lease.ExpiresAt) {
+		t.Errorf("expires_at = %v after a renewal from an earlier clock, want the original %v kept", renewed.ExpiresAt, held.Lease.ExpiresAt)
+	}
+	if !renewed.RenewedAt.Equal(clock.Now()) {
+		t.Errorf("renewed_at = %v, want the renewal recorded at the clock's reading %v", renewed.RenewedAt, clock.Now())
+	}
+
+	// At the original expiry's eve, by the original clock, nobody takes over.
+	clock.Advance(10*time.Minute + coordination.LeaseTTL - time.Second)
+	if _, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(other.ID), mustFile(t, "src/auth.go")); err == nil {
+		t.Fatal("a second session acquired before the original expiry; the renewal shortened the tenure")
+	} else {
+		requireCode(t, err, app.CodeLeaseConflict)
 	}
 }
 
@@ -615,18 +684,23 @@ func TestSessionOpenIsOneTransactionWithItsWait(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = holder.Rollback() })
 
-	_, err = store.OpenSession(t.Context(), f.spaceID, "under a held lock")
+	_, _, err = store.OpenSession(t.Context(), f.spaceID, "under a held lock")
 	payload := requireCode(t, err, app.CodeBusyRetryable)
 	if payload.Metadata["waited_ms"] == "" {
 		t.Errorf("session open under a held lock publishes no waited_ms: %v", payload.Metadata)
 	}
 
 	_ = holder.Rollback()
-	session, err := store.OpenSession(t.Context(), f.spaceID, "after release")
+	session, write, err := store.OpenSession(t.Context(), f.spaceID, "after release")
 	if err != nil {
 		t.Fatalf("OpenSession after release = %v, want no error", err)
 	}
 	if session.ID == "" {
 		t.Error("OpenSession returned no id")
+	}
+	// The seventh writer carries its measurement like the other six (D-75);
+	// the first shape discarded it (TASK-03's gate).
+	if write.Session.ID != session.ID || !write.Minted || write.Timing.Held <= 0 {
+		t.Errorf("OpenSession's Write = %+v, want the minted session and a measured transaction", write)
 	}
 }

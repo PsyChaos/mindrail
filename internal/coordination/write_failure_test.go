@@ -33,7 +33,7 @@ func TestAFailedWriteIsNamedByTheStorageLayerFirst(t *testing.T) {
 	writers := map[string]func(t *testing.T, store *coordination.Store, f fixture,
 		session coordination.Session, task coordination.Task) error{
 		"OpenSession": func(t *testing.T, store *coordination.Store, f fixture, _ coordination.Session, _ coordination.Task) error {
-			_, err := store.OpenSession(t.Context(), f.spaceID, "")
+			_, _, err := store.OpenSession(t.Context(), f.spaceID, "")
 			return err
 		},
 		"OpenTask": func(t *testing.T, store *coordination.Store, f fixture, session coordination.Session, _ coordination.Task) error {

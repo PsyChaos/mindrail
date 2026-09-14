@@ -326,7 +326,7 @@ the checkpoints you write are attributed to one run.`,
 
 			return runCoordination(cmd, "session open", o,
 				func(ctx context.Context, s scope) (any, humanRenderer, error) {
-					session, err := s.store.OpenSession(ctx, s.space.ID, label)
+					session, _, err := s.store.OpenSession(ctx, s.space.ID, label)
 					if err != nil {
 						return nil, nil, err
 					}

@@ -103,9 +103,14 @@ func NewStore(db *sql.DB, clock app.Clock) *Store {
 // condition, two answers (TASK-01's gate). Going through InTxMeasured is also
 // what TASK-05 needs, since the operation record must land in the same
 // transaction as the row.
-func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Session, error) {
+//
+// It returns a Write like the other writers, attributed to the session it
+// minted, so the transaction's cost rides on it (decision D-75); the first
+// shape returned the session alone and discarded the measurement (TASK-03's
+// gate).
+func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Session, Write, error) {
 	if workspaceID == "" {
-		return Session{}, noWorkspace("a session")
+		return Session{}, Write{}, noWorkspace("a session")
 	}
 
 	session := Session{
@@ -115,17 +120,17 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 		StartedAt:   s.clock.Now().UTC(),
 	}
 
-	_, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES (?, ?, ?, ?)`,
 			session.ID, session.WorkspaceID, nullable(session.Label), app.FormatTime(session.StartedAt))
 		return err
 	})
 	if err != nil {
-		return Session{}, s.adopt(ctx, "the agent session", session.ID, err)
+		return Session{}, Write{}, s.adopt(ctx, "the agent session", session.ID, err)
 	}
 
-	return session, nil
+	return session, Write{Session: session, Minted: true, Timing: stats}, nil
 }
 
 // Attribution says which agent session a write belongs to.

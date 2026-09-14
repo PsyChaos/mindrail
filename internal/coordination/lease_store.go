@@ -190,9 +190,16 @@ func (s *Store) holderWrite(ctx context.Context, leaseID string, by Attribution,
 }
 
 // renewIn moves the expiry forward on an active row and returns it as written.
+//
+// Forward only. A renewal computed from a clock that stepped back would
+// shorten the tenure and open an early takeover (TASK-03's Breaker); a tenure
+// that already runs later than now + TTL keeps its expiry, and the renewal is
+// recorded in renewed_at alone.
 func renewIn(ctx context.Context, tx *sql.Tx, lease Lease, now time.Time) (Lease, error) {
 	lease.RenewedAt = now
-	lease.ExpiresAt = now.Add(LeaseTTL)
+	if until := now.Add(LeaseTTL); until.After(lease.ExpiresAt) {
+		lease.ExpiresAt = until
+	}
 	lease.Status = LeaseActive
 	_, err := tx.ExecContext(ctx,
 		`UPDATE leases SET renewed_at = ?, expires_at = ? WHERE lease_id = ? AND released_at IS NULL`,
