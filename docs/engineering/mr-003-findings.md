@@ -114,6 +114,13 @@ work rather than a claim about it.
 | The commands run in `ModeReadOnly` again | the handover acceptance test, with `RUNTIME_PATH_UNWRITABLE` |
 | `identity.nextEntropy`'s backwards-clock clamp is removed | `TestABackwardsClockStillMintsAscendingIds` |
 | The entropy counter's byte carry is removed | `TestTheEntropyCounterCarriesAcrossAByte` |
+| `RenderError` drops its "Next" section — `return nil` in place of `renderSection(w, "Next", …)` in `internal/app/errors.go` | `TestTheFourCoordinationRefusalsAgreeAcrossBothRenderings` — all four rows, on the human rendering. `TestACoordinationCommandNamesAHaltedStartupTheWayStatusDoes` stays green under it, and goes red alone under the reverse (deleting the `Diagnosis` call), so the two falsifiers are disjoint |
+
+*Extended during the round-2 remediation (round 2, §4.6).* The last row was added
+then. The round-1 remediation's item 12 added the AC-09.1 matrix as a test-only
+change and recorded "reverting item 2" as its falsifier — which falsifies item 2's
+own test and none of the four rows, so the guard had no recorded falsifier at all.
+The mutation above was run in both directions before it was written down.
 
 ---
 
@@ -277,7 +284,7 @@ functions, from 768 at `3f5ab3e`, counted with `go test -list '.*' ./...`.
 | 9 | F40 | (test only) `ModeWrite` creates, migrates and registers nothing | `creates()` returning true for `ModeWrite`, and the same for the migrator and the registration — three separate reds |
 | 10 | F04 | (test only) a write failure is named by the storage layer first | removing the `storage.WriteFailure` call — all four writers red on `COORDINATION_WRITE_FAILED` |
 | 11 | F21 | (test only) an accepted move advances `updated_at`; abandoning keeps the claimant | `updated_at = updated_at`, and adding `ABANDONED` to the clearing branch |
-| 12 | F13, F35 | A coordination agreement matrix: AC-09.1's four conditions asserted across the envelope, the human rendering and the exit code, with the printed remedy carried out | reverting item 2 — the startup rows red |
+| 12 | F13, F35 | A coordination agreement matrix: AC-09.1's four conditions asserted across the envelope, the human rendering and the exit code, with the printed remedy carried out | `RenderError` dropping its "Next" section — all four rows red, item 2's halted-startup test green. *Corrected during the round-2 remediation (§4.6): this cell said "reverting item 2 — the startup rows red", a mutation that fails item 2's own test and none of these four* |
 | 13 | F44, F46, F26 | `COORDINATION_READ_FAILED` wraps the read paths; `CoordinationErr` gives the block `indeterminate`; the empty-workspace guards are coded | reverting one read wrap — `code: ""`. Removing the indeterminate route — `not_observed` over a read that ran |
 | 14 | F33, F34, F22, F48, F49 | The usage envelope publishes the full command path; a group named without a subcommand is an envelope under `--json`; the self-transition refusal names the claimant; the project-scoped checkpoint query stops sorting the project; the "Last checkpoint" line has a subject | `cmd.Name()`, help under `--json`, the dropped `claimed_by`, the join instead of `EXISTS` — each red |
 | 15 | F15, F05, F14, F23, F47, F06, F25, F18, F16, F17, F07 | The ledger, plus two things it turned out to be cheaper to fix than to record: AC-03.5 is now enforced by an allow-list, and the four unexecuted renderings have goldens | `internal/coordination` importing `internal/git` — red. `sessionResult.RenderHuman` panicking — red, where before it was green in 18 packages and in `make smoke` |
