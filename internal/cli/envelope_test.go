@@ -106,6 +106,10 @@ var exitForCode = map[app.Code]int{
 	// And the revision refusal (D-72): the task exists, the session exists,
 	// and the caller's reading of the task is what is stale.
 	app.CodeStateRevisionConflict: app.ExitFailed,
+
+	// And a reused operation id (D-71): the request was well formed, and the
+	// refusal depends on what the operations table already holds.
+	app.CodeOperationIDConflict: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

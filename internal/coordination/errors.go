@@ -349,3 +349,25 @@ func taskNotClaimableWhereItStands(task Task) error {
 		WithMetadata("from_state", string(task.State)).
 		WithCause(ErrTransitionNotAvailable)
 }
+
+// ErrOperationConflict means an operation id was used before for a different
+// request (decision D-71): the recorded result answers another request, and
+// returning it would be a silent wrong answer.
+var ErrOperationConflict = errors.New("operation id used for a different request")
+
+// operationConflict reports a reused id. It names the command the id was
+// recorded for, which is what tells the caller whether it reused an id or
+// changed a request under one.
+func operationConflict(id, recordedCommand, command string) error {
+	return app.NewError(
+		app.CodeOperationIDConflict,
+		app.KindFailed,
+		fmt.Sprintf("operation %s was recorded for a different request (%s); this one (%s) is not a retry of it", id, recordedCommand, command),
+		"Nothing was written, and the recorded result was not returned because it answers another request.",
+		"Mint a new operation id for a new request; an id names exactly one.",
+	).
+		WithMetadata("operation_id", id).
+		WithMetadata("recorded_command", recordedCommand).
+		WithMetadata("command", command).
+		WithCause(ErrOperationConflict)
+}

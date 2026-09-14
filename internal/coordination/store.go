@@ -85,6 +85,10 @@ const selectNewestCheckpointOfProject = `SELECT c.task_id, c.session_id, c.creat
 type Store struct {
 	db    *sql.DB
 	clock app.Clock
+
+	// op is the operation the next write runs under, bound by Idempotent;
+	// the zero value is no operation (decision D-71).
+	op Operation
 }
 
 // NewStore builds a store over an already-migrated database.
@@ -114,6 +118,17 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 		return Session{}, Write{}, noWorkspace("a session")
 	}
 
+	if err := s.refuseInvalidOperation(); err != nil {
+		return Session{}, Write{}, err
+	}
+	hash, err := requestHash("session open", struct {
+		Workspace string `json:"workspace"`
+		Label     string `json:"label"`
+	}{workspaceID, strings.TrimSpace(label)})
+	if err != nil {
+		return Session{}, Write{}, err
+	}
+
 	session := Session{
 		ID:          identity.NewID(sessionIDPrefix),
 		WorkspaceID: workspaceID,
@@ -121,17 +136,29 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 		StartedAt:   s.clock.Now().UTC(),
 	}
 
+	var write Write
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
+		if replayed, found, err := s.replay(ctx, tx, "session open", hash, &session); err != nil {
+			return err
+		} else if found {
+			write = replayed
+			return nil
+		}
+
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES (?, ?, ?, ?)`,
-			session.ID, session.WorkspaceID, nullable(session.Label), app.FormatTime(session.StartedAt))
-		return err
+			session.ID, session.WorkspaceID, nullable(session.Label), app.FormatTime(session.StartedAt)); err != nil {
+			return err
+		}
+		write = Write{Session: session, Minted: true, OperationID: s.op.ID}
+		return s.record(ctx, tx, "session open", hash, write, session, session.StartedAt)
 	})
 	if err != nil {
 		return Session{}, Write{}, s.adopt(ctx, "the agent session", session.ID, err)
 	}
+	write.Timing = stats
 
-	return session, Write{Session: session, Minted: true, Timing: stats}, nil
+	return session, write, nil
 }
 
 // Attribution says which agent session a write belongs to.
@@ -183,6 +210,13 @@ type Write struct {
 	Session Session
 	Minted  bool
 	Timing  storage.TxStats
+
+	// OperationID is the id the write ran under, empty when it ran under
+	// none; Replayed is true when the operations table answered — the
+	// result is the first delivery's, nothing was written, and an agent
+	// reading it is reading the state as of that delivery (decision D-71).
+	OperationID string
+	Replayed    bool
 }
 
 // attribute resolves an Attribution inside the transaction that carries the
@@ -249,6 +283,18 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 		)
 	}
 
+	if err := s.refuseInvalidOperation(); err != nil {
+		return Task{}, Write{}, err
+	}
+	hash, err := requestHash("task open", struct {
+		Project string `json:"project"`
+		By      string `json:"by"`
+		Title   string `json:"title"`
+	}{projectID, attributionKey(by), title})
+	if err != nil {
+		return Task{}, Write{}, err
+	}
+
 	now := s.clock.Now().UTC()
 	task := Task{
 		ID:        identity.NewID(taskIDPrefix),
@@ -262,20 +308,30 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 
 	var write Write
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if replayed, found, err := s.replay(ctx, tx, "task open", hash, &task); err != nil {
+			return err
+		} else if found {
+			write = replayed
+			return nil
+		}
+
 		resolved, err := s.attribute(ctx, tx, by, now)
 		if err != nil {
 			return err
 		}
 		write = resolved
+		write.OperationID = s.op.ID
 		task.OpenedBy = resolved.Session.ID
 
-		_, err = tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO tasks (task_id, project_id, title, state, blocked_reason,
 				opened_by, claimed_by, created_at, updated_at, revision)
 			 VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)`,
 			task.ID, task.ProjectID, task.Title, string(task.State),
-			task.OpenedBy, app.FormatTime(now), app.FormatTime(now), task.Revision)
-		return err
+			task.OpenedBy, app.FormatTime(now), app.FormatTime(now), task.Revision); err != nil {
+			return err
+		}
+		return s.record(ctx, tx, "task open", hash, write, task, now)
 	})
 	if err != nil {
 		return Task{}, Write{}, s.adopt(ctx, "the task", task.ID, err)
@@ -346,11 +402,32 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 		).WithMetadata("expected_revision", strconv.FormatInt(expectRevision, 10))
 	}
 
+	if err := s.refuseInvalidOperation(); err != nil {
+		return Move{}, Write{}, err
+	}
+	hash, err := requestHash("task state", struct {
+		Task   string `json:"task"`
+		By     string `json:"by"`
+		To     State  `json:"to"`
+		Reason string `json:"reason"`
+		Expect int64  `json:"expect_revision"`
+	}{taskID, attributionKey(by), to, reason, expectRevision})
+	if err != nil {
+		return Move{}, Write{}, err
+	}
+
 	var (
 		move  Move
 		write Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if replayed, found, err := s.replay(ctx, tx, "task state", hash, &move); err != nil {
+			return err
+		} else if found {
+			write = replayed
+			return nil
+		}
+
 		// One clock reading per write, and it is taken here, under the write
 		// lock, not before the transaction the way the two inserting writers
 		// take theirs. updated_at replaces an earlier value on the same row,
@@ -366,6 +443,7 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 			return err
 		}
 		write = resolved
+		write.OperationID = s.op.ID
 		sessionID := resolved.Session.ID
 
 		current, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE task_id = ?`, taskID))
@@ -453,7 +531,7 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 		}
 
 		move.Task = updated
-		return nil
+		return s.record(ctx, tx, "task state", hash, write, move, now)
 	})
 	if err != nil {
 		return Move{}, Write{}, s.adopt(ctx, "the task state", taskID, err)
@@ -553,6 +631,20 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		)
 	}
 
+	if err := s.refuseInvalidOperation(); err != nil {
+		return Noted{}, Write{}, err
+	}
+	hash, err := requestHash("checkpoint write", struct {
+		Task      string `json:"task"`
+		By        string `json:"by"`
+		Workspace string `json:"workspace"`
+		Note      string `json:"note"`
+		Handoff   bool   `json:"handoff"`
+	}{taskID, attributionKey(by), workspaceID, note, handoff})
+	if err != nil {
+		return Noted{}, Write{}, err
+	}
+
 	checkpoint := Checkpoint{
 		ID:          identity.NewID(checkpointIDPrefix),
 		TaskID:      taskID,
@@ -566,6 +658,13 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		write Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if replayed, found, err := s.replay(ctx, tx, "checkpoint write", hash, &noted); err != nil {
+			return err
+		} else if found {
+			write = replayed
+			return nil
+		}
+
 		// The clock is read under the write lock, as Transition reads it: the
 		// row's stamp and the lease judgment below are about the same instant,
 		// and a tenure that ran out while this write waited on the lock is
@@ -579,6 +678,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 			return err
 		}
 		write = resolved
+		write.OperationID = s.op.ID
 		checkpoint.SessionID = resolved.Session.ID
 
 		task, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE task_id = ?`, taskID))
@@ -610,20 +710,19 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		if err != nil {
 			return err
 		}
-		if !hasLease || held.Status != LeaseActive || held.Holder != checkpoint.SessionID {
-			return nil
+		if hasLease && held.Status == LeaseActive && held.Holder == checkpoint.SessionID {
+			var after Lease
+			if handoff {
+				after, err = closeIn(ctx, tx, held, checkpoint.CreatedAt, ReleaseReasonHandoff)
+			} else {
+				after, err = renewIn(ctx, tx, held, checkpoint.CreatedAt)
+			}
+			if err != nil {
+				return err
+			}
+			noted.Lease = &after
 		}
-		var after Lease
-		if handoff {
-			after, err = closeIn(ctx, tx, held, checkpoint.CreatedAt, ReleaseReasonHandoff)
-		} else {
-			after, err = renewIn(ctx, tx, held, checkpoint.CreatedAt)
-		}
-		if err != nil {
-			return err
-		}
-		noted.Lease = &after
-		return nil
+		return s.record(ctx, tx, "checkpoint write", hash, write, noted, checkpoint.CreatedAt)
 	})
 	if err != nil {
 		return Noted{}, Write{}, s.adopt(ctx, "the checkpoint", checkpoint.ID, err)

@@ -180,6 +180,13 @@ const (
 	// caller's next action — re-read, decide again — differs from every other
 	// refusal's.
 	CodeStateRevisionConflict Code = "STATE_REVISION_CONFLICT"
+
+	// CodeOperationIDConflict marks an operation id used before for a
+	// different request (decision D-71). The recorded result answers another
+	// request, so it is not returned; the caller minted one id for two
+	// requests, or changed a request under one, and either way the next
+	// action is a new id.
+	CodeOperationIDConflict Code = "OPERATION_ID_CONFLICT"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -219,6 +226,7 @@ var allCodes = sortedCodes([]Code{
 	CodeLeaseNotHeld,
 	CodeLeaseNotFound,
 	CodeStateRevisionConflict,
+	CodeOperationIDConflict,
 })
 
 var codeSet = indexCodes(allCodes)

@@ -51,11 +51,31 @@ func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attributi
 		).WithMetadata("target_kind", string(target.Kind)).WithMetadata("target_key", target.Key)
 	}
 
+	if err := s.refuseInvalidOperation(); err != nil {
+		return Acquisition{}, Write{}, err
+	}
+	hash, err := requestHash("lease acquire", struct {
+		Project string     `json:"project"`
+		By      string     `json:"by"`
+		Kind    TargetKind `json:"kind"`
+		Key     string     `json:"key"`
+	}{projectID, attributionKey(by), target.Kind, target.Key})
+	if err != nil {
+		return Acquisition{}, Write{}, err
+	}
+
 	var (
 		result Acquisition
 		write  Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if replayed, found, err := s.replay(ctx, tx, "lease acquire", hash, &result); err != nil {
+			return err
+		} else if found {
+			write = replayed
+			return nil
+		}
+
 		now := s.clock.Now().UTC()
 
 		resolved, err := s.attribute(ctx, tx, by, now)
@@ -63,6 +83,7 @@ func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attributi
 			return err
 		}
 		write = resolved
+		write.OperationID = s.op.ID
 
 		if target.Kind == TargetTask {
 			acquired, err := s.claimWhereItStands(ctx, tx, projectID, resolved.Session.ID, target.Key, now)
@@ -70,15 +91,14 @@ func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attributi
 				return err
 			}
 			result = acquired
-			return nil
+		} else {
+			acquired, err := s.acquireIn(ctx, tx, projectID, resolved.Session.ID, target, now)
+			if err != nil {
+				return err
+			}
+			result = acquired
 		}
-
-		acquired, err := s.acquireIn(ctx, tx, projectID, resolved.Session.ID, target, now)
-		if err != nil {
-			return err
-		}
-		result = acquired
-		return nil
+		return s.record(ctx, tx, "lease acquire", hash, write, result, now)
 	})
 	if err != nil {
 		return Acquisition{}, Write{}, s.adopt(ctx, "the lease", target.String(), err)
@@ -213,11 +233,30 @@ func (s *Store) ReleaseLease(ctx context.Context, leaseID string, by Attribution
 func (s *Store) holderWrite(ctx context.Context, leaseID string, by Attribution, verb string,
 	apply func(context.Context, *sql.Tx, Lease, time.Time) (Lease, error)) (Lease, Write, error) {
 
+	if err := s.refuseInvalidOperation(); err != nil {
+		return Lease{}, Write{}, err
+	}
+	command := "lease " + verb
+	hash, err := requestHash(command, struct {
+		Lease string `json:"lease"`
+		By    string `json:"by"`
+	}{leaseID, attributionKey(by)})
+	if err != nil {
+		return Lease{}, Write{}, err
+	}
+
 	var (
 		result Lease
 		write  Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if replayed, found, err := s.replay(ctx, tx, command, hash, &result); err != nil {
+			return err
+		} else if found {
+			write = replayed
+			return nil
+		}
+
 		now := s.clock.Now().UTC()
 
 		resolved, err := s.attribute(ctx, tx, by, now)
@@ -225,6 +264,7 @@ func (s *Store) holderWrite(ctx context.Context, leaseID string, by Attribution,
 			return err
 		}
 		write = resolved
+		write.OperationID = s.op.ID
 
 		lease, err := findLeaseIn(ctx, tx, leaseID, now)
 		if err != nil {
@@ -243,7 +283,7 @@ func (s *Store) holderWrite(ctx context.Context, leaseID string, by Attribution,
 			return err
 		}
 		result = applied
-		return nil
+		return s.record(ctx, tx, command, hash, write, result, now)
 	})
 	if err != nil {
 		return Lease{}, Write{}, s.adopt(ctx, "the lease", leaseID, err)
