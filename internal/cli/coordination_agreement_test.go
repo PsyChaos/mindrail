@@ -187,9 +187,15 @@ func TestTheCoordinationRefusalStillFiresWhereItIsTrue(t *testing.T) {
 // commands over every condition the suite can build rather than by a runtime
 // branch that should be unreachable.
 //
-// The sweep is the auditor's probe from round 1: `task list --json` over all of
-// the MR-001 agreement matrix's rows. That is how finding F09 was found, and
-// how finding F44's empty code would have been.
+// The first sweep is the auditor's probe from round 1: `task list --json` over
+// all of the MR-001 agreement matrix's rows. That is how finding F09 was found.
+// It is not how finding F44's empty code would have been: audit round 2 §4.2
+// proved that every row agreementConditions() can build is decided by the
+// startup Diagnosis before any coordination command opens the database, so
+// none of them ever reaches a single one of store.go's read wraps. The second
+// sweep below closes that gap: it damages one row of an otherwise healthy
+// database, the way TestADamagedRowIsReportedWithACode does for checkpoints,
+// and drives the damage through both a single-row read and a list read.
 func TestNoCoordinationFailureReachesTheWireUncoded(t *testing.T) {
 	for _, tc := range agreementConditions() {
 		repo := tc.setup(t)
@@ -215,6 +221,70 @@ func TestNoCoordinationFailureReachesTheWireUncoded(t *testing.T) {
 		}
 		assertFourErrorKeys(t, got.stdout)
 	}
+
+	for _, tc := range semanticDamageRows() {
+		repo, taskID := tc.setup(t)
+		assertPublishedFailureHasACode(t, tc.name+": `task show`",
+			run(t, repo, "task", "show", taskID, "--json"))
+
+		repo, _ = tc.setup(t)
+		assertPublishedFailureHasACode(t, tc.name+": `task list`",
+			run(t, repo, "task", "list", "--json"))
+	}
+}
+
+// semanticDamageRow is one row agreementConditions() cannot build: a
+// repository whose startup is clean and whose failure is a single row a
+// coordination command cannot parse back, rather than a filesystem or
+// configuration state the startup Diagnosis rejects before any store read
+// runs.
+type semanticDamageRow struct {
+	name string
+	// setup builds a fresh, healthy repository, damages it, and returns the id
+	// of the task the damage was done to. The id is read out of `task open`'s
+	// own answer, before the damage is done — after it, even `task list`
+	// cannot be trusted to read the id back, which is the condition this row
+	// exists to prove.
+	setup func(t *testing.T) (repo, taskID string)
+}
+
+// semanticDamageRows is audit round 2 §4.2's extension of the sweep above: a
+// `tasks` row with an unparseable created_at, the shape
+// TestADamagedRowIsReportedWithACode already builds for `checkpoints`. Driven
+// through `task show` it meets FindTask's read wrap; driven through `task
+// list` it meets ListTasks' scan wrap — the two sites item 2's mutation names.
+func semanticDamageRows() []semanticDamageRow {
+	return []semanticDamageRow{
+		{
+			name: "a task row with an unparseable created_at",
+			setup: func(t *testing.T) (string, string) {
+				t.Helper()
+
+				repo := newInitializedRepo(t)
+				session := sessionID(t, repo)
+				task := openTask(t, repo, session, "a task whose row will be damaged")
+				execOnRuntimeDB(t, repo, `UPDATE tasks SET created_at = 'yesterday'`)
+				return repo, task
+			},
+		},
+	}
+}
+
+// assertPublishedFailureHasACode is item 13's guard, asserted on a row that is
+// built to fail rather than swept from a matrix where most rows are healthy.
+// It shares no code with the loop above on purpose: that loop's `continue` on
+// success is right when a row may legitimately be healthy, and folding the two
+// together would make a row that wrongly succeeded here indistinguishable from
+// one of those.
+func assertPublishedFailureHasACode(t *testing.T, name string, got result) {
+	t.Helper()
+
+	payload := got.errorPayload(t)
+	if !app.IsRegistered(payload.Code) {
+		t.Errorf("%s: failed with code %q, which this binary does not own:\n%s",
+			name, payload.Code, got.stdout)
+	}
+	assertFourErrorKeys(t, got.stdout)
 }
 
 // coordinationRefusal is one of AC-09.1's four conditions, with everything the
