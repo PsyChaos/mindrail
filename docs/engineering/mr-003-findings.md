@@ -152,9 +152,11 @@ that looked everywhere.
   green and `make smoke` green, because the code path was never entered at all.
   A panic, a nil dereference or an error-return regression in the default output
   of `session open`, `checkpoint write`, `task show` and `task list` would have
-  shipped. The four commands are in `TestHumanOutputGolden` now, which executes
-  them to produce the bytes it pins. `taskResult`, shared by `task open` and
-  `task state`, was executed already.
+  shipped. The four commands are in `TestCoordinationHumanOutputGolden` now, a
+  test of their own that executes them to produce the bytes it pins;
+  `TestHumanOutputGolden` still loops over `status` and `doctor` only. *(This
+  sentence credited the wrong test until the round-2 remediation, §4.10.)*
+  `taskResult`, shared by `task open` and `task state`, was executed already.
 - **`internal/identity` moved code that MR-001 shipped.** The tests moved with
   it and the format is asserted, but nobody has graded the move itself against
   the original.
@@ -283,7 +285,7 @@ functions, from 768 at `3f5ab3e`, counted with `go test -list '.*' ./...`.
 | 8 | F32 | (test only) all six commands from an unregistered linked worktree, on the code *and* the branch | deleting the `space.ID == ""` branch — `task show` returns another worktree's task at `ok:true` |
 | 9 | F40 | (test only) `ModeWrite` creates, migrates and registers nothing | `creates()` returning true for `ModeWrite`, and the same for the migrator and the registration — three separate reds |
 | 10 | F04 | (test only) a write failure is named by the storage layer first | removing the `storage.WriteFailure` call — all four writers red on `COORDINATION_WRITE_FAILED` |
-| 11 | F21 | (test only) an accepted move advances `updated_at`; abandoning keeps the claimant | `updated_at = updated_at`, and adding `ABANDONED` to the clearing branch |
+| 11 | F21 | An accepted move advances `updated_at`; abandoning keeps the claimant. Not test-only: the same commit gave `Attribution` a `mint` flag, made `attribute` dispatch on it instead of on an empty handle, and moved what `MintFor("")` answers from `SESSION_NOT_FOUND` to the no-workspace error — `COORDINATION_UNAVAILABLE` once item 13 coded it. *(Corrected during the round-2 remediation, §4.14: this row said "(test only)".)* | `updated_at = updated_at`, and adding `ABANDONED` to the clearing branch |
 | 12 | F13, F35 | A coordination agreement matrix: AC-09.1's four conditions asserted across the envelope, the human rendering and the exit code, with the printed remedy carried out | `RenderError` dropping its "Next" section — all four rows red, item 2's halted-startup test green. *Corrected during the round-2 remediation (§4.6): this cell said "reverting item 2 — the startup rows red", a mutation that fails item 2's own test and none of these four* |
 | 13 | F44, F46, F26 | `COORDINATION_READ_FAILED` wraps the read paths; `CoordinationErr` gives the block `indeterminate`; the empty-workspace guards are coded | reverting one read wrap — `code: ""`. Removing the indeterminate route — `not_observed` over a read that ran |
 | 14 | F33, F34, F22, F48, F49 | The usage envelope publishes the full command path; a group named without a subcommand is an envelope under `--json`; the self-transition refusal names the claimant; the project-scoped checkpoint query stops sorting the project; the "Last checkpoint" line has a subject | `cmd.Name()`, help under `--json`, the dropped `claimed_by`, the join instead of `EXISTS` — each red |
@@ -323,9 +325,25 @@ judgment a second audit should grade rather than take on trust.
   F48's index is also not added, and does not need to be: the query was rewritten
   from a join to an `EXISTS`, which changes the plan from "walk every task of the
   project, then sort" to "walk the checkpoints backwards and stop at the first
-  one" — 1.2 ms to 10 µs at 20,000 tasks, with no schema change.
+  one" — from 7–29 ms to 10 µs at 20,000 tasks, with no schema change.
   `TestTheNewestCheckpointQueryDoesNotSortTheProject` asserts the plan rather
   than the timing.
+
+  *Corrected during the round-2 remediation (§4.11, §4.13).* This paragraph said
+  "1.2 ms to 10 µs at 20,000 tasks"; 1.2 ms is round 1's figure at **1,000**
+  tasks, copied from the wrong row of its table, which puts 28.98 ms at 20,000
+  for the whole of `Summarize`; round 2's isolated re-measurement of the join
+  put it at 7.3 ms (min) to 19.4 ms (mean). The same wrong figure sat in
+  `store.go`'s comment and in the regression test's rationale, and all three are
+  corrected. The paragraph also recorded only the winning half of the trade:
+  when the queried project has **no** checkpoints and the database carries
+  another project's history — reachable by moving a repository directory and
+  re-running `init`, which mints a second project row over the same
+  `.git/mindrail` — the reverse scan probes every checkpoint and matches none,
+  about 2.3 µs per checkpoint (45 ms at 20,000) on every read-only startup until
+  that project's first checkpoint is written, where the join cost nearly
+  nothing. The window closes itself and the cost at plausible sizes is under
+  5 ms, so it is recorded rather than fixed.
 
 ### What this pass did not close
 

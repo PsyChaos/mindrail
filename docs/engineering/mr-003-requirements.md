@@ -370,6 +370,16 @@ would tell the arriving agent anything.
   produce a command line that fails. All six carry the id in `why` and in
   `metadata`, which is where a caller reads it.
 
+  *Corrected during the round-2 remediation (round 2, §4.15).* "All six" was
+  stale when it was written: there are eight constructors in
+  `internal/coordination/errors.go`, and the sentence is true of five —
+  `sessionNotFound`, `taskNotFound`, `checkpointNotFound`,
+  `transitionNotAvailable` and `blockedReasonMissing`. `readFailed` and
+  `writeFailed` name what failed in `why` ("the agent session could not be
+  written …") and carry the id only in `metadata.subject_id`, which still
+  satisfies the operative clause above. `noWorkspace` carries no id anywhere,
+  because there is no offending id to name — the workspace is what is missing.
+
 ### REQ-05 — the code vocabulary
 
 - **AC-05.1** Five values are added to `app.Code` and to the registry:

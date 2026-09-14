@@ -39,8 +39,10 @@ const TableSchemaVersion = 2
 // drives from tasks — SEARCH t USING idx_tasks_project, a probe into the
 // checkpoint index per task, then a temp b-tree to sort what came back — so the
 // work is proportional to the number of tasks in the project even when the
-// project has no checkpoints at all: 1.2 ms at 20,000 tasks with 200
-// checkpoints, paid on every read-only startup (finding F48).
+// project has no checkpoints at all: 1.2 ms at 1,000 tasks and 7–29 ms at
+// 20,000, depending on how much of `status` is timed around it, paid on every
+// read-only startup (finding F48; this comment said "1.2 ms at 20,000" until
+// audit round 2, §4.11, traced the figure to the 1,000-task row).
 //
 // Written this way the plan is SCAN c in reverse rowid order with an EXISTS
 // probe per row, and LIMIT 1 stops at the first checkpoint belonging to this
@@ -48,11 +50,22 @@ const TableSchemaVersion = 2
 // first row the scan meets. It is a package-level constant so that the test
 // asserting the plan reads the same string this runs.
 //
+// The trade is conditional, not free. When the queried project has no
+// checkpoints and the same database holds another project's history — which
+// moving a repository directory and re-running `init` produces, since project
+// identity is the git common dir and the database travels inside it — the
+// reverse scan probes every checkpoint and matches none: about 2.3 µs per
+// checkpoint, 45 ms at 20,000, on every read-only startup until the project's
+// first checkpoint is written. The join in that state cost O(tasks of the
+// queried project), which is nearly nothing (audit round 2, §4.13).
+//
 // The comment in migrations/000002_coordination.sql attributes this query to
 // `task show` and names the task-scoped one instead. It is wrong and it stays:
 // the migrator checksums the file it applied, so editing an applied migration
 // would report MIGRATION_CHECKSUM_MISMATCH on every existing database — the
-// loudest possible failure for a corrected comment.
+// loudest possible failure for a corrected comment. The correction is written
+// where the file's readers can find it, migrations/README.md, and
+// migrations/shipped_test.go pins the file's bytes so the edit cannot ship.
 const selectNewestCheckpointOfProject = `SELECT c.task_id, c.session_id, c.created_at
 	   FROM checkpoints c
 	  WHERE EXISTS (SELECT 1 FROM tasks t

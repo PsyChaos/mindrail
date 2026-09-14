@@ -18,8 +18,10 @@ import (
 // tasks: the plan searched idx_tasks_project, probed the checkpoint index once
 // per task and then built a temp b-tree to sort what came back. The work was
 // therefore proportional to the number of tasks in the project even when the
-// project had no checkpoints at all — 1.2 ms at 20,000 tasks with 200
-// checkpoints, on a command whose whole budget is 150 ms.
+// project had no checkpoints at all — 1.2 ms at 1,000 tasks and 7–29 ms at
+// 20,000 depending on what is timed around the query, on a command whose whole
+// budget is 150 ms. (This comment said "1.2 ms at 20,000" until audit round 2,
+// §4.11, traced the figure to the wrong row of round 1's table.)
 //
 // The plan is asserted rather than the timing. A timing test on a query this
 // fast measures the machine it runs on; the temp b-tree is the thing that makes

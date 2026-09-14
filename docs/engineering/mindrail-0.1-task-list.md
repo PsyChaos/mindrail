@@ -177,7 +177,9 @@ Remediasyon brifingi on beş kalem hâlinde denetim belgesinin sonunda; her kale
 neyi bozmaması gerektiğini ve düzeltmeyi hangi mutasyonun tuttuğunu adıyla
 söylüyor.
 
-**Remediasyon** (`c29efa3..e7e946c`, on beş kalem, on beş commit) her kalemin
+**Remediasyon** (`c29efa3..e7e946c`, on beş kalem, on üç commit — 8, 9 ve
+10. kalemler `79533ac`'yi paylaşıyor; *ikinci tur §4.16 düzeltti, "on beş
+commit" yazıyordu*) her kalemin
 kendi mutasyonunu uygulayıp **kırmızı** olduğunu doğruladıktan sonra düzeltmeyi
 yazdı — çünkü bu depoda en sık üretilen yanlış iddia, bir düzeltmenin üzerinden
 geçen yeşil bir test paketidir. Beş HIGH bulgunun beşi de kapandı: koordinasyon

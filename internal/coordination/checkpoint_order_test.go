@@ -2,6 +2,7 @@ package coordination_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -48,11 +49,22 @@ func TestTheNewestCheckpointIsTheOneWrittenLast(t *testing.T) {
 	task := f.task(t, departing.ID, "a task two agents both wrote on")
 
 	// The first id sorts after the second. Both are the shape identity.NewID
-	// mints; only their order is arranged.
+	// mints — a prefix, a dash and 26 Crockford characters, of which the first
+	// ten are the millisecond — and they share the millisecond, so they differ
+	// only in the sixteen characters two processes fill independently. That is
+	// the F37 condition exactly; only the order is arranged. (Until audit round
+	// 2, §4.9, the bodies were 28 and 29 characters and encoded two different
+	// milliseconds, while this comment claimed the minted shape.)
 	const (
-		firstID  = "CKP-01M2337ZZZZZZZZZZZZZZZZZZZZZ"
-		secondID = "CKP-01M23370000000000000000000000"
+		millisecond = "01M2337ABC"
+		firstID     = "CKP-" + millisecond + "ZZZZZZZZZZZZZZZZ"
+		secondID    = "CKP-" + millisecond + "0000000000000000"
 	)
+	for _, id := range []string{firstID, secondID} {
+		if body := strings.TrimPrefix(id, "CKP-"); len(body) != 26 || !strings.HasPrefix(body, millisecond) {
+			t.Fatalf("fixture id %q is not the shape identity.NewID mints", id)
+		}
+	}
 	if firstID <= secondID {
 		t.Fatalf("the fixture does not reproduce the condition: %q sorts before %q", firstID, secondID)
 	}
