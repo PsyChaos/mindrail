@@ -358,9 +358,11 @@ rebuild remedy (backlog, both predate in class); index verification in
 
 ## 3. TASK-03 — the lease: one row per tenure, and the three verbs over a file
 
-Commit `8c7107a`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
-green; **835** top-level test functions, from 825. Owns REQ-03, REQ-04 and
-the three lease codes of REQ-07, plus the finding TASK-01's gate carried here.
+Commit `8c7107a`, and `79e8ccb` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **835** top-level test
+functions after the first, from 825, and **837** after the second. Owns
+REQ-03, REQ-04 and the three lease codes of REQ-07, plus the finding TASK-01's
+gate carried here.
 
 ### What changed
 
@@ -403,10 +405,81 @@ the three lease codes of REQ-07, plus the finding TASK-01's gate carried here.
 - **Two things beyond REQ-03/04's letter, both from earlier gates:**
   `OpenSession` through `InTxMeasured` (TASK-01's gate, carried here), and
   `Write.Timing` on all seven writers (D-75 said the store carries it; this is
-  the first task to touch the store).
+  the first task to touch the store). *The Reader of this task refuted "all
+  seven": at `8c7107a` `OpenSession` returned `(Session, error)` and discarded
+  the measurement. Since `79e8ccb` it returns a `Write` attributed to the
+  session it minted, and the sentence is true.*
 - **`noProject` is a new constructor** for a writer that belongs to a project
   rather than a worktree; it is `noWorkspace`'s shape under the same code.
 
 ### The gate
 
-*Filled after the Reader/Breaker pair has run.*
+Two agents over `8c7107a` and this record at `0d74a86`: a Reader (Sonnet) over
+the record, a Breaker (Fable) with a throwaway test over the fixtures, under
+`-race`, and `sqlite3` for planted rows. Fixes: `79e8ccb`; `make check`
+(19 `ok`) and `make tidy-check` green after it; **837** top-level test
+functions, from 835.
+
+**The Reader** checked 35 claims: 26 confirmed, **1 false**, 8 unconfirmed
+(the whole-suite counts and six mutations it did not re-run; L1, L5 and L9
+matched their recorded red lines). The false one was this record's "`Write.Timing`
+on all seven writers": `OpenSession` returned no `Write` and threw the
+measurement away. Corrected in place above and in the code: `OpenSession` now
+returns `(Session, Write, error)`, the `Write` attributed to the session it
+minted, and `TestSessionOpenIsOneTransactionWithItsWait` asserts the
+measurement rides on it (G34 below). Its contract verdict: AC-03.1 … AC-03.4
+and AC-04.2 … AC-04.5 met; AC-04.1 met with the recorded departure that
+`Operation` arrives with TASK-05.
+
+**The Breaker** produced seven findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | The not-held remedy printed the key bare, so for `with space/file.go` the command it told the reader to run leased `with`, and for a key beginning with a dash it was read as an option: carrying out the remedy did not clear the condition | `8c7107a` | `ShellArgument` renders a key as one shell argument — bare when safe, single-quoted otherwise — and the remedy is `--file=<key>`, which a leading dash cannot turn into an option. `TestARemedyNamingAKeyIsACommandLineThatRuns`; G31 |
+| LOW | A Windows drive prefix (`C:\x`, `C:/x`, `c:`) passed the "absolute" refusal | `8c7107a` | Refused as absolute (D-77 amended in the code's own words: absolute where it comes from, relative to nothing here). The refused list of `TestFileTargetIsNormalisedAndRefusedByTheRule` |
+| LOW | Whitespace variants were distinct targets — two agents each held "the" lease on `src/auth.go` and `src/auth.go ` — and `\r`, `\n`, leading and trailing spaces were accepted (a newline landed raw in `why`). A Linux file literally named `weird\name.go` is leased as `weird/name.go` | `8c7107a` | A key that begins or ends with whitespace, or contains a control character, is refused; G33. The backslash reading stays: D-77 chose Windows-style input over a backslash in a Linux name, and the record says so |
+| LOW | `OpenSession` measured its transaction and discarded it | `8c7107a` | As above; G34 |
+| LOW | An unknown project id reaches the foreign key and is published as `COORDINATION_WRITE_FAILED` with the `doctor` remedy that cannot clear it; `noProject` guards only the empty string | `8c7107a`, and `OpenTask` and `OpenSession` with an unknown workspace have had the same shape since MR-003 | Recorded, not fixed here: the command line supplies the project from the registered workspace, so no shipped command reaches it; the domain surface MR-015 calls will need the guard, and the backlog names it |
+| LOW | One lease row with an unparseable `expires_at` makes `ListLeases` fail outright — a healthy lease beside it unlisted — and every verb on that target `COORDINATION_READ_FAILED`; `doctor` reads no lease rows | `8c7107a`, the shape `ListTasks` has had | Recorded. It is the rule of audit round 2 §4.7 applied: a row the store cannot decode is refused as damaged, and the remedy is `doctor`, which does not yet look. The `doctor` damaged-row check stays unowned, now with four readers waiting on it |
+| LOW | A clock that stepped back between acquisition and renewal made the renewal *shorten* the tenure — `expires_at` moved ten minutes earlier, `renewed_at` before `acquired_at` — and a second session then took over ten minutes early | `8c7107a` | `renewIn` only ever moves `expires_at` forward; the renewal is recorded in `renewed_at` alone when the tenure already runs later. `TestARenewalNeverShortensATenure`; G32 |
+
+Attacked and not broken, in one line each. Sixteen sessions racing one
+target under `-race`: `wins=1 conflicts=15 losers-naming-winner=15
+unreleased=1 total-rows=1`. The same race over an expired tenure, sixteen on
+one handle and thirty-two over two `storage.Open` handles, three runs:
+`takeovers=1 conflicts=31 rows-reason-expired=1 unreleased=1 total-rows=2`. A
+mixed race under a ticking clock — eight renewals and four releases by the
+holder, four acquisitions by others — ended with one release, one renewal
+before it, seven `LEASE_NOT_HELD (released)`, three not-held releases, one
+acquisition and three conflicts naming the new holder; `renewed_at` never
+after `released_at`. The boundary at nanosecond precision: one nanosecond
+before `expires_at` a conflict, at it a takeover; `metadata.expires_at` equal
+to the stored column byte for byte. Two stores with clocks twenty-five
+minutes apart over one database: the later-clocked store takes over the
+earlier one's freshly renewed lease, and the earlier one is then told
+`LEASE_NOT_HELD … released at` a time in its own future — D-65's rule that the
+writer's clock judges, chosen and now recorded with its consequence. A
+planted far-future `expires_at` conflicts until the year 9999 and a holder's
+renewal pulls it to now + TTL; a clock at year 9999 writes a five-digit year
+the reader refuses. `MintFor` on a conflict and on a refused renewal leaves
+the session count unchanged; `NamedSession("")` is `SESSION_NOT_FOUND`. Every
+remedy carried out cleared its condition; no `why` carried a driver's or Go's
+words. A planted `released_at = ''` is refused as damaged by `FindLease`,
+hidden by `ListLeases`, and outside the index, so an acquisition inserts
+beside it. A planted `symbol` kind is read and listed as it is, with the
+generic remedy the default arm now prints. A session of another project's
+workspace acquires here (as `OpenTask` allows since MR-003). A NUL byte and
+a ten-thousand-character key are stored and read back equal. Sixteen
+concurrent `OpenSession` mint sixteen ids; a one-mebibyte label is stored.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G31 | `ShellArgument` quotes only what is unsafe *and* does not begin with a dash (`||` for `&&`) | `TestARemedyNamingAKeyIsACommandLineThatRuns`: `ShellArgument("-rf") = -rf, want '-rf'`, `ShellArgument("it's.go") = it's.go, want 'it'\''s.go'`, `ShellArgument("a$b.go") = a$b.go, want 'a$b.go'` |
+| G32 | `renewIn` always sets `expires_at = now + TTL` | `TestARenewalNeverShortensATenure`: `expires_at = 2026-09-09 08:40:00 +0000 UTC after a renewal from an earlier clock, want the original … 08:50:00 kept` and `a second session acquired before the original expiry; the renewal shortened the tenure` |
+| G33 | `FileTarget` stops refusing whitespace at either end | `TestFileTargetIsNormalisedAndRefusedByTheRule`: `want COMMAND_LINE_INVALID, got no error` |
+| G34 | `OpenSession` zeroes `Held` before returning its `Write` | `TestSessionOpenIsOneTransactionWithItsWait`: `OpenSession's Write = {… Minted:true Timing:{Waited:… Held:0s}}, want the minted session and a measured transaction` |
+
+**Carried forward from this gate:** the unknown-project guard on the domain
+surface (MR-015's, backlog); the `doctor` damaged-row check, now with lease
+rows among its readers (unowned); the writer's-clock consequence under D-65
+(recorded, by design).
