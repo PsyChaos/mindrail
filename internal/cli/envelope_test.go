@@ -90,6 +90,11 @@ var exitForCode = map[app.Code]int{
 	app.CodeCoordinationUnavailable: app.ExitFailed,
 	app.CodeCoordinationWriteFailed: app.ExitFailed,
 	app.CodeCoordinationReadFailed:  app.ExitFailed,
+
+	// MR-004's busy code is ExitUnavailable, the class decision D-03 gives a
+	// condition that clears on its own: the lock is released when the other
+	// command finishes, and the remedy is to run this one again (D-74).
+	app.CodeBusyRetryable: app.ExitUnavailable,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

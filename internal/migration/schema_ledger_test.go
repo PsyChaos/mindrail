@@ -568,6 +568,9 @@ func mustFailUp(t *testing.T, migrator *migration.Migrator) error {
 // Both write points are covered: creating the ledger table, which is where the
 // very first `init` takes the lock, and applying a migration, which is where
 // every later one does.
+//
+// The code is MINDRAIL_BUSY_RETRYABLE since MR-004 (decision D-74); the exit
+// class it is asserted on is the same one W1 put it in.
 func TestContentionOnTheWritePathIsRatedUnavailable(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -599,7 +602,7 @@ func TestContentionOnTheWritePathIsRatedUnavailable(t *testing.T) {
 				t.Fatalf("Up = %v, want errors.Is(err, storage.ErrBusy)", err)
 			}
 
-			payload := assertUserFacingCode(t, err, app.CodeRuntimeDBUnavailable)
+			payload := assertUserFacingCode(t, err, app.CodeBusyRetryable)
 			if got := app.ExitCode(err); got != app.ExitUnavailable {
 				t.Errorf("ExitCode = %d, want %d; a contended database is a wait, not a broken operation",
 					got, app.ExitUnavailable)

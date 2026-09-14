@@ -141,6 +141,19 @@ const (
 	// reason: the storage conditions that really are "come back later" are
 	// named by the storage layer before this code is reached.
 	CodeCoordinationReadFailed Code = "COORDINATION_READ_FAILED"
+
+	// CodeBusyRetryable marks a command that waited the whole busy budget for
+	// the runtime database's write lock and was still refused — at BEGIN, or
+	// while opening a database another process was creating.
+	//
+	// It is the one code with the MINDRAIL_ prefix, which decision D-18
+	// reserved for process and infrastructure conditions and named this value
+	// as the example. Nothing is wrong with the database or the repository, and
+	// the only remedy is to run the command again; it is KindUnavailable (exit
+	// 4) so a caller that retries on that class retries here. Until MR-004 the
+	// condition shared RUNTIME_DB_UNAVAILABLE with a corrupt path and a missing
+	// directory, whose remedies cannot succeed against a lock (decision D-74).
+	CodeBusyRetryable Code = "MINDRAIL_BUSY_RETRYABLE"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -175,6 +188,7 @@ var allCodes = sortedCodes([]Code{
 	CodeCoordinationUnavailable,
 	CodeCoordinationWriteFailed,
 	CodeCoordinationReadFailed,
+	CodeBusyRetryable,
 })
 
 var codeSet = indexCodes(allCodes)

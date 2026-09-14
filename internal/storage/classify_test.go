@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +92,13 @@ func readOnlyWriteError(t *testing.T) (error, string) {
 // consulted only at open, so a BEGIN IMMEDIATE that lost the race arrived at the
 // caller as app.KindFailed and exit 1 -- "this operation is broken" -- for a
 // condition decision D-03 rates exit 4 and a caller retries on.
+//
+// Since MR-004 the code is MINDRAIL_BUSY_RETRYABLE (decision D-74): the
+// condition shared RUNTIME_DB_UNAVAILABLE with a corrupt path and a missing
+// directory, and a caller that retries on a lock could not tell it from them
+// without reading the metadata. The wait BEGIN spent is published beside it,
+// so the number a caller sees is the one that was measured — here at least
+// the contender's busy budget, which is what the driver was told to wait.
 func TestWriteFailureRatesContentionUnavailable(t *testing.T) {
 	cause := contendedWriteError(t)
 
@@ -105,9 +114,44 @@ func TestWriteFailureRatesContentionUnavailable(t *testing.T) {
 		t.Errorf("WriteFailure = %v, want errors.Is(err, ErrBusy)", err)
 	}
 
-	payload := assertRetryablePayload(t, err, app.CodeRuntimeDBUnavailable)
+	payload := assertRetryablePayload(t, err, app.CodeBusyRetryable)
 	if strings.Contains(payload.Why, "database is locked (5)") {
 		t.Errorf("payload.Why = %q, which hands the user the driver's words", payload.Why)
+	}
+	if payload.Metadata["condition"] != "locked" {
+		t.Errorf("metadata.condition = %q, want %q", payload.Metadata["condition"], "locked")
+	}
+
+	waited, parseErr := strconv.Atoi(payload.Metadata["waited_ms"])
+	if parseErr != nil {
+		t.Fatalf("metadata.waited_ms = %q, want the milliseconds BEGIN waited", payload.Metadata["waited_ms"])
+	}
+	// The driver waits out busy_timeout before it answers, so the measured wait
+	// cannot be shorter than the budget the contender was opened with; a value
+	// below it would be a number this code made up rather than measured.
+	if waited < int(shortBusy.Milliseconds()) {
+		t.Errorf("metadata.waited_ms = %d, want at least the %d ms busy budget", waited, shortBusy.Milliseconds())
+	}
+}
+
+// TestABusyFromAStatementCarriesNoInventedWait is the other half of the wait's
+// honesty: only BEGIN measures one, and a refusal that did not come from BEGIN
+// must not publish a number nobody measured.
+func TestABusyFromAStatementCarriesNoInventedWait(t *testing.T) {
+	// InTx returns the driver's refusal wrapped once, with the wait on the
+	// wrapper; unwrapping one level is the bare driver error, and re-wrapping
+	// it in a plain fmt.Errorf is what a busy off a statement inside the
+	// transaction looks like when it reaches WriteFailure.
+	driverBusy := errors.Unwrap(contendedWriteError(t))
+	statementBusy := fmt.Errorf("exec statement: %w", driverBusy)
+	if !storage.IsBusy(statementBusy) {
+		t.Fatalf("IsBusy(%v) = false, want true; the fixture lost the driver's error", statementBusy)
+	}
+
+	err := storage.WriteFailure(t.Context(), nil, "do the thing", statementBusy)
+	payload := assertRetryablePayload(t, err, app.CodeBusyRetryable)
+	if _, present := payload.Metadata["waited_ms"]; present {
+		t.Errorf("metadata.waited_ms = %q on a busy that BEGIN did not measure; want it absent", payload.Metadata["waited_ms"])
 	}
 }
 

@@ -282,7 +282,8 @@ func kindForCode(c app.Code) app.Kind {
 		// Deterministic, user-correctable placement or configuration.
 		return app.KindUsage
 	case app.CodeGitUnavailable, app.CodeGitTimeout, app.CodeRuntimePathUnwritable,
-		app.CodeRuntimeDBUnavailable, app.CodeRuntimeDBCorrupt, app.CodeStartupIncomplete:
+		app.CodeRuntimeDBUnavailable, app.CodeRuntimeDBCorrupt, app.CodeStartupIncomplete,
+		app.CodeBusyRetryable:
 		// Environment conditions: a missing tool, an unwritable path, a database
 		// that is locked or damaged.
 		return app.KindUnavailable

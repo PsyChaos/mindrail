@@ -179,6 +179,95 @@ func TestInTxTakesTheWriteLockAtBegin(t *testing.T) {
 	}
 }
 
+// TestInTxReportsItsWaitAndHoldWhenAsked is AC-01.4 (decision D-75): a caller
+// that asks gets the two numbers spec §11 wants measured, a committed
+// transaction fills them, and a refused one leaves them alone — there is no
+// Write to carry them on, and a number from a transaction that did not land
+// would be the write-wait figure of nothing.
+func TestInTxReportsItsWaitAndHoldWhenAsked(t *testing.T) {
+	db := openTemp(t, storage.Options{})
+
+	ctx, stats := storage.WithTxStats(t.Context())
+	const hold = 20 * time.Millisecond
+	err := storage.InTx(ctx, db.DB, func(context.Context, *sql.Tx) error {
+		time.Sleep(hold)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("InTx = %v, want no error", err)
+	}
+	if stats.Held < hold {
+		t.Errorf("stats.Held = %v, want at least the %v the body held the lock", stats.Held, hold)
+	}
+	if stats.Waited < 0 || stats.Waited > time.Second {
+		t.Errorf("stats.Waited = %v on an idle database, want a small non-negative wait", stats.Waited)
+	}
+
+	// A second transaction under the same stats replaces the numbers rather
+	// than adding to them: each Write reports its own transaction.
+	if err := storage.InTx(ctx, db.DB, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+		t.Fatalf("second InTx = %v, want no error", err)
+	}
+	if stats.Held >= hold {
+		t.Errorf("stats.Held = %v after an empty transaction, want it replaced rather than accumulated", stats.Held)
+	}
+
+	// A refused transaction writes nothing into them.
+	refused := errors.New("caller decided to abort")
+	before := *stats
+	err = storage.InTx(ctx, db.DB, func(context.Context, *sql.Tx) error {
+		time.Sleep(hold)
+		return refused
+	})
+	if !errors.Is(err, refused) {
+		t.Fatalf("InTx = %v, want the caller's refusal", err)
+	}
+	if *stats != before {
+		t.Errorf("stats = %+v after a rolled-back transaction, want %+v untouched", *stats, before)
+	}
+
+	// And a context that never asked is served without one.
+	if err := storage.InTx(t.Context(), db.DB, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+		t.Fatalf("InTx without stats = %v, want no error", err)
+	}
+}
+
+// TestInTxDoesNotRetryBegin is AC-01.5 and the negative half of decision D-74:
+// the busy budget is the connection's, spent inside SQLite's own handler, and a
+// refusal that reaches Go is final. A ladder here would multiply the budget.
+func TestInTxDoesNotRetryBegin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	holder := openTemp(t, storage.Options{Path: path})
+	tx, err := holder.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx = %v, want no error", err)
+	}
+
+	// The lock is held for six budgets and then released. One attempt is
+	// refused at the first budget, well before the release; a loop that tried
+	// again would meet the released lock and succeed, which is the shape this
+	// test is written to turn red on — by outcome rather than by a stopwatch,
+	// so a slow machine cannot fake either answer.
+	const (
+		budget = 50 * time.Millisecond
+		hold   = 6 * budget
+	)
+	release := time.AfterFunc(hold, func() { _ = tx.Rollback() })
+	t.Cleanup(func() { release.Stop(); _ = tx.Rollback() })
+
+	contender := openTemp(t, storage.Options{Path: path, BusyTimeout: budget})
+
+	started := time.Now()
+	err = storage.InTx(t.Context(), contender.DB, func(context.Context, *sql.Tx) error { return nil })
+	elapsed := time.Since(started)
+	if !storage.IsBusy(err) {
+		t.Fatalf("InTx = %v after %v, want SQLITE_BUSY: BEGIN was tried again until the lock was released", err, elapsed)
+	}
+	if elapsed < budget {
+		t.Errorf("InTx refused after %v, before the %v budget the driver was told to wait", elapsed, budget)
+	}
+}
+
 // TestParameterizedSQLSurvivesInjectionLiteral is the spec §113 assertion: the
 // value below is data on every hop, never fragment of a statement.
 func TestParameterizedSQLSurvivesInjectionLiteral(t *testing.T) {
