@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -87,12 +88,30 @@ func TestTheUnrepresentablePathRemediesBothWork(t *testing.T) {
 	t.Run("rename the offending path", func(t *testing.T) {
 		repo := newRepoWithUnrepresentablePath(t)
 
+		// The remedy has to be read off the refusal it is carrying out, not
+		// assumed: a path wrongly reported as an ordinary stored value (finding
+		// F30's mistake, in the other direction) would print a different second
+		// next_action, and a test that renamed anyway would not notice.
+		got := run(t, repo, "init", "--json")
+		got.requireExit(t, app.ExitUsage)
+
+		payload := got.errorPayload(t)
+		if payload.Code != app.CodePathNotRepresentable {
+			t.Fatalf("code = %q, want %q", payload.Code, app.CodePathNotRepresentable)
+		}
+		if !strings.Contains(payload.Why, "in this report") {
+			t.Fatalf("why = %q is not the location form's message", payload.Why)
+		}
+		if len(payload.NextAction) < 2 || !strings.Contains(payload.NextAction[1], "rename") {
+			t.Fatalf("next_action = %v does not tell the reader to rename anything", payload.NextAction)
+		}
+
 		renamed := filepath.Join(filepath.Dir(repo), "repo")
 		if err := os.Rename(repo, renamed); err != nil {
 			t.Fatalf("carry out the remedy: %v", err)
 		}
 
-		got := run(t, renamed, "init", "--json")
+		got = run(t, renamed, "init", "--json")
 		got.requireExit(t, app.ExitSuccess)
 		assertNoErrorEnvelope(t, "init", got.stdout)
 	})
