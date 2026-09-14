@@ -440,6 +440,17 @@ holds). The human rendering gains one line, `Leases active`, and the goldens are
 regenerated and read key by key; the only other change in them is
 `runtime.schema_version` 2 → 3 (D-73).
 
+*Amended during TASK-07's gate.* The schema-version line was TASK-02's
+(`aa8d1a2`); TASK-07's diff is the key and its line. And the count rides on the
+coordination block's one observation: `Summarize` reads the project's
+unreleased lease rows and judges each by the clock, so a lease row whose
+timestamp does not decode makes the whole block `indeterminate` — task counts
+included, which the previous binary still reported — with `readiness` and the
+exit code untouched and no parse text on the wire. That is the store's rule for
+damage (a damaged row is refused, not skipped) applied to one more reader; a
+per-field observation, or the `doctor` damaged-row check the backlog carries,
+is what would name the row.
+
 ## 12. Test plan
 
 The acceptance tests are the two-process cases tech-stack §93 and §134 name,

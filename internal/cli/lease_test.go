@@ -395,3 +395,55 @@ func TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves(t *testing.T) {
 		t.Errorf("the human rendering does not carry the count:\n%s", human.stdout)
 	}
 }
+
+// TestADamagedLeaseRowLeavesStatusHonest pins what TASK-07's Breaker
+// demonstrated: a lease row whose timestamp does not decode makes the
+// coordination block indeterminate — the count is not a number `status`
+// could stand behind, and neither, once the read has failed, are the task
+// counts beside it — while readiness, the exit code and the six components
+// do not move, and no parse text reaches the wire (design §11 as amended).
+func TestADamagedLeaseRowLeavesStatusHonest(t *testing.T) {
+	repo := newInitializedRepo(t)
+	me := sessionID(t, repo)
+	held := acquireFile(t, repo, me, "src/a.go")
+
+	type report struct {
+		Readiness    string `json:"readiness"`
+		Coordination struct {
+			Observation  string `json:"observation"`
+			LeasesActive int    `json:"leases_active"`
+		} `json:"coordination"`
+		Components map[string]json.RawMessage `json:"components"`
+	}
+	read := func() (result, report) {
+		t.Helper()
+		got := run(t, repo, "status", "--json")
+		got.requireExit(t, app.ExitSuccess)
+		var r report
+		decodeData(t, got.stdout, &r)
+		return got, r
+	}
+	_, before := read()
+	if before.Coordination.Observation != "observed" || before.Coordination.LeasesActive != 1 {
+		t.Fatalf("with one lease held the block reads %+v, want observed with 1", before.Coordination)
+	}
+
+	execOnRuntimeDB(t, repo, `UPDATE leases SET expires_at = 'not-a-time' WHERE lease_id = '`+held+`'`)
+	got, after := read()
+	if after.Coordination.Observation != "indeterminate" {
+		t.Errorf("observation = %q over a lease row that does not decode, want indeterminate", after.Coordination.Observation)
+	}
+	if after.Readiness != before.Readiness || len(after.Components) != len(before.Components) {
+		t.Errorf("readiness %q → %q, components %d → %d; leases have no readiness rule (D-62)",
+			before.Readiness, after.Readiness, len(before.Components), len(after.Components))
+	}
+	if strings.Contains(got.stdout, "not-a-time") || strings.Contains(got.stdout, "parse") {
+		t.Errorf("the damaged value or the parser's words reached the wire:\n%s", got.stdout)
+	}
+
+	human := run(t, repo, "status", "--no-color")
+	human.requireExit(t, app.ExitSuccess)
+	if !strings.Contains(human.stdout, "Leases active:     0 (indeterminate)") {
+		t.Errorf("the human rendering does not mark the count as indeterminate:\n%s", human.stdout)
+	}
+}

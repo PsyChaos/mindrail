@@ -533,6 +533,12 @@ they were closed.
 - **AC-09.3** Goldens regenerated; the diff is the new key, its human line, and
   `runtime.schema_version` 2 → 3.
 
+  *Amended during TASK-07's gate.* The `runtime.schema_version` 2 → 3 line
+  landed with TASK-02's goldens (`aa8d1a2`), where `TableSchemaVersion` moved;
+  TASK-07's own diff is the key and its human line, eight insertions and
+  nothing else (the Reader checked the diff against the sentence above and
+  found the third item already done).
+
 ### REQ-10 — concurrency, proved
 
 - **AC-10.1** Two operating-system processes race `task state --to CLAIMED` on
