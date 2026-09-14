@@ -977,9 +977,9 @@ Two agents over `e73d4ff` and this record at `5aa8838`, with nothing else
 changing in the tree while they ran — TASK-08's tests were drafted and run in
 a worktree of their own meanwhile: a Reader (Sonnet) over the record, a
 Breaker (Fable) with the built binary over scratch repositories, and the
-previous binary built from `0e13fe1` beside it for A/B. Fix: the commit
-after this one; `make check` (19 `ok`) and `make tidy-check` green after it;
-**866** top-level test functions, from 865.
+previous binary built from `0e13fe1` beside it for A/B. Fix: `556e88d`;
+`make check` (19 `ok`) and `make tidy-check` green after it; **866**
+top-level test functions, from 865.
 
 **The Reader** checked 18 claims: 16 confirmed, **1 refuted**, 1 unconfirmed.
 The refuted one is in the freeze, not in this record: AC-09.3 says the golden
@@ -1045,3 +1045,94 @@ STRICT); `lease acquire --json`'s single-object property under a write lock
 with the lease timestamps among what it would name (backlog); a per-field
 observation for the coordination block, if a later milestone changes the
 shape (backlog).
+
+---
+
+## 8. TASK-08 — two processes, eight sessions, and the proof under load
+
+Commit `26f8f11`. `make check` (19 `ok`, no `FAIL`), `make verify` — check,
+the race detector and the smoke suite, 39 `ok` — and `make tidy-check` green;
+**872** top-level test functions, from 866. Owns REQ-10 and REQ-11. Tests
+only: no production line changed, which is what a proof task should cost.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/cli/twoprocess_test.go` (new) | A `TestMain` that turns this test binary into a `mindrail` process when `MINDRAIL_TEST_CLI_CHILD` is set — `command` runs the real command tree over the process's arguments, `hold` takes the write lock on a database and keeps it until told — with the file's head saying why two goroutines would not do, in `open_contention_test.go`'s words (AC-11.4). Every child starts blocked on its standard input and says `ready` on its standard error; the parent closes every input back to back, which is as close to one instant as two processes get. Each child drops its own variables from the environment first, since the tree warns about any `MINDRAIL_` name it does not know. Five tests: `TestTwoProcessesRaceToClaimOneTask` (AC-10.1), `TestTwoProcessesRaceForOneFileAndShareTwo` (AC-10.2), `TestAThirdProcessTakesOverAnExpiredTenure` (AC-10.3), `TestOneOperationIDTwiceConcurrentlyAndTwiceSequentially` (AC-10.4), `TestAContenderGivesUpWithinOneLadderStepOfItsBudget` (AC-10.5); all skip under `-short`, as the storage package's re-exec test does |
+| `internal/coordination/load_test.go` (new) | `TestEightSessionsMakeTwentyFiveMovesEachWithoutStarvingOneAnother` (AC-10.6): eight goroutines over one store and one database, each moving its own task twenty-five times — the claim, the start, then blocked and back — collecting every `Write.Timing`; asserts every write completed, none was refused for any reason, the longest `Held` is under 250 ms, and afterwards each task is where its route ends at revision 26 claimed by its own session with one active lease per lane. It logs the median, p99 and longest `Held` and the median and longest `Waited` |
+
+### What the processes showed
+
+| Criterion | Demonstrated |
+|---|---|
+| AC-10.1 | Two processes, `task state --to CLAIMED` on one OPEN task: one exits 0 with the task CLAIMED, `claimed_by` its session, an active lease held by it; the other exits 1 with `LEASE_CONFLICT` — specifically, since D-67 judges the lease before the state table — and `holder` naming the winner. By SQL: one unreleased lease row for the task, one row held by the winner, the task row at revision 2 with the winner as claimant, and no session minted |
+| AC-10.2 | `lease acquire --file src/same.go` from two processes: one lease, not renewed, the other `LEASE_CONFLICT` naming the winner's session and lease id; one unreleased row for the key. `src/left.go` and `src/right.go` from two processes: both exit 0, two unreleased rows |
+| AC-10.3 | After a two-process claim, a third session's `task state --to IN_PROGRESS` inside the TTL is `LEASE_CONFLICT`; with the winner's row back-dated to 2020 by SQL — the binary runs on the system clock — the same move from a third process exits 0, the task IN_PROGRESS claimed and held by the third session, `superseded` naming the old holder's tenure with status `released` and `release_reason` `expired`, and that row closed as expired in the table |
+| AC-10.4 | `task open --operation-id op-concurrent` from two processes with one session and title: both exit 0, one `replayed`, one task id, one task row, one operation row. Then twice in a row under a second id: a write, then a replay of it with the same task id; two and two |
+| AC-10.5 | A process holding `BEGIN IMMEDIATE` and a contender under a 300 ms budget: exit 4, `MINDRAIL_BUSY_RETRYABLE`, `waited_ms` 300 — within `[300, 700]`, the budget plus at most one ladder step — and 312 ms from release to exit; no task row. The holder commits, the same command exits 0, one task row |
+| AC-10.6 | 200 writes over 8 sessions, all completed: held median 122 µs, p99 973 µs, longest 1.36 ms; waited median 242 µs, longest 53 ms. Under `-race`: held median 3.0 ms, p99 7.1 ms, longest 10.2 ms; waited longest 731 ms — the pool's queue, on which there is no bound (D-75 as amended). One write's cost, then, is a few hundred microseconds of lock and whatever the queue in front of it costs |
+| AC-10.7 | The six tests five times in parallel with `make check` beside them: five exits 0 and `make check` exit 0 (19 `ok`). The busy contender read `waited_ms 300` in all five and 313–319 ms from release to exit; the load test's longest `Held` 1.4–2.3 ms, longest `Waited` 54–79 ms. Nothing needed a rerun in isolation |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| P1 | `TransitionExpecting` no longer judges another session's active lease | `TestTwoProcessesRaceToClaimOneTask`: `the loser's code = TASK_STATE_INVALID, want LEASE_CONFLICT: the winner's lease is judged before the state table (D-67)` and `the loser was told holder="", want the winner "SES-…"` |
+| P2 | `acquireIn` renews another session's active lease instead of refusing | `TestTwoProcessesRaceForOneFileAndShareTwo`: `lease acquire --file src/same.go: 2 processes succeeded and 0 were refused, want one of each:` |
+| P3 | `unreleasedLeaseOn` matches any key of the kind | the same test: `racer 1 on its own file exited 1, want 0:` and `0 unreleased lease rows for the two different files, want 2` |
+| P4 | an expired tenure is treated as active | `TestAThirdProcessTakesOverAnExpiredTenure`: `exit code = 1, want 0 (error exit status 1)` — the takeover refused as a conflict |
+| P5 | `replay` never looks the operation up | `TestOneOperationIDTwiceConcurrentlyAndTwiceSequentially`: `process 1 exited 1, want 0:` — the second delivery wrote a second task and then could not record the id |
+| P6 | the busy-budget seam dropped (`BusyTimeout: 0` at the coordination commands' site) | `TestAContenderGivesUpWithinOneLadderStepOfItsBudget`: `waited_ms = 5011, want within [300, 700]: the budget, plus at most one ladder step` and `the contender took 5.024949562s from release to exit …` |
+| P7 | a 300 ms sleep inside the move's transaction | `TestEightSessionsMakeTwentyFiveMovesEachWithoutStarvingOneAnother`: `lane 1 move 0 failed with MINDRAIL_BUSY_RETRYABLE …`, `107 of 200 writes completed`, `the longest write held the lock for 302.071434ms, want under 250ms`, `5 active leases after the run, want one per lane` — with the lock held that long, SQLite's busy handler, which has no queue, let three lanes starve past the five-second budget on their very first move |
+
+P1 was found by running P2 first: renewing another's lease in `acquireIn`
+left the task race green, because the move's own judgment in
+`TransitionExpecting` refuses before `acquireIn` is reached; the file race
+went red and the task race needed a mutation of its own.
+
+### Where this task departed from the freeze, and why
+
+- **AC-10.1's loser is asserted as `LEASE_CONFLICT`, not "either".** The
+  freeze allows `TASK_STATE_INVALID` too; D-67 fixes the order, so the test
+  asks for the code that order produces, and P1 shows it is the order that
+  produces it.
+- **AC-10.3 is reached by back-dating the row.** The binary runs on the
+  system clock and a twenty-minute wait is not a test; the SQL edit is the
+  same one `task show`'s and `status`'s expired arms use.
+- **AC-10.5's "within the budget plus one ladder step" is read on
+  `waited_ms`**, the number the envelope carries: at least the budget, at
+  most the budget plus `DefaultBackoff.Cap`; the wall clock from release to
+  exit is bounded loosely, at the budget plus a step plus two seconds for a
+  process start, and logged.
+- **AC-10.6 runs goroutines, not processes**, as the criterion says: the
+  question is how long the store holds the lock, and the pool is part of the
+  answer. It is in the default suite as well as under `make race`.
+- **The re-exec's busy budget travels in an environment variable**
+  (`MINDRAIL_TEST_CLI_BUSY_BUDGET`), stripped before the tree runs, because
+  the child's command line is the command line under test.
+
+### REQ-11, item by item
+
+- **AC-11.1** — each race asserts both what was refused and what was
+  written: the loser's code and the winner's row, the count of unreleased
+  rows and that no session was minted; the contender's refusal and the
+  absence of a task row, then the success and the one row.
+- **AC-11.2** — every classification is on `Code`, an exit code, a state, a
+  revision or an id; the only substring assertions in this task are on the
+  human line's exact text.
+- **AC-11.3** — §1 to §8 of this document: every task's mutations, run
+  before they were written down, and the gates' mutations beside them.
+- **AC-11.4** — the head of `twoprocess_test.go`.
+
+### REQ-12, the non-goals, checked at the end
+
+| | Demonstrated |
+|---|---|
+| AC-12.1 | `grep -rn 'TargetSymbol\|before_change\|type Change ' internal/` outside tests: nothing; `ParseTargetKind` knows `task` and `file` |
+| AC-12.2 | `grep -rni 'override\|"break"\|--force\|"force"'` over `internal/cli` and `internal/coordination` outside tests: two comment lines, one of them D-69's "no flag overrides it" |
+| AC-12.3 | `grep -rn 'LeaseTTL\|ttl' internal/config/ internal/cli/*.go` outside tests: nothing |
+| AC-12.4 | the one `ALTER TABLE tasks ADD COLUMN revision` in `000003_lease_idempotency.sql`; no other migration line names a revision |
+| AC-12.5 | `InTxMeasured`: one `db.BeginTx`, no loop around it (`internal/storage/tx.go`) |
+| AC-12.6 | `grep -rn 'Timing\|waited_ms\|held_ms' internal/cli/*.go` outside tests: nothing; `waited_ms` reaches the wire only as the busy refusal's metadata, set in `internal/storage`, which D-74 put there |
+| AC-12.7 | `git diff --name-only e4bad83..HEAD`: 66 files, every one under `docs/engineering/`, `migrations/` or the eight packages MR-004 owns (`app`, `bootstrap`, `cli`, `coordination`, `doctor`, `migration`, `status`, `storage`) |
