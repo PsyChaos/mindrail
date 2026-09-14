@@ -934,3 +934,39 @@ as it should.
 
 **Carried forward from this gate:** the expired holder's silent checkpoint
 (backlog); remedies as code spans and keys with backticks (recorded limit).
+
+---
+
+## 7. TASK-07 — `status` publishes the leases held right now
+
+Commit `e73d4ff`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
+green; **865** top-level test functions, from 863. Owns REQ-09. Implemented
+after the TASK-06 gate closed and before the TASK-07 gate opened, with the
+tree otherwise still.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/model.go`, `store.go` | `Summary.LeasesActive` (`leases_active`): `Summarize` counts the project's leases through `ListLeases`, which keeps a row only while its status at the store's clock is active — an expired tenure is not counted and not closed (D-79), a released one is not read. The count is taken before the newest-checkpoint query, so a project with no checkpoint yet still reports it |
+| `internal/status/report.go`, `render.go` | `CoordinationInfo.LeasesActive` (`coordination.leases_active`) copied from the summary; one human line, `Leases active:`, rendered through the coordination block's own observation, so where that block is `not_observed` the line says so instead of printing a zero it did not read |
+| Eight goldens, one line each | `internal/status/testdata/{init_blocked_human,init_ready_human,status_blocked_human,status_ready_human}.golden` gain `  Leases active:     0`, `init_ready_json.golden` gains `"leases_active": 0`; `internal/cli/testdata/status_human.golden` the same line, `status_json.golden` `data.coordination.leases_active`, `init_json.golden` `data.status.coordination.leases_active`. Regenerated with `-update`, and the diff read: eight insertions, no other line moved (AC-09.3) |
+| Tests | `TestSummarizeCountsTheLeasesHeldRightNow` (`internal/coordination`, AC-09.1 at the store): a fresh project counts 0; two files, a third file released, and a task claimed count 3; the clock moved past the first file's expiry and not the others' counts 2; the expired row is still open and the task still `CLAIMED` afterwards. `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves` (`internal/cli`, AC-09.1 and AC-09.2 through the binary): `status --json` reports 0, then 2 with two files held, then 1 after one row is back-dated by SQL — the binary runs on the system clock, as in `task show`'s expired arm; readiness is the same string across none, some and expired, six components in each; the leases table has two rows after the three reads; the human rendering carries `Leases active:     1` |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| S1 | `ListLeases` keeps every unreleased row, expired or not | `TestSummarizeCountsTheLeasesHeldRightNow`: `Summarize = {… LeasesActive:3}, <nil>; want two after the first lease expired` |
+| S2 | the report copies 0 instead of the summary's count | `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves`: `leases_active = 0 with two files held, want 2`, `leases_active = 0 with one lease expired, want 1`, and the human line, since it renders the report |
+| S3 | the `Leases active` line dropped from the rendering | the same test: `the human rendering does not carry the count`; and in `internal/status`, `TestStatusRenderHumanGolden` and `TestInitReportGolden`: `output does not match testdata/status_ready_human.golden`, `…status_blocked_human…`, `…init_ready_human…`, `…init_blocked_human…` |
+
+### Where this task departed from the freeze, and why
+
+- Nothing in substance. The count is the design's §11 field under its name;
+  readiness and the six components are untouched (D-62), which the CLI test
+  asserts across all three lease states rather than assuming.
+- **The count is not a seventh component.** It is a number inside the
+  coordination block, beside the task counts, and carries that block's
+  observation; a component would have needed a readiness rule, and D-62 says
+  leases have none.
