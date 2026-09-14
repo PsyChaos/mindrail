@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"time"
 
@@ -114,11 +115,34 @@ func (s *Store) replay(ctx context.Context, tx *sql.Tx, command, hash string, re
 	if err := json.Unmarshal([]byte(body), &record); err != nil {
 		return Write{}, false, readFailed("the operation", s.op.ID, fmt.Errorf("operation %s result: %w", s.op.ID, err))
 	}
-	if err := json.Unmarshal(record.Result, result); err != nil {
+	// Decoded into a zero value, never into the value the writer prepared
+	// for a fresh run: a record whose result lacks the entity — a hand-edited
+	// row, or one a later binary wrote in another shape — would otherwise
+	// replay as the freshly minted id the writer had ready, a task that exists
+	// nowhere, different on every replay (TASK-05's Breaker). What the record
+	// holds is what is returned, and a record that holds no entity is damage.
+	zero := reflect.New(reflect.TypeOf(result).Elem())
+	if err := json.Unmarshal(record.Result, zero.Interface()); err != nil {
 		return Write{}, false, readFailed("the operation", s.op.ID, fmt.Errorf("operation %s result: %w", s.op.ID, err))
 	}
+	if identity, ok := zero.Interface().(recorded); !ok || identity.recordedID() == "" {
+		return Write{}, false, readFailed("the operation", s.op.ID,
+			fmt.Errorf("operation %s result: the record names no %s", s.op.ID, reflect.TypeOf(result).Elem().Name()))
+	}
+	reflect.ValueOf(result).Elem().Set(zero.Elem())
 	return Write{Session: record.Session, Minted: record.Minted, Replayed: true, OperationID: s.op.ID}, true, nil
 }
+
+// recorded is what every replayable result can answer: the id of the entity
+// it is about, empty when the record carries none.
+type recorded interface{ recordedID() string }
+
+func (s Session) recordedID() string     { return s.ID }
+func (t Task) recordedID() string        { return t.ID }
+func (m Move) recordedID() string        { return m.Task.ID }
+func (n Noted) recordedID() string       { return n.Checkpoint.ID }
+func (a Acquisition) recordedID() string { return a.Lease.ID }
+func (l Lease) recordedID() string       { return l.ID }
 
 // record inserts the bound operation's row after the write, in the same
 // transaction, so a refusal takes the record back with the write and a commit

@@ -289,3 +289,43 @@ func TestAnOperationIDMustBeAnIdentifier(t *testing.T) {
 		t.Errorf("refused ids recorded %d row(s)", n)
 	}
 }
+
+// TestARecordThatNamesNoEntityIsDamageNotAFreshMint is TASK-05's Breaker
+// finding: a `task open` record whose result lacked the task replayed as the
+// freshly minted id the writer had ready — a task that existed nowhere, a
+// different one on every replay. The result is decoded into a zero value and
+// a record that names no entity is refused as damaged, for every writer.
+func TestARecordThatNamesNoEntityIsDamageNotAFreshMint(t *testing.T) {
+	for _, w := range writers {
+		t.Run(w.name, func(t *testing.T) {
+			f, _ := leaseFixture(t)
+			me, task, lease := arrange(t, f)
+			bound := f.store.Idempotent("op-drifted")
+			if _, _, err := w.run(t, bound, f, me, task, lease); err != nil {
+				t.Fatalf("first %s = %v", w.name, err)
+			}
+
+			// A record in another shape: the envelope is intact, the result
+			// is an object naming nothing this writer returns.
+			if _, err := f.db.ExecContext(t.Context(),
+				`UPDATE operations SET result = json_set(result, '$.result', json('{"unrelated":"row"}')) WHERE operation_id = 'op-drifted'`); err != nil {
+				t.Fatal(err)
+			}
+			before := countRows(t, f, w.table)
+
+			for range 2 {
+				result, write, err := w.run(t, bound, f, me, task, lease)
+				payload := requireCode(t, err, app.CodeCoordinationReadFailed)
+				if payload.Metadata["subject_id"] != "op-drifted" {
+					t.Errorf("subject_id = %q, want the operation", payload.Metadata["subject_id"])
+				}
+				if write.Replayed || result != nil && reflect.ValueOf(result).IsValid() && !reflect.ValueOf(result).IsZero() {
+					t.Errorf("a drifted record replayed as %+v / %+v; want nothing returned", result, write)
+				}
+			}
+			if after := countRows(t, f, w.table); after != before {
+				t.Errorf("a refused replay changed %s from %d to %d rows", w.table, before, after)
+			}
+		})
+	}
+}
