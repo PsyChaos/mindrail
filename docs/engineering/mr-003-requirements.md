@@ -339,6 +339,19 @@ would tell the arriving agent anything.
   is unchanged afterwards — asserted by re-reading it, not by trusting the error.
 - **AC-04.4** `LastCheckpoint` returns the newest by `checkpoint_id`, proved by a
   fixture whose checkpoints share a `created_at` value.
+
+  *Amended during the round-2 remediation (round 2, §4.4).* The newest is the
+  last one **inserted** — `ORDER BY rowid DESC` — as D-59 was amended to say
+  during the round-1 remediation (finding F37); this criterion kept the
+  superseded rule for one more round. The proof is not a shared-`created_at`
+  fixture: within one process a minted id ascends with the insert, so such a
+  fixture passes under either ordering and cannot object to the wrong one. The
+  proof is a fixture whose two rows' ids sort against their insertion order,
+  `TestTheNewestCheckpointIsTheOneWrittenLast`, which is red under
+  `ORDER BY checkpoint_id DESC` on all three readers — `LastCheckpoint`,
+  `Handover` and `Summarize`. The shared-timestamp test remains, renamed
+  `TestATimestampTieDoesNotDecideTheLastCheckpoint`, as the proof that
+  `created_at` is not the substitute either.
 - **AC-04.5** A write failure is reported through `storage.WriteFailure` first,
   exactly as `workspace.Store.registrationFailure` does, so an unwritable runtime
   database gets the remedy that can succeed rather than a generic one.

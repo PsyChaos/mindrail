@@ -108,7 +108,7 @@ work rather than a claim about it.
 | `newGraph`-equivalent for this milestone: the state table's `BLOCKED` row gains a jump to `COMPLETED` | `TestEveryOrderedPairOfStatesGetsTheAnswerTheSpecificationGives` — `CanTransition(BLOCKED, COMPLETED) = true, want false` |
 | The release path `CLAIMED → OPEN` is deleted from the table | the same test, from the other side |
 | `Transition`'s `CanTransition` guard is removed | `TestEveryTransitionTheTableRefusesLeavesTheRowUntouched`, on the first illegal pair |
-| `LastCheckpoint` orders by `created_at` instead of `checkpoint_id` | `TestTheLastCheckpointIsTheNewestIdNotTheNewestTimestamp` — returns the *first* note |
+| `LastCheckpoint` orders by `created_at` instead of `checkpoint_id` | `TestTheLastCheckpointIsTheNewestIdNotTheNewestTimestamp` — returns the *first* note. *(Renamed `TestATimestampTieDoesNotDecideTheLastCheckpoint` during the round-2 remediation, §4.4: it tells `created_at` from an id, and cannot tell an id from `rowid`.)* |
 | `WriteCheckpoint` stops verifying the session | `TestAnUnknownSessionIsRefusedByEveryWriter` — the foreign key answers instead, with `COORDINATION_WRITE_FAILED` |
 | Leaving `BLOCKED` no longer clears the reason | `TestABlockCarriesItsReasonAndLeavingClearsIt` |
 | The commands run in `ModeReadOnly` again | the handover acceptance test, with `RUNTIME_PATH_UNWRITABLE` |

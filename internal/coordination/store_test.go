@@ -427,15 +427,21 @@ func TestClaimingRecordsTheSessionAndReleasingClearsIt(t *testing.T) {
 	}
 }
 
-// TestTheLastCheckpointIsTheNewestIdNotTheNewestTimestamp is AC-04.4 and
-// decision D-59.
+// TestATimestampTieDoesNotDecideTheLastCheckpoint is the created_at half of
+// decision D-59: the newest checkpoint is not chosen by a timestamp column.
 //
 // The clock is frozen, so every checkpoint here carries the same created_at.
 // That is not a contrivance: `app.FixedClock` is what the rest of this suite
 // injects, and a real run writing two checkpoints in one millisecond produces
 // the same tie. Ordering by created_at would return whichever row SQLite
 // happened to reach first.
-func TestTheLastCheckpointIsTheNewestIdNotTheNewestTimestamp(t *testing.T) {
+//
+// This test cannot tell `rowid` from `checkpoint_id`: the rows are written by
+// one process, whose ids ascend with its inserts, so both orderings return the
+// fourth note. It was labelled AC-04.4 until audit round 2 (§4.4) showed it
+// staying green under the ordering that criterion had been amended away from.
+// TestTheNewestCheckpointIsTheOneWrittenLast is the test bound to AC-04.4.
+func TestATimestampTieDoesNotDecideTheLastCheckpoint(t *testing.T) {
 	f := openFixture(t, filepath.Join(t.TempDir(), "mindrail.db"), app.FixedClock{Instant: baseInstant})
 	session := f.session(t)
 	task := f.task(t, session.ID, "a task with several notes")

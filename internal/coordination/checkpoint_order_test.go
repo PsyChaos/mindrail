@@ -7,7 +7,12 @@ import (
 	"github.com/PsyChaos/mindrail/internal/app"
 )
 
-// TestTheNewestCheckpointIsTheOneWrittenLast is finding F37.
+// TestTheNewestCheckpointIsTheOneWrittenLast is finding F37, and it is AC-04.4
+// as the round-2 remediation amended it: the newest checkpoint is the last one
+// inserted, `ORDER BY rowid DESC`. Implementing the criterion's original wording,
+// `ORDER BY checkpoint_id DESC`, turns this test red; the same-timestamp test in
+// store_test.go stays green under it, because one process's ids ascend with its
+// inserts.
 //
 // "The newest checkpoint" was a lexical comparison of minted ids. The id's
 // 48-bit millisecond prefix is monotonic within one process, because the bits

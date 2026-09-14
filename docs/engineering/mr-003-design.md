@@ -109,6 +109,17 @@ Workspace ───────────────────────�
   time-sortable, so ordering does not depend on a timestamp column whose
   resolution can tie.
 
+  *Amended during the round-2 remediation (round 2, §4.4).* That argument is the
+  one finding F37 refuted, and it survived here after D-59 was corrected: the
+  id is time-sortable to the millisecond and, under the millisecond, ordered
+  only within one process — between two processes writing in the same
+  millisecond the two ids order by 80 random bits, which is the handover case
+  this milestone exists for. "The last checkpoint" is the **last one
+  inserted**, `ORDER BY rowid DESC`, safe because the table is append-only and
+  a rowid is only reused after a delete. The timestamp column is still not the
+  answer, for the reason D-59 gives: it is stamped before the transaction opens
+  and its text form is not lexicographically ordered.
+
 ## 5. Runtime schema — `migrations/000002_coordination.sql`
 
 ```sql
