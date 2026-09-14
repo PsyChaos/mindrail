@@ -1,6 +1,7 @@
 package migration_test
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -145,6 +146,32 @@ func TestATaskWrittenBeforeTheRevisionColumnStartsAtOne(t *testing.T) {
 	}
 	if _, err := migration.New(db.DB, full, fixedClock()).Status(t.Context()); err != nil {
 		t.Errorf("Status after the upgrade = %v, want no error: tasks with its added column is the expected shape", err)
+	}
+}
+
+// TestTheRealTasksTableIsCheckedForItsAddedColumn is AC-02.4 on the table
+// that ships rather than on a fixture: `revision` dropped from `tasks` by hand
+// — which SQLite allows under foreign_keys = 1, as TASK-02's Breaker showed
+// and its first record denied — is reported as damage, not as health.
+func TestTheRealTasksTableIsCheckedForItsAddedColumn(t *testing.T) {
+	full, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatalf("Load(embedded) = %v, want no error", err)
+	}
+	db := newDB(t)
+	migrator := migration.New(db.DB, full, fixedClock())
+	if _, err := migrator.Up(t.Context()); err != nil {
+		t.Fatalf("Up = %v, want no error", err)
+	}
+	if _, err := migrator.Status(t.Context()); err != nil {
+		t.Fatalf("Status on the healthy schema = %v, want no error", err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), `ALTER TABLE tasks DROP COLUMN revision`); err != nil {
+		t.Fatalf("DROP COLUMN revision = %v, want no error: SQLite drops a non-key column under foreign_keys = 1", err)
+	}
+	if _, err := migrator.Status(t.Context()); !errors.Is(err, migration.ErrSchemaShapeChanged) {
+		t.Fatalf("Status without revision = %v, want ErrSchemaShapeChanged", err)
 	}
 }
 

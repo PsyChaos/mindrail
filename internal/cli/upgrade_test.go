@@ -2,10 +2,12 @@ package cli_test
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 )
 
 // TestAWorktreeRegisteredByAnOlderBinaryIsStillRegistered is finding F01.
@@ -126,11 +128,12 @@ func TestAWorkspaceNobodyLookedUpIsNotReportedAsUnregistered(t *testing.T) {
 // is in on its first run after the MR-004 upgrade.
 func TestCoordinationCommandsSendASchemaBehindDatabaseToInit(t *testing.T) {
 	downgrades := []struct {
-		name string
-		to   func(*testing.T, string)
+		name    string
+		applied string // what the ledger holds after the downgrade
+		to      func(*testing.T, string)
 	}{
-		{"schema 1", downgradeToSchemaOne},
-		{"schema 2", downgradeToSchemaTwo},
+		{"schema 1", "1", downgradeToSchemaOne},
+		{"schema 2", "2", downgradeToSchemaTwo},
 	}
 	for _, downgrade := range downgrades {
 		for _, args := range [][]string{{"task", "list"}, {"session", "open"}} {
@@ -147,6 +150,17 @@ func TestCoordinationCommandsSendASchemaBehindDatabaseToInit(t *testing.T) {
 			if payload.Code != app.CodeMigrationFailed {
 				t.Errorf("`status` calls this condition %q and `%s` calls it %q; one condition has one code\n%s",
 					app.CodeMigrationFailed, name, payload.Code, got.stdout)
+			}
+			// The sentence names the gap by number: it used to name the tables
+			// migration 2 created, which was false on a database that had them
+			// (TASK-02's Breaker).
+			if payload.Metadata["applied_version"] != downgrade.applied ||
+				payload.Metadata["required_version"] != strconv.FormatInt(coordination.TableSchemaVersion, 10) {
+				t.Errorf("%s: metadata = %v, want applied_version %s and required_version %d",
+					name, payload.Metadata, downgrade.applied, coordination.TableSchemaVersion)
+			}
+			if !strings.Contains(payload.Why, "up to "+downgrade.applied) {
+				t.Errorf("%s: why = %q, want it to say which migration the database is at", name, payload.Why)
 			}
 			if !strings.Contains(strings.Join(payload.NextAction, " "), "mindrail init") {
 				t.Errorf("%s does not send the reader to the command that clears the condition: %v",

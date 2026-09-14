@@ -272,6 +272,88 @@ func TestStatusExpectsAColumnAMigrationAdded(t *testing.T) {
 	}
 }
 
+// TestAddColumnIsReadTheWayTheColumnListIs is TASK-02's Breaker findings on
+// the ADD COLUMN reader, which read the name with an ASCII pattern of its own
+// where the CREATE side reads it with a tokenizer that knows SQLite's four
+// quotings and every script. Each row is a shape the Breaker built; the
+// healthy-schema arm runs the file and checks Status accepts what it built,
+// because every wrong reading here is a healthy repository refused.
+func TestAddColumnIsReadTheWayTheColumnListIs(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		sql       string
+		wantAdded []string // nil: nothing added
+		wantAlter bool     // the table is forgotten
+	}{
+		{"bare", "ALTER TABLE t ADD COLUMN c TEXT;\n", []string{"c"}, false},
+		{"no COLUMN keyword", "ALTER TABLE t ADD c TEXT;\n", []string{"c"}, false},
+		{"double-quoted", `ALTER TABLE t ADD COLUMN "c" TEXT;` + "\n", []string{"c"}, false},
+		{"bracketed", "ALTER TABLE t ADD COLUMN [c] TEXT;\n", []string{"c"}, false},
+		{"backticked", "ALTER TABLE t ADD COLUMN `c` TEXT;\n", []string{"c"}, false},
+		{"a name in another script", "ALTER TABLE t ADD COLUMN sütun TEXT;\n", []string{"sütun"}, false},
+		{"a column named column, quoted", `ALTER TABLE t ADD "column" TEXT;` + "\n", []string{"column"}, false},
+		{"upper-cased name is stored lower", "ALTER TABLE t ADD COLUMN Revision INTEGER NOT NULL DEFAULT 1;\n", []string{"revision"}, false},
+		{"split over two lines", "ALTER TABLE t\n    ADD COLUMN c TEXT;\n", []string{"c"}, false},
+		{"lower-case keywords", "alter table t add column c text;\n", []string{"c"}, false},
+		{"inside a block comment", "/*\nALTER TABLE t ADD COLUMN ghost TEXT;\n*/\n", nil, false},
+		{"inside a line comment", "-- ALTER TABLE t ADD COLUMN ghost TEXT;\n", nil, false},
+		{"drop column is forgotten", "ALTER TABLE t DROP COLUMN b;\n", nil, true},
+		{"rename column is forgotten", "ALTER TABLE t RENAME COLUMN b TO z;\n", nil, true},
+		{"add then drop forgets", "ALTER TABLE t ADD COLUMN c TEXT;\nALTER TABLE t DROP COLUMN c;\n", []string{"c"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := migration.Load(sqlFS(map[string]string{
+				"000001_initial.sql": "CREATE TABLE t (a TEXT, b TEXT) STRICT;\n",
+				"000002_alter.sql":   tc.sql,
+			}))
+			if err != nil {
+				t.Fatalf("Load = %v, want no error", err)
+			}
+			if got := strings.Join(set[1].Added["t"], ","); got != strings.Join(tc.wantAdded, ",") {
+				t.Errorf("Added[t] = %v, want %v", set[1].Added["t"], tc.wantAdded)
+			}
+			if got := len(set[1].Altered) == 1 && set[1].Altered[0] == "t"; got != tc.wantAlter {
+				t.Errorf("Altered = %v, want forgotten = %v", set[1].Altered, tc.wantAlter)
+			}
+
+			// The schema the file builds must satisfy the check derived from it.
+			db := newDB(t)
+			migrator := migration.New(db.DB, set, fixedClock())
+			if _, err := migrator.Up(t.Context()); err != nil {
+				t.Fatalf("Up = %v, want no error", err)
+			}
+			if _, err := migrator.Status(t.Context()); err != nil {
+				t.Errorf("Status = %v on the schema the migration built; the reader expects a column no database has", err)
+			}
+		})
+	}
+}
+
+// TestACreateTableAsSelectIsNotReadAsAColumnList is the predating case the
+// same Breaker found beside the new one: the parenthesis in `count(*)` was
+// taken for the start of a column list, and every healthy database was then
+// missing a column named `*`.
+func TestACreateTableAsSelectIsNotReadAsAColumnList(t *testing.T) {
+	set, err := migration.Load(sqlFS(map[string]string{
+		"000001_initial.sql": "CREATE TABLE src (a TEXT) STRICT;\nCREATE TABLE cnt AS SELECT count(*) AS n FROM src;\n",
+	}))
+	if err != nil {
+		t.Fatalf("Load = %v, want no error", err)
+	}
+	if _, read := set[0].Columns["cnt"]; read {
+		t.Errorf("Columns[cnt] = %v, want the AS SELECT table skipped rather than read", set[0].Columns["cnt"])
+	}
+
+	db := newDB(t)
+	migrator := migration.New(db.DB, set, fixedClock())
+	if _, err := migrator.Up(t.Context()); err != nil {
+		t.Fatalf("Up = %v, want no error", err)
+	}
+	if _, err := migrator.Status(t.Context()); err != nil {
+		t.Errorf("Status = %v on the schema the migration built", err)
+	}
+}
+
 // TestStatusStillForgetsATableAnotherAlterTouched keeps the bail-out where
 // D-73 leaves it: a RENAME COLUMN in the same file as an ADD COLUMN is a form
 // the checker cannot follow, and the table is forgotten rather than half

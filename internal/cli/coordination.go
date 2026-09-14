@@ -135,41 +135,49 @@ func coordinationScope(a *bootstrap.App) (scope, error) {
 	// and the gap between the two is the state every existing repository is in
 	// on its first run after an upgrade: the lookup above succeeds — that is
 	// the whole of finding F01 — and the store below would then be handed a
-	// database with no sessions, tasks or checkpoints table, which answers
-	// with a SQL error and a remedy `mindrail doctor` cannot clear while the
-	// same disk's `status` names the one that works. Refusing here keeps one
-	// condition on one code and one working remedy (audit round 2, §4.1).
-	if !schemaHasCoordinationTables(a) {
-		return scope{}, schemaBehind()
+	// database missing what it queries, which answers with a SQL error and a
+	// remedy `mindrail doctor` cannot clear while the same disk's `status`
+	// names the one that works. Refusing here keeps one condition on one code
+	// and one working remedy (audit round 2, §4.1).
+	if applied := newestAppliedMigration(a); applied < coordination.TableSchemaVersion {
+		return scope{}, schemaBehind(applied)
 	}
 
 	return scope{app: a, store: store, space: space}, nil
 }
 
-// schemaHasCoordinationTables reports whether the migration that creates the
-// coordination tables has been applied, read from the migration ledger for the
-// same reason bootstrap's workspace test reads it there: the ledger is what the
-// migrator itself is answerable for.
-func schemaHasCoordinationTables(a *bootstrap.App) bool {
+// newestAppliedMigration reads the highest version in the migration ledger,
+// for the same reason bootstrap's workspace test reads the ledger: it is what
+// the migrator itself is answerable for. Zero when nothing has been applied.
+func newestAppliedMigration(a *bootstrap.App) int64 {
+	var newest int64
 	for _, applied := range a.Subject().Migrations {
-		if applied.Version >= coordination.TableSchemaVersion {
-			return true
-		}
+		newest = max(newest, applied.Version)
 	}
-	return false
+	return newest
 }
 
 // schemaBehind is the answer `status` and `doctor` give a database whose
 // migrations have not been applied, carried by the coordination commands so
 // the remedy printed is the one that clears the condition.
-func schemaBehind() error {
+//
+// The sentence names the gap by number rather than by the tables one
+// migration created: it used to say "the migration that creates the sessions,
+// tasks and checkpoints tables has not been applied", which was the whole
+// truth at schema 1 and false at schema 2 — every table it named was present,
+// and what was missing was MR-004's leases, operations and revision column
+// (TASK-02's Breaker).
+func schemaBehind(applied int64) error {
 	return app.NewError(
 		app.CodeMigrationFailed,
 		app.KindFailed,
-		"Schema is behind this binary: the migration that creates the sessions, tasks and checkpoints tables has not been applied",
+		fmt.Sprintf("Schema is behind this binary: the runtime database has applied migrations up to %d and the coordination commands need %d",
+			applied, coordination.TableSchemaVersion),
 		"Commands that need the newer schema cannot run; nothing was read and nothing was written.",
 		"Run `mindrail init` to apply the pending migrations, then re-run the command.",
-	)
+	).
+		WithMetadata("applied_version", strconv.FormatInt(applied, 10)).
+		WithMetadata("required_version", strconv.FormatInt(coordination.TableSchemaVersion, 10))
 }
 
 // coordinationTextFlags are the flags whose value is free text the caller wrote,
