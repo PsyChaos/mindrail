@@ -765,3 +765,51 @@ func TestSessionOpenIsOneTransactionWithItsWait(t *testing.T) {
 		t.Errorf("OpenSession's Write = %+v, want the minted session and a measured transaction", write)
 	}
 }
+
+// TestSummarizeCountsTheLeasesHeldRightNow is AC-09.1 at the store: the
+// count `status` publishes is the active leases by the clock — an expired
+// row and a released one are not counted, and neither is marked (D-79).
+func TestSummarizeCountsTheLeasesHeldRightNow(t *testing.T) {
+	f, clock := leaseFixture(t)
+	me := f.session(t)
+
+	summary, err := f.store.Summarize(t.Context(), f.projectID)
+	if err != nil || summary.LeasesActive != 0 {
+		t.Fatalf("Summarize = %+v, %v; want no active lease on a fresh project", summary, err)
+	}
+
+	first, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), mustFile(t, "a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Minute)
+	if _, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), mustFile(t, "b.go")); err != nil {
+		t.Fatal(err)
+	}
+	released, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(me.ID), mustFile(t, "c.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.store.ReleaseLease(t.Context(), released.Lease.ID, coordination.NamedSession(me.ID)); err != nil {
+		t.Fatal(err)
+	}
+	task := f.taskIn(t, me.ID, coordination.StateClaimed) // a task lease counts too
+
+	summary, err = f.store.Summarize(t.Context(), f.projectID)
+	if err != nil || summary.LeasesActive != 3 {
+		t.Fatalf("Summarize = %+v, %v; want three active leases (two files and a task)", summary, err)
+	}
+
+	// Past the first lease's expiry and not the others'.
+	clock.Advance(coordination.LeaseTTL - 30*time.Second)
+	summary, err = f.store.Summarize(t.Context(), f.projectID)
+	if err != nil || summary.LeasesActive != 2 {
+		t.Fatalf("Summarize = %+v, %v; want two after the first lease expired", summary, err)
+	}
+	if row := readLeaseRow(t, f, first.Lease.ID); row.ReleasedAt != nil {
+		t.Errorf("Summarize closed the expired row; reads write nothing")
+	}
+	if got, _ := f.store.FindTask(t.Context(), task.ID); got.State != coordination.StateClaimed {
+		t.Errorf("Summarize moved the task to %s", got.State)
+	}
+}

@@ -13,6 +13,7 @@ data.components.semantic.summary
 data.components.syntax.state
 data.components.syntax.summary
 data.coordination.last_checkpoint
+data.coordination.leases_active
 data.coordination.observation
 data.coordination.tasks_blocked
 data.coordination.tasks_in_progress

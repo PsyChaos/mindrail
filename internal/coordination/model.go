@@ -104,4 +104,9 @@ type Summary struct {
 	InProgress     int            `json:"tasks_in_progress"`
 	Blocked        int            `json:"tasks_blocked"`
 	LastCheckpoint *CheckpointRef `json:"last_checkpoint"`
+	// LeasesActive is the project's leases held right now, judged against the
+	// clock at the reading and marking nothing (decision D-79); spec §68
+	// lists leases among what status returns, and a count is the fixed-size
+	// form of it.
+	LeasesActive int `json:"leases_active"`
 }

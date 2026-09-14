@@ -925,6 +925,12 @@ func (s *Store) Summarize(ctx context.Context, projectID string) (Summary, error
 		sessionID string
 		createdAt string
 	)
+	active, err := s.ListLeases(ctx, projectID)
+	if err != nil {
+		return Summary{}, err
+	}
+	summary.LeasesActive = len(active)
+
 	err = s.db.QueryRowContext(ctx, selectNewestCheckpointOfProject, projectID).
 		Scan(&taskID, &sessionID, &createdAt)
 	switch {

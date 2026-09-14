@@ -25,6 +25,7 @@ data.status.components.semantic.summary
 data.status.components.syntax.state
 data.status.components.syntax.summary
 data.status.coordination.last_checkpoint
+data.status.coordination.leases_active
 data.status.coordination.observation
 data.status.coordination.tasks_blocked
 data.status.coordination.tasks_in_progress

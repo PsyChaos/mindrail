@@ -73,6 +73,7 @@ func (r Report) RenderHuman(w io.Writer, color bool) error {
 		{"Tasks open", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.TasksOpen))},
 		{"Tasks in progress", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.TasksInProgress))},
 		{"Tasks blocked", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.TasksBlocked))},
+		{"Leases active", observed(r.Coordination.Observation, strconv.Itoa(r.Coordination.LeasesActive))},
 		{"Last checkpoint", lastCheckpointNote(r.Coordination)},
 	})
 

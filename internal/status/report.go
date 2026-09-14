@@ -119,6 +119,9 @@ type WorkspaceInfo struct {
 // CoordinationInfo is MR-003's block: what work is in flight and what the last
 // agent said about it.
 //
+// LeasesActive is MR-004's addition (design §11): the leases the project
+// holds right now, judged against the clock and marking nothing (D-79).
+//
 // It is additive beside Knowledge and Workspace rather than a seventh component,
 // and it cannot move Readiness (decision D-62). A blocked task is a fact about
 // work, not about the installation; a tool that reported BLOCKED — the value
@@ -134,6 +137,7 @@ type CoordinationInfo struct {
 	TasksOpen       int                         `json:"tasks_open"`
 	TasksInProgress int                         `json:"tasks_in_progress"`
 	TasksBlocked    int                         `json:"tasks_blocked"`
+	LeasesActive    int                         `json:"leases_active"`
 	LastCheckpoint  *coordination.CheckpointRef `json:"last_checkpoint"`
 }
 
@@ -289,6 +293,7 @@ func coordinationInfo(s doctor.Subject) CoordinationInfo {
 		TasksOpen:       s.Coordination.Open,
 		TasksInProgress: s.Coordination.InProgress,
 		TasksBlocked:    s.Coordination.Blocked,
+		LeasesActive:    s.Coordination.LeasesActive,
 		LastCheckpoint:  s.Coordination.LastCheckpoint,
 	}
 }

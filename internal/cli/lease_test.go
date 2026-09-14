@@ -333,3 +333,65 @@ func TestAMoveReportsTheLeaseAndATakeover(t *testing.T) {
 		t.Errorf("the human rendering of a takeover does not name the session it took over from:\n%s", human.stdout)
 	}
 }
+
+// TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves is AC-09.1 and
+// AC-09.2 through the command tree: `leases_active` counts what is held by
+// the binary's clock, and readiness and the six components do not move for
+// a store with active leases, with an expired one, and with none (D-62).
+func TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves(t *testing.T) {
+	repo := newInitializedRepo(t)
+	me := sessionID(t, repo)
+
+	type report struct {
+		Readiness    string `json:"readiness"`
+		Coordination struct {
+			Observation  string `json:"observation"`
+			LeasesActive int    `json:"leases_active"`
+		} `json:"coordination"`
+		Components map[string]json.RawMessage `json:"components"`
+	}
+	read := func() report {
+		t.Helper()
+		got := run(t, repo, "status", "--json")
+		got.requireExit(t, app.ExitSuccess)
+		var r report
+		decodeData(t, got.stdout, &r)
+		return r
+	}
+
+	none := read()
+	if none.Coordination.LeasesActive != 0 || none.Coordination.Observation != "observed" {
+		t.Fatalf("a fresh repository reports %+v, want zero active leases observed", none.Coordination)
+	}
+
+	held := acquireFile(t, repo, me, "src/a.go")
+	acquireFile(t, repo, me, "src/b.go")
+	some := read()
+	if some.Coordination.LeasesActive != 2 {
+		t.Errorf("leases_active = %d with two files held, want 2", some.Coordination.LeasesActive)
+	}
+
+	execOnRuntimeDB(t, repo, `UPDATE leases SET expires_at = '2020-01-01T00:00:00Z' WHERE lease_id = '`+held+`'`)
+	expired := read()
+	if expired.Coordination.LeasesActive != 1 {
+		t.Errorf("leases_active = %d with one lease expired, want 1", expired.Coordination.LeasesActive)
+	}
+	if n := rowCount(t, repo, "leases"); n != 2 {
+		t.Errorf("status changed the leases table to %d rows", n)
+	}
+
+	for name, r := range map[string]report{"none": none, "some": some, "expired": expired} {
+		if r.Readiness != none.Readiness {
+			t.Errorf("%s: readiness = %q, want %q unchanged by leases (D-62)", name, r.Readiness, none.Readiness)
+		}
+		if len(r.Components) != 6 {
+			t.Errorf("%s: %d components, want the six", name, len(r.Components))
+		}
+	}
+
+	human := run(t, repo, "status", "--no-color")
+	human.requireExit(t, app.ExitSuccess)
+	if !strings.Contains(human.stdout, "Leases active:     1") {
+		t.Errorf("the human rendering does not carry the count:\n%s", human.stdout)
+	}
+}
