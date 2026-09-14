@@ -95,6 +95,59 @@ func TestADatabaseAtTheOlderSchemaTakesOnlyTheNewMigration(t *testing.T) {
 	}
 }
 
+// TestATaskWrittenBeforeTheRevisionColumnStartsAtOne is MR-004's AC-02.3 on
+// the rows a user already has: a task written by the MR-003 binary, at schema
+// 2, comes through migration 3 with revision 1 — the value every row written
+// after it also starts at — and the shape check accepts the upgraded table.
+func TestATaskWrittenBeforeTheRevisionColumnStartsAtOne(t *testing.T) {
+	full, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatalf("Load(embedded) = %v, want no error", err)
+	}
+	if len(full) < 3 || full[2].Version != 3 {
+		t.Fatalf("the embedded set is %d migrations long; this test is about the third", len(full))
+	}
+
+	db := newDB(t)
+	if _, err := migration.New(db.DB, full[:2], fixedClock()).Up(t.Context()); err != nil {
+		t.Fatalf("Up(schema 2) = %v, want no error", err)
+	}
+
+	// The rows the foreign keys need, then a task, all as the MR-003 binary
+	// would have written them: no revision column exists to write.
+	for _, stmt := range []string{
+		`INSERT INTO projects (project_id, common_dir, registered_at) VALUES ('PRJ-1', '/repo/.git', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO workspaces (workspace_id, project_id, root_path, git_dir, is_linked_worktree, registered_at, last_seen_at)
+		 VALUES ('WSP-1', 'PRJ-1', '/repo', '/repo/.git', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES ('SES-1', 'WSP-1', NULL, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO tasks (task_id, project_id, title, state, blocked_reason, opened_by, claimed_by, created_at, updated_at)
+		 VALUES ('TSK-1', 'PRJ-1', 'written at schema 2', 'OPEN', NULL, 'SES-1', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	} {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
+			t.Fatalf("%s = %v, want no error", stmt, err)
+		}
+	}
+
+	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	if err != nil {
+		t.Fatalf("Up(full) over schema 2 = %v, want no error", err)
+	}
+	if len(result.Applied) != 1 || result.Applied[0].Version != 3 {
+		t.Fatalf("the upgrade applied %v, want exactly migration 3", result.Applied)
+	}
+
+	var revision int64
+	if err := db.QueryRowContext(t.Context(), `SELECT revision FROM tasks WHERE task_id = 'TSK-1'`).Scan(&revision); err != nil {
+		t.Fatalf("SELECT revision = %v, want the column the upgrade added", err)
+	}
+	if revision != 1 {
+		t.Errorf("revision of a task written before the column = %d, want 1", revision)
+	}
+	if _, err := migration.New(db.DB, full, fixedClock()).Status(t.Context()); err != nil {
+		t.Errorf("Status after the upgrade = %v, want no error: tasks with its added column is the expected shape", err)
+	}
+}
+
 // TestAFreshDatabaseTakesEveryEmbeddedMigration is the over-fire guard for the
 // test above: the upgrade path is only interesting if the direct path works, and
 // a set that failed on a fresh database would make "exactly one applied" true

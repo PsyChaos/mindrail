@@ -28,12 +28,21 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"checkpoint_id", "task_id", "session_id", "workspace_id",
 			"note", "handoff", "created_at",
 		},
+		"leases": {
+			"lease_id", "project_id", "target_kind", "target_key", "holder",
+			"acquired_at", "renewed_at", "expires_at", "released_at", "release_reason",
+		},
+		"operations": {"operation_id", "command", "request_hash", "result", "recorded_at"},
 	}
 
 	got := map[string][]string{}
+	added := map[string][]string{}
 	for _, m := range embeddedSet(t) {
 		for table, columns := range m.Columns {
 			got[table] = columns
+		}
+		for table, columns := range m.Added {
+			added[table] = append(added[table], columns...)
 		}
 	}
 
@@ -43,6 +52,20 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 	for table, columns := range want {
 		if strings.Join(got[table], ",") != strings.Join(columns, ",") {
 			t.Errorf("Columns[%q] = %v, want %v", table, got[table], columns)
+		}
+	}
+
+	// The one ALTER TABLE ... ADD COLUMN the embedded set carries (000003,
+	// decision D-73) is read as an addition to tasks and as nothing else: a
+	// parser that read it as a forgotten table would silently drop tasks from
+	// the shape check, and one that invented a second column would fail every
+	// healthy repository.
+	if strings.Join(added["tasks"], ",") != "revision" || len(added) != 1 {
+		t.Errorf("Added = %v, want exactly {tasks: [revision]}", added)
+	}
+	for _, m := range embeddedSet(t) {
+		if len(m.Altered) != 0 {
+			t.Errorf("migration %d forgets %v; the embedded set has no ALTER the checker cannot follow", m.Version, m.Altered)
 		}
 	}
 }
@@ -200,6 +223,89 @@ func TestStatusStopsCheckingTheShapeOfATableAMigrationAlters(t *testing.T) {
 	}
 	if _, err := migrator.Status(t.Context()); !errors.Is(err, migration.ErrSchemaObjectMissing) {
 		t.Fatalf("Status = %v, want the unaltered table still verified", err)
+	}
+}
+
+// TestStatusExpectsAColumnAMigrationAdded is decision D-73's other half and
+// requirement AC-02.4: ADD COLUMN is the one form of ALTER TABLE the checker
+// follows, so a table that lost an added column is reported as damaged rather
+// than silently dropped from the check. Both arms: the healthy upgraded
+// schema passes, and a table rebuilt by hand without the added column fails.
+func TestStatusExpectsAColumnAMigrationAdded(t *testing.T) {
+	db := newDB(t)
+	set, err := migration.Load(sqlFS(map[string]string{
+		"000001_initial.sql": "CREATE TABLE thing (id TEXT PRIMARY KEY) STRICT;\n",
+		"000002_revision.sql": "ALTER TABLE thing ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;\n" +
+			"ALTER TABLE thing ADD note TEXT;\n",
+	}))
+	if err != nil {
+		t.Fatalf("Load = %v, want no error", err)
+	}
+	if got := set[1].Added["thing"]; strings.Join(got, ",") != "revision,note" {
+		t.Fatalf("Added[thing] = %v, want [revision note]: both spellings of ADD COLUMN are read", got)
+	}
+	if len(set[1].Altered) != 0 {
+		t.Fatalf("Altered = %v, want nothing forgotten for an ADD COLUMN", set[1].Altered)
+	}
+
+	migrator := migration.New(db.DB, set, fixedClock())
+	if _, err := migrator.Up(t.Context()); err != nil {
+		t.Fatalf("Up = %v, want no error", err)
+	}
+	if _, err := migrator.Status(t.Context()); err != nil {
+		t.Fatalf("Status = %v, want no error on the schema the migrations built", err)
+	}
+
+	// The F9 shape: the table is rebuilt by hand with its original columns
+	// only, so "the object exists" is satisfied and only the added column is
+	// missing.
+	for _, stmt := range []string{
+		`DROP TABLE thing`,
+		`CREATE TABLE thing (id TEXT PRIMARY KEY) STRICT`,
+	} {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
+			t.Fatalf("%s = %v, want no error", stmt, err)
+		}
+	}
+	if _, err := migrator.Status(t.Context()); !errors.Is(err, migration.ErrSchemaShapeChanged) {
+		t.Fatalf("Status = %v, want ErrSchemaShapeChanged: the added column is gone and the checker must say so", err)
+	}
+}
+
+// TestStatusStillForgetsATableAnotherAlterTouched keeps the bail-out where
+// D-73 leaves it: a RENAME COLUMN in the same file as an ADD COLUMN is a form
+// the checker cannot follow, and the table is forgotten rather than half
+// modelled.
+func TestStatusStillForgetsATableAnotherAlterTouched(t *testing.T) {
+	db := newDB(t)
+	set, err := migration.Load(sqlFS(map[string]string{
+		"000001_initial.sql": "CREATE TABLE thing (id TEXT PRIMARY KEY, old TEXT) STRICT;\n",
+		"000002_reshape.sql": "ALTER TABLE thing ADD COLUMN extra TEXT;\n" +
+			"ALTER TABLE thing RENAME COLUMN old TO renamed;\n",
+	}))
+	if err != nil {
+		t.Fatalf("Load = %v, want no error", err)
+	}
+	if got := set[1].Altered; len(got) != 1 || got[0] != "thing" {
+		t.Fatalf("Altered = %v, want [thing]: the rename is the half the checker cannot follow", got)
+	}
+
+	migrator := migration.New(db.DB, set, fixedClock())
+	if _, err := migrator.Up(t.Context()); err != nil {
+		t.Fatalf("Up = %v, want no error", err)
+	}
+	// Rebuilt without either the added or the renamed column: forgotten means
+	// forgotten, and the shape check has nothing to say.
+	for _, stmt := range []string{
+		`DROP TABLE thing`,
+		`CREATE TABLE thing (id TEXT PRIMARY KEY) STRICT`,
+	} {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
+			t.Fatalf("%s = %v, want no error", stmt, err)
+		}
+	}
+	if _, err := migrator.Status(t.Context()); err != nil {
+		t.Fatalf("Status = %v, want no error: a table a RENAME COLUMN touched is not shape-checked", err)
 	}
 }
 

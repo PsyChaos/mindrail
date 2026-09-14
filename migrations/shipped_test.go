@@ -23,11 +23,15 @@ import (
 //
 // A new migration is a new file with a new row here. A checksum in this table
 // changes only if the file was never applied anywhere, and that has not been
-// true of either of these since they shipped.
+// true of the first two since they shipped. 000003 is pinned from the day it
+// was written (MR-004, TASK-02); until MR-004 ships, a change to its row is a
+// change to a file no user's repository has applied, which is allowed and is
+// recorded in mr-004-findings.md when it happens.
 func TestAnAppliedMigrationFileIsNeverEdited(t *testing.T) {
 	shipped := map[string]string{
-		"000001_initial.sql":      "2dd55c6233abde9d1e1b6c7a5eec951569f64bdd55090037a238cd2b155fae43",
-		"000002_coordination.sql": "1de055444435e8a355e5f13821e2a5de786a63fcbe3c06da9e70e3fc38ae03e0",
+		"000001_initial.sql":           "2dd55c6233abde9d1e1b6c7a5eec951569f64bdd55090037a238cd2b155fae43",
+		"000002_coordination.sql":      "1de055444435e8a355e5f13821e2a5de786a63fcbe3c06da9e70e3fc38ae03e0",
+		"000003_lease_idempotency.sql": "3ca7dbee3971cf6ea165c82738b5f40b792595afbfea58f10304d0f0c38ef488",
 	}
 
 	entries, err := migrations.FS.ReadDir(".")

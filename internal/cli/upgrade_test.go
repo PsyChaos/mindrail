@@ -118,47 +118,64 @@ func TestAWorkspaceNobodyLookedUpIsNotReportedAsUnregistered(t *testing.T) {
 // exits 0 and clears nothing, while `status` on the same bytes called the
 // condition MIGRATION_FAILED and printed the remedy that works. One
 // condition, two codes, two remedies; this pins the one whose remedy clears.
+//
+// Two downgrades since MR-004 (requirement AC-02.5): a database the MR-002
+// binary wrote, at schema 1, and one the MR-003 binary wrote, at schema 2 —
+// which has every table the commands query except the leases and operations
+// tables and the revision column, and is the state every existing repository
+// is in on its first run after the MR-004 upgrade.
 func TestCoordinationCommandsSendASchemaBehindDatabaseToInit(t *testing.T) {
-	for _, args := range [][]string{{"task", "list"}, {"session", "open"}} {
-		name := commandName(args)
-		repo := newInitializedRepo(t)
-		downgradeToSchemaOne(t, repo)
+	downgrades := []struct {
+		name string
+		to   func(*testing.T, string)
+	}{
+		{"schema 1", downgradeToSchemaOne},
+		{"schema 2", downgradeToSchemaTwo},
+	}
+	for _, downgrade := range downgrades {
+		for _, args := range [][]string{{"task", "list"}, {"session", "open"}} {
+			name := commandName(args) + " at " + downgrade.name
+			repo := newInitializedRepo(t)
+			downgrade.to(t, repo)
 
-		got := run(t, repo, append(slices.Clone(args), "--json")...)
-		if got.code != app.ExitFailed {
-			t.Fatalf("%s exited %d on a schema-behind database, want %d\n%s",
-				name, got.code, app.ExitFailed, got.stdout)
-		}
-		payload := got.errorPayload(t)
-		if payload.Code != app.CodeMigrationFailed {
-			t.Errorf("`status` calls this condition %q and `%s` calls it %q; one condition has one code\n%s",
-				app.CodeMigrationFailed, name, payload.Code, got.stdout)
-		}
-		if !strings.Contains(strings.Join(payload.NextAction, " "), "mindrail init") {
-			t.Errorf("%s does not send the reader to the command that clears the condition: %v",
-				name, payload.NextAction)
-		}
-		if strings.Contains(payload.Why, "no such table") {
-			t.Errorf("%s publishes the raw SQL error as the whole cause:\n%s", name, got.stdout)
-		}
+			got := run(t, repo, append(slices.Clone(args), "--json")...)
+			if got.code != app.ExitFailed {
+				t.Fatalf("%s exited %d on a schema-behind database, want %d\n%s",
+					name, got.code, app.ExitFailed, got.stdout)
+			}
+			payload := got.errorPayload(t)
+			if payload.Code != app.CodeMigrationFailed {
+				t.Errorf("`status` calls this condition %q and `%s` calls it %q; one condition has one code\n%s",
+					app.CodeMigrationFailed, name, payload.Code, got.stdout)
+			}
+			if !strings.Contains(strings.Join(payload.NextAction, " "), "mindrail init") {
+				t.Errorf("%s does not send the reader to the command that clears the condition: %v",
+					name, payload.NextAction)
+			}
+			if strings.Contains(payload.Why, "no such table") || strings.Contains(payload.Why, "no such column") {
+				t.Errorf("%s publishes the raw SQL error as the whole cause:\n%s", name, got.stdout)
+			}
 
-		// The remedy works on this disk, which is the part the doctor remedy
-		// could not do: init applies the missing migration and the same
-		// command then succeeds on the same repository.
-		if applied := run(t, repo, "init", "--json"); applied.code != app.ExitSuccess {
-			t.Fatalf("%s: init exited %d on an upgraded repository: %s",
-				name, applied.code, applied.stdout)
+			// The remedy works on this disk, which is the part the doctor remedy
+			// could not do: init applies the missing migration and the same
+			// command then succeeds on the same repository.
+			if applied := run(t, repo, "init", "--json"); applied.code != app.ExitSuccess {
+				t.Fatalf("%s: init exited %d on an upgraded repository: %s",
+					name, applied.code, applied.stdout)
+			}
+			after := run(t, repo, append(slices.Clone(args), "--json")...)
+			after.requireExit(t, app.ExitSuccess)
 		}
-		after := run(t, repo, append(slices.Clone(args), "--json")...)
-		after.requireExit(t, app.ExitSuccess)
 	}
 }
 
-// downgradeToSchemaOne removes everything MR-003's migration created, ledger row
-// included, which is the state a database written by the previous binary is in.
+// downgradeToSchemaOne removes everything MR-003's and MR-004's migrations
+// created, ledger rows included, which is the state a database written by the
+// MR-002 binary is in.
 func downgradeToSchemaOne(t *testing.T, repo string) {
 	t.Helper()
 
+	downgradeToSchemaTwo(t, repo)
 	execOnRuntimeDB(t, repo,
 		`DROP INDEX IF EXISTS idx_checkpoints_task`,
 		`DROP INDEX IF EXISTS idx_tasks_project`,
@@ -166,4 +183,19 @@ func downgradeToSchemaOne(t *testing.T, repo string) {
 		`DROP TABLE IF EXISTS tasks`,
 		`DROP TABLE IF EXISTS sessions`,
 		`DELETE FROM schema_migrations WHERE version = 2`)
+}
+
+// downgradeToSchemaTwo removes what MR-004's migration created and added,
+// ledger row included: the database a repository initialised by the MR-003
+// binary holds.
+func downgradeToSchemaTwo(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_leases_holder`,
+		`DROP INDEX IF EXISTS idx_leases_active`,
+		`DROP TABLE IF EXISTS leases`,
+		`DROP TABLE IF EXISTS operations`,
+		`ALTER TABLE tasks DROP COLUMN revision`,
+		`DELETE FROM schema_migrations WHERE version = 3`)
 }

@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// This file reads the column names out of a CREATE TABLE, and nothing else.
+// This file reads the column names out of a CREATE TABLE and out of an
+// ALTER TABLE ... ADD COLUMN, and nothing else.
 //
 // It is the narrowest thing that answers finding F9: a table that was dropped
 // and recreated by hand with a different shape satisfies "the object exists",
@@ -13,7 +14,15 @@ import (
 // was not there, and the remedy it printed sent the user back to `doctor`.
 // Comparing names is enough to break that loop and is far short of a schema
 // diff -- types, constraints, defaults and collations are not compared, and a
-// table any recorded migration has ALTERed is not compared at all.
+// table any recorded migration has ALTERed in a form other than ADD COLUMN is
+// not compared at all.
+//
+// ADD COLUMN is the one form the ledger reads exactly, since MR-004 (decision
+// D-73): it adds a name and moves nothing, so the expected list is the CREATE's
+// names plus the added one. Without it, the first migration to add a column —
+// 000003's `revision` on `tasks` — would have silently removed that table from
+// the F9 check. Every other form (DROP COLUMN, RENAME COLUMN, RENAME TO) still
+// makes the checker forget the table rather than model it.
 //
 // All of it runs at Load time against embedded files, so the warm path pays for
 // one extra query and no parsing.
@@ -25,10 +34,13 @@ import (
 var createTablePattern = regexp.MustCompile(
 	`(?im)^[\t ]*CREATE[\t ]+((?:(?:UNIQUE|TEMP|TEMPORARY|VIRTUAL)[\t ]+)*)TABLE[\t ]+(?:IF[\t ]+NOT[\t ]+EXISTS[\t ]+)?(` + identifier + `)`)
 
-// alterTablePattern matches every form of ALTER TABLE, because every form of it
-// is a reason to stop trusting the recorded column list.
+// alterTablePattern matches every form of ALTER TABLE, and reads the added
+// column's name when the form is ADD [COLUMN]. The second group is empty for
+// every other form, and an empty second group is the reason to stop trusting
+// the recorded column list.
 var alterTablePattern = regexp.MustCompile(
-	`(?im)^[\t ]*ALTER[\t ]+TABLE[\t ]+(` + identifier + `)`)
+	`(?im)^[\t ]*ALTER[\t ]+TABLE[\t ]+(` + identifier + `)` +
+		`(?:[\t ]+ADD[\t ]+(?:COLUMN[\t ]+)?(` + identifier + `))?`)
 
 // tableConstraintHeads are the words a table constraint can start with. An item
 // in the column list that starts with one of them is not a column, and treating
@@ -68,24 +80,36 @@ func tableColumns(body string) map[string][]string {
 	return columns
 }
 
-// alteredTables names every table this body runs an ALTER TABLE against.
-func alteredTables(body string) []string {
+// alterations reads every ALTER TABLE in body and sorts it into the one form
+// the ledger can follow and the forms it cannot: added maps a table to the
+// columns ADD COLUMN gave it, in file order and lower-cased like tableColumns;
+// forgotten names every table some other form touched, once each.
+//
+// A table can appear in both — an ADD COLUMN and a DROP COLUMN in one file —
+// and the caller forgets it, because the drop is the half it cannot follow.
+func alterations(body string) (added map[string][]string, forgotten []string) {
 	matches := alterTablePattern.FindAllStringSubmatch(body, -1)
 	if len(matches) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	altered := make([]string, 0, len(matches))
 	seen := make(map[string]struct{}, len(matches))
 	for _, match := range matches {
-		name := unquote(match[1])
-		if _, duplicate := seen[name]; duplicate {
+		table := unquote(match[1])
+		if column := match[2]; column != "" {
+			if added == nil {
+				added = make(map[string][]string)
+			}
+			added[table] = append(added[table], strings.ToLower(unquote(column)))
 			continue
 		}
-		seen[name] = struct{}{}
-		altered = append(altered, name)
+		if _, duplicate := seen[table]; duplicate {
+			continue
+		}
+		seen[table] = struct{}{}
+		forgotten = append(forgotten, table)
 	}
-	return altered
+	return added, forgotten
 }
 
 // columnList reads the parenthesised column list that starts in rest and

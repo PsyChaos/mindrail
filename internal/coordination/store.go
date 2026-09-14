@@ -22,17 +22,20 @@ const (
 	checkpointIDPrefix = "CKP"
 )
 
-// TableSchemaVersion is the migration that creates the sessions, tasks and
-// checkpoints tables.
+// TableSchemaVersion is the newest migration this store's tables and columns
+// come from: 000003, which adds the leases and operations tables and the
+// revision column on tasks (decision D-73). It was 2 while MR-003's three
+// tables were all the store read.
 //
 // It exists for the same split workspace.TableSchemaVersion does, one step
 // later: a database written by an older binary has its workspaces table and
-// the row in it, so the upgrade lookup succeeds, but it has no coordination
-// tables to query. A caller that resolves the workspace and then uses this
-// store anyway answers with the SQL error and a remedy that cannot clear it,
-// where the condition is one `mindrail init` genuinely fixes (audit round 2,
-// §4.1).
-const TableSchemaVersion = 2
+// the row in it, so the upgrade lookup succeeds, but it lacks what this store
+// queries — no coordination tables at all from an MR-002 binary, no leases
+// and no revision from an MR-003 one. A caller that resolves the workspace
+// and then uses this store anyway answers with the SQL error and a remedy
+// that cannot clear it, where the condition is one `mindrail init` genuinely
+// fixes (audit round 2, §4.1).
+const TableSchemaVersion = 3
 
 // selectNewestCheckpointOfProject is the query `status` runs on every start.
 //

@@ -90,14 +90,15 @@ func TestLoadEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 // tablesPerMilestone is the scope boundary each migration draws, stated per
 // migration rather than as one set.
 //
-// Leases, symbols, changes and evidence belong to MR-004 and later; creating
-// their tables early would make those MRs' migrations unnecessary and their
-// schema decisions unreviewable. Keeping the map keyed by version is what makes
-// the assertion below say *which* migration overreached rather than only that
-// the union grew.
+// Symbols, changes and evidence belong to MR-006 and later; creating their
+// tables early would make those MRs' migrations unnecessary and their schema
+// decisions unreviewable. Keeping the map keyed by version is what makes the
+// assertion below say *which* migration overreached rather than only that the
+// union grew.
 var tablesPerMilestone = map[int64][]string{
 	1: {"projects", "workspaces"},           // MR-001
 	2: {"sessions", "tasks", "checkpoints"}, // MR-003
+	3: {"leases", "operations"},             // MR-004; revision on tasks is an ALTER, not a table
 }
 
 // TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.
