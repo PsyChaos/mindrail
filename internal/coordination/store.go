@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -332,6 +333,18 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 // guard cannot fail, so no row affected is a defect and not a second conflict.
 func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attribution, to State, reason string, expectRevision int64) (Move, Write, error) {
 	reason = strings.TrimSpace(reason)
+	if expectRevision < 0 {
+		// Revisions start at 1 and zero means no expectation; a negative one
+		// is a mistake, not a weaker expectation, and the command line's
+		// guard does not stand in front of every caller (TASK-04's Breaker).
+		return Move{}, Write{}, app.NewError(
+			app.CodeCommandLineInvalid,
+			app.KindUsage,
+			fmt.Sprintf("an expected revision of %d names no revision a task can be at", expectRevision),
+			"Nothing was read and nothing was written.",
+			"Pass --expect-revision as the revision `mindrail task show` printed, 1 or above, or leave it out.",
+		).WithMetadata("expected_revision", strconv.FormatInt(expectRevision, 10))
+	}
 
 	var (
 		move  Move
@@ -546,7 +559,6 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		WorkspaceID: workspaceID,
 		Note:        note,
 		Handoff:     handoff,
-		CreatedAt:   s.clock.Now().UTC(),
 	}
 
 	var (
@@ -554,6 +566,14 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		write Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		// The clock is read under the write lock, as Transition reads it: the
+		// row's stamp and the lease judgment below are about the same instant,
+		// and a tenure that ran out while this write waited on the lock is
+		// judged expired rather than renewed by a stamp taken before the wait
+		// (TASK-04's Breaker; decision D-65). A session minted here starts at
+		// this same instant.
+		checkpoint.CreatedAt = s.clock.Now().UTC()
+
 		resolved, err := s.attribute(ctx, tx, by, checkpoint.CreatedAt)
 		if err != nil {
 			return err
@@ -653,12 +673,27 @@ func (s *Store) LastCheckpoint(ctx context.Context, taskID string) (Checkpoint, 
 // note on yet — so the absent checkpoint is reported as a nil pointer rather
 // than as an error the caller has to classify.
 func (s *Store) Handover(ctx context.Context, taskID string) (Handover, error) {
-	task, err := s.FindTask(ctx, taskID)
-	if err != nil {
-		return Handover{}, err
+	// The task and its newest tenure are read by one statement, so the pair
+	// is one snapshot: read as two, a takeover committing between them put a
+	// claimant beside another session's active lease on the wire — a
+	// decision D-68 violation the rows never had (TASK-04's Breaker, seven
+	// in four thousand reads under a takeover storm). The newest tenure is
+	// reported in whatever status it is, so a claimant whose lease has run
+	// out is shown with the tenure's end rather than as if the claim still
+	// bound.
+	task, lease, hasLease, err := scanTaskWithNewestLease(s.db.QueryRowContext(ctx,
+		selectTaskWithNewestLease+` WHERE t.task_id = ?`, taskID), s.clock.Now().UTC())
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return Handover{}, taskNotFound(taskID)
+	case err != nil:
+		return Handover{}, readFailed("the task", taskID, err)
 	}
 
 	handover := Handover{Task: task}
+	if hasLease {
+		handover.Lease = &lease
+	}
 
 	checkpoint, err := s.LastCheckpoint(ctx, taskID)
 	switch {
@@ -668,21 +703,89 @@ func (s *Store) Handover(ctx context.Context, taskID string) (Handover, error) {
 	default:
 		handover.Checkpoint = &checkpoint
 	}
-
-	// The newest tenure in whatever status it is, so a claimant whose lease
-	// has run out is shown with the tenure's end rather than as if the claim
-	// still bound (decision D-68).
-	lease, err := scanLease(s.db.QueryRowContext(ctx,
-		selectLease+` WHERE project_id = ? AND target_kind = ? AND target_key = ? ORDER BY rowid DESC LIMIT 1`,
-		task.ProjectID, string(TargetTask), taskID), s.clock.Now().UTC())
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
-		return Handover{}, readFailed("the lease on task "+taskID, taskID, err)
-	default:
-		handover.Lease = &lease
-	}
 	return handover, nil
+}
+
+// selectTaskWithNewestLease is Handover's one statement: the task's columns
+// and, LEFT JOINed, the columns of the newest lease row on it, NULL when there
+// has never been one.
+const selectTaskWithNewestLease = `SELECT t.task_id, t.project_id, t.title, t.state, t.blocked_reason,
+	t.opened_by, t.claimed_by, t.created_at, t.updated_at, t.revision,
+	l.lease_id, l.project_id, l.target_kind, l.target_key, l.holder,
+	l.acquired_at, l.renewed_at, l.expires_at, l.released_at, l.release_reason
+	FROM tasks t
+	LEFT JOIN leases l ON l.rowid = (
+		SELECT max(rowid) FROM leases
+		 WHERE project_id = t.project_id AND target_kind = 'task' AND target_key = t.task_id)`
+
+// scanTaskWithNewestLease decodes the joined row; the bool reports whether a
+// lease was joined.
+func scanTaskWithNewestLease(row rowScanner, now time.Time) (Task, Lease, bool, error) {
+	var (
+		task       Task
+		state      string
+		reason     sql.NullString
+		claimedBy  sql.NullString
+		createdAt  string
+		updatedAt  string
+		leaseID    sql.NullString
+		lProject   sql.NullString
+		kind       sql.NullString
+		key        sql.NullString
+		holder     sql.NullString
+		acquiredAt sql.NullString
+		renewedAt  sql.NullString
+		expiresAt  sql.NullString
+		releasedAt sql.NullString
+		lReason    sql.NullString
+	)
+	if err := row.Scan(&task.ID, &task.ProjectID, &task.Title, &state, &reason,
+		&task.OpenedBy, &claimedBy, &createdAt, &updatedAt, &task.Revision,
+		&leaseID, &lProject, &kind, &key, &holder,
+		&acquiredAt, &renewedAt, &expiresAt, &releasedAt, &lReason); err != nil {
+		return Task{}, Lease{}, false, err
+	}
+
+	task.State = State(state)
+	task.BlockedReason = reason.String
+	task.ClaimedBy = claimedBy.String
+	var err error
+	if task.CreatedAt, err = app.ParseTime(createdAt); err != nil {
+		return Task{}, Lease{}, false, fmt.Errorf("task %s created_at: %w", task.ID, err)
+	}
+	if task.UpdatedAt, err = app.ParseTime(updatedAt); err != nil {
+		return Task{}, Lease{}, false, fmt.Errorf("task %s updated_at: %w", task.ID, err)
+	}
+	if !leaseID.Valid {
+		return task, Lease{}, false, nil
+	}
+
+	lease := Lease{
+		ID:            leaseID.String,
+		ProjectID:     lProject.String,
+		TargetKind:    TargetKind(kind.String),
+		TargetKey:     key.String,
+		Holder:        holder.String,
+		ReleaseReason: lReason.String,
+	}
+	if lease.AcquiredAt, err = app.ParseTime(acquiredAt.String); err != nil {
+		return Task{}, Lease{}, false, fmt.Errorf("lease %s acquired_at: %w", lease.ID, err)
+	}
+	if lease.RenewedAt, err = app.ParseTime(renewedAt.String); err != nil {
+		return Task{}, Lease{}, false, fmt.Errorf("lease %s renewed_at: %w", lease.ID, err)
+	}
+	if lease.ExpiresAt, err = app.ParseTime(expiresAt.String); err != nil {
+		return Task{}, Lease{}, false, fmt.Errorf("lease %s expires_at: %w", lease.ID, err)
+	}
+	if releasedAt.Valid {
+		released, err := app.ParseTime(releasedAt.String)
+		if err != nil {
+			return Task{}, Lease{}, false, fmt.Errorf("lease %s released_at: %w", lease.ID, err)
+		}
+		lease.ReleasedAt = &released
+	}
+	lease.Status = lease.statusAt(now)
+	return task, lease, true, nil
 }
 
 // Summarize is what `status` publishes: the three counts a reader can act on,

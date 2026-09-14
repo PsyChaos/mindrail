@@ -108,7 +108,9 @@ func (s *Store) claimWhereItStands(ctx context.Context, tx *sql.Tx, projectID, h
 		return Acquisition{}, err
 	}
 	if acquired.Renewed {
-		// The holder already held it; the row's attribution is already right.
+		// The holder already held it; the row's attribution is already right,
+		// and the task is reported as it stands.
+		acquired.Task = &task
 		return acquired, nil
 	}
 
@@ -124,6 +126,12 @@ func (s *Store) claimWhereItStands(ctx context.Context, tx *sql.Tx, projectID, h
 	} else if affected != 1 {
 		return Acquisition{}, fmt.Errorf("the task's revision moved under the write lock: %d rows updated at revision %d", affected, task.Revision)
 	}
+
+	claimed := task
+	claimed.ClaimedBy = holder
+	claimed.UpdatedAt = now
+	claimed.Revision = task.Revision + 1
+	acquired.Task = &claimed
 	return acquired, nil
 }
 

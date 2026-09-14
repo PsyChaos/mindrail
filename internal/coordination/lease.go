@@ -196,11 +196,16 @@ func (l Lease) statusAt(now time.Time) LeaseStatus {
 }
 
 // Acquisition is what AcquireLease reports: the lease now held; whether the
-// caller already held it and the call renewed it under the same id; and the
+// caller already held it and the call renewed it under the same id; the
 // expired tenure this acquisition closed, when it took one over (decision
-// D-67 — a takeover is reported, never silent).
+// D-67 — a takeover is reported, never silent); and, for a task target, the
+// task as the claim left it — its claimant and its revision, which the claim
+// raised. The task is carried because a claimant that read the task before
+// claiming it holds a stale revision afterwards, and its own next move under
+// D-72 would be refused for it (TASK-04's Breaker). Nil for a file target.
 type Acquisition struct {
 	Lease      Lease  `json:"lease"`
 	Renewed    bool   `json:"renewed"`
 	Superseded *Lease `json:"superseded"`
+	Task       *Task  `json:"task,omitempty"`
 }

@@ -2,12 +2,15 @@ package coordination_test
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/coordination"
+	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
 // activeTaskLease reads the task's unreleased lease row through FindLease,
@@ -479,5 +482,151 @@ func TestHandoverReportsTheNewestTenure(t *testing.T) {
 	}
 	if handover.Task.ClaimedBy != me.ID {
 		t.Errorf("claimed_by = %q after expiry, want the attribution kept", handover.Task.ClaimedBy)
+	}
+}
+
+// TestTheClaimWithoutAMoveReportsTheTaskItClaimed is TASK-04's Breaker
+// finding: the claim raised the revision and reported nothing, so the
+// claimant's own next move under decision D-72, with the revision it had read
+// before claiming, was refused. The acquisition now carries the task as the
+// claim left it.
+func TestTheClaimWithoutAMoveReportsTheTaskItClaimed(t *testing.T) {
+	f, _ := leaseFixture(t)
+	me, next := f.session(t), f.session(t)
+	task := f.taskIn(t, me.ID, coordination.StateInProgress)
+	if _, _, err := f.store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(me.ID), f.spaceID, "leaving", true); err != nil {
+		t.Fatal(err)
+	}
+	read, err := f.store.FindTask(t.Context(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	taken, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), coordination.TaskTarget(task.ID))
+	if err != nil {
+		t.Fatalf("AcquireLease(task) = %v", err)
+	}
+	if taken.Task == nil {
+		t.Fatal("the claim without a move reports no task; the claimant cannot know the revision it raised")
+	}
+	if taken.Task.Revision != read.Revision+1 || taken.Task.ClaimedBy != next.ID || taken.Task.State != read.State {
+		t.Errorf("acquisition.Task = %+v, want revision %d, claimant %s, state unchanged", taken.Task, read.Revision+1, next.ID)
+	}
+
+	// The claimant's next move with the revision the claim reported succeeds;
+	// with the one it read before claiming it is refused, which is D-72 doing
+	// its job on a genuinely stale reading.
+	if _, _, err := f.store.TransitionExpecting(t.Context(), task.ID, coordination.NamedSession(next.ID), coordination.StateReadyToComplete, "", read.Revision); err == nil {
+		t.Error("a move expecting the pre-claim revision = nil error, want STATE_REVISION_CONFLICT")
+	} else {
+		requireCode(t, err, app.CodeStateRevisionConflict)
+	}
+	if _, _, err := f.store.TransitionExpecting(t.Context(), task.ID, coordination.NamedSession(next.ID), coordination.StateReadyToComplete, "", taken.Task.Revision); err != nil {
+		t.Errorf("a move expecting the revision the claim reported = %v, want the move", err)
+	}
+
+	// A file acquisition carries no task.
+	file, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), mustFile(t, "src/x.go"))
+	if err != nil || file.Task != nil {
+		t.Errorf("a file acquisition = %+v, %v; want no task", file, err)
+	}
+}
+
+// TestACheckpointIsStampedUnderTheWriteLock is the same Breaker's second
+// finding, in the shape TestAMoveIsStampedUnderTheWriteLock has: the row's
+// stamp and the lease judgment must be about the instant the write holds the
+// lock, not about an instant before the wait — a holder's note that waited on
+// the lock renewed a tenure the in-lock clock had already expired.
+func TestACheckpointIsStampedUnderTheWriteLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	f := openFixture(t, path, app.FixedClock{Instant: baseInstant})
+
+	probe, err := storage.Open(t.Context(), storage.Options{Path: path, BusyTimeout: time.Millisecond})
+	if err != nil {
+		t.Fatalf("opening the probe handle: %v", err)
+	}
+	t.Cleanup(func() { _ = probe.Close() })
+	if tx, err := probe.BeginTx(t.Context(), nil); err != nil {
+		t.Fatalf("the probe cannot begin a transaction on an idle database: %v", err)
+	} else {
+		_ = tx.Rollback()
+	}
+
+	clock := &lockProbingClock{probe: probe, next: baseInstant}
+	store := coordination.NewStore(f.db.DB, clock)
+	session := f.session(t)
+	task := f.task(t, session.ID, "a task whose notes are stamped under the lock")
+
+	if _, _, err := store.WriteCheckpoint(t.Context(), task.ID, coordination.NamedSession(session.ID), f.spaceID, "a note", false); err != nil {
+		t.Fatalf("WriteCheckpoint = %v", err)
+	}
+	if len(clock.held) != 1 {
+		t.Fatalf("WriteCheckpoint read the clock %d time(s), want exactly once", len(clock.held))
+	}
+	if !clock.held[0] {
+		t.Errorf("WriteCheckpoint read the clock without holding the write lock; a note that waited on the lock would judge the lease at an instant before the wait")
+	}
+}
+
+// TestANegativeExpectationIsRefused is the same Breaker's grammar finding:
+// zero means no expectation, and below zero is a mistake the store refuses
+// for the callers with no command line in front of them.
+func TestANegativeExpectationIsRefused(t *testing.T) {
+	f, _ := leaseFixture(t)
+	me := f.session(t)
+	task := f.task(t, me.ID, "a task")
+	_, _, err := f.store.TransitionExpecting(t.Context(), task.ID, coordination.NamedSession(me.ID), coordination.StateClaimed, "", -1)
+	requireCode(t, err, app.CodeCommandLineInvalid)
+	if after, _ := f.store.FindTask(t.Context(), task.ID); after.Revision != 1 || after.State != coordination.StateOpen {
+		t.Errorf("a refused expectation moved the task: %+v", after)
+	}
+}
+
+// TestHandoverReadsTheTaskAndItsLeaseAsOneSnapshot is the same Breaker's
+// third finding: read as two statements, a takeover committing between them
+// showed a claimant beside another session's active lease — a D-68 violation
+// the rows never had. The pair is one statement now; this drives takeovers
+// against readers and asserts the pair never disagrees.
+func TestHandoverReadsTheTaskAndItsLeaseAsOneSnapshot(t *testing.T) {
+	f, clock := leaseFixture(t)
+	first := f.session(t)
+	task := f.taskIn(t, first.ID, coordination.StateInProgress)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Takeovers in a loop: expire the tenure, let a new session take the
+		// task where it stands, repeat.
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			clock.Advance(coordination.LeaseTTL + time.Second)
+			next := f.session(t)
+			if _, _, err := f.store.AcquireLease(t.Context(), f.projectID, coordination.NamedSession(next.ID), coordination.TaskTarget(task.ID)); err != nil {
+				t.Errorf("takeover %d = %v", i, err)
+				return
+			}
+		}
+	}()
+
+	mismatches := 0
+	for range 4000 {
+		handover, err := f.store.Handover(t.Context(), task.ID)
+		if err != nil {
+			t.Fatalf("Handover = %v", err)
+		}
+		if handover.Lease != nil && handover.Lease.Status == coordination.LeaseActive && handover.Lease.Holder != handover.Task.ClaimedBy {
+			mismatches++
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if mismatches != 0 {
+		t.Errorf("%d of 4000 handovers showed a claimant beside another session's active lease", mismatches)
 	}
 }
