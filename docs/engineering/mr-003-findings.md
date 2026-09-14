@@ -10,18 +10,20 @@
 - **Round-1 remediation**: all fifteen items of the audit's brief, `c29efa3`
   through `e7e946c` — thirteen commits, items 8–10 sharing one. §6 below is the
   record.
-- **Audit round 2**: graded the round-1 remediation. 9 auditors, 85 agents, 30
-  distinct claims, **17 confirmed — 0 HIGH, 4 MEDIUM, 13 LOW**; all 27 of round
-  1's defects closed in the code, 7 of the 17 new ones wrong sentences about
-  work that was done. The evidence is
+- **Audit round 2**: graded the round-1 remediation. 9 auditors; 35 proposed,
+  30 distinct, **17 confirmed — 0 HIGH, 4 MEDIUM, 13 LOW**; all 27 of round 1's
+  defects closed in the code; twelve of the seventeen are the pass
+  over-describing its own fixing, six of them a false sentence in the record;
+  one user-reachable regression. The evidence is
   [mr-003-audit-round-2.md](mr-003-audit-round-2.md).
 - **Round-2 remediation**: all nine items of round 2's brief, `0f94e23` through
-  `0ea96d5`. §7 below is the record.
+  `0ea96d5`, then a two-agent verification pass and the two fixes it produced,
+  `dd93a1d` and `db7647d`. §7 below is the record.
 - **Status: remediated twice; no round 3 proposed.** Round 2 found zero HIGH,
   and its remediation is small enough that a third 85-agent round would not pay
   for itself. The next gate is per task in MR-004, not per milestone.
 - `make check` green, `make verify` green, `make tidy-check` green
-- **805** top-level test functions, from 799 after the round-1 remediation, 768
+- **807** top-level test functions, from 799 after the round-1 remediation, 768
   at the audit and 732 at the freeze (`go test -list '.*' ./...`, the method
   R4-M11 settled)
 
@@ -376,15 +378,18 @@ All nine items of round 2's brief (`mr-003-audit-round-2.md` §8), plus one
 carried-forward test repair the brief named but did not number. The commits run
 from `0f94e23` to `0ea96d5` inclusive: twelve, of which eleven are items — one
 each, item 9 being two — and one (`043457e`) is round 2's own record entering
-the tree; this section and the graph refresh follow them. Items 2, 3, 5 and 7
+the tree. After them come this record (`280db02`), the two fixes the
+verification pass below produced (`dd93a1d`, `db7647d`), this section's update
+and the graph refresh. Items 2, 3, 5 and 7
 were written by one subagent each in its own worktree and item 9 was decided and
 written by a second model; every mutation below was re-run by the orchestrator
 in the main tree before the commit was taken, whoever wrote the fix. Sections
 1–4 and 6 are corrected in place with a marker where round 2 proved a sentence
 wrong; nothing in them was rewritten silently.
 
-`make check`, `make tidy-check` and `make verify` are green. **805** top-level
-test functions, from 799 at `24069aa` (`go test -list '.*' ./...`).
+`make check`, `make tidy-check` and `make verify` are green. **807** top-level
+test functions, from 799 at `24069aa` (`go test -list '.*' ./...`): six from
+the nine items, two from the verification pass.
 
 ### What changed, and what proves it
 
@@ -433,6 +438,50 @@ test functions, from 799 at `24069aa` (`go test -list '.*' ./...`).
   test's false red is the last row above. It was moved forward because it
   fires under exactly the load a per-task gate produces, and because the brief
   had already written the fix.
+
+### The verification pass, and what it changed
+
+Not a third audit round — two agents, not eighty-five, over the twelve commits:
+a Reader checking this record against the code and git sentence by sentence,
+and a Breaker (a second model) attacking the four production changes. Both were
+told to refute when uncertain.
+
+**The Reader** checked 34 claims: 29 confirmed, 0 false, 4 unconfirmed. The
+four were this section's own meta-statements — an agent count for round 2 that
+the audit document never states, a partition of round 2's seventeen that was
+this record's rather than the document's, and two process claims (who wrote
+which item; that every mutation was re-run before commit) that git cannot show.
+The first two are corrected above to the document's own words; the process
+claims stay, marked here as unverifiable from the tree. It also found a second
+copy of the superseded checkpoint-ordering rule in
+`migrations/000002_coordination.sql`, above the table, which no round had
+named; `migrations/README.md` now covers both. Four mutations re-run by the
+Reader matched their recorded red lines.
+
+**The Breaker** produced four findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | Item 9b moved `Transition`'s clock reading before its transaction, so a move that waited on the write lock behind another writer committed second carrying the earlier stamp — `updated_at` went backwards. Reproduced 3 of 3 against the new binary with a 2 s lock held from `sqlite3`, 0 of 3 against `0f94e23~1`. Bounded: no shipped reader orders by `updated_at` | **introduced by this pass** | `dd93a1d`: the reading is taken inside the transaction, under the lock, and still passed to `attribute`, so 9b's invariant holds. `TestAMoveIsStampedUnderTheWriteLock` asserts it from inside the clock reading — a second handle with a one-millisecond busy budget must be refused when the store reads the clock — and goes red with the reading moved back before `BEGIN` |
+| MEDIUM | A checkout entered through a symlink walks nothing: `filepath.WalkDir` does not descend a symlink handed to it as the root. Before item 5 two of the four walkers passed vacuously there; after it all four fail loudly on a healthy tree | predates; item 5 made it visible | `db7647d`: `moduletree.Root` resolves the real directory, and `internal/cli`'s layering test takes its root from `moduletree.Root` instead of a walk of its own. `TestRootResolvesACheckoutReachedThroughASymlink`; all four walkers pass from `/tmp/mindrail-link` |
+| LOW | A refused *mint* insert is still published as the caller's row — `task open` with the session insert refused says "the task could not be written", `subject_id` a task id. Reachable only through a planted trigger or a foreign key lost mid-transaction | predates (round-1 item 5's mint move) | recorded, not fixed: no shipped command reaches it |
+| LOW | The three `readFailed` arms send a damaged row to `mindrail doctor`, which exits 0 and `ok:true` on that database; and `checkpoint write` still succeeds on a task row that `show`, `list` and `state` refuse, because its existence probe selects only `task_id` and never decodes the row | predates (`doctor` has no damaged-row check; the probe has read one column since the milestone shipped) | recorded for MR-004's `doctor` work; the remedy is the same one item 13 chose in round 1 |
+
+Attacked and not broken, in one line each: the schema gate under a ledger at 2
+with the tables dropped, a ledger at 1 with the tables present, a genuine
+downgrade, a never-initialised repository, `init` twice, a ledger ahead of the
+binary, a bad checksum, a dropped column, a linked worktree and a shared
+downgraded database — every one answered with one code and a remedy that,
+carried out, cleared it. A read-only file and a held lock still answer
+`RUNTIME_PATH_UNWRITABLE` and `RUNTIME_DB_UNAVAILABLE` as before. Nine shipped
+commands over eight sessions left the session-clock inversion count at 0.
+Roots named `.dotroot`, `vendor`, `testdata`, `graphify-out` and a nested module
+copy all walk. The migration pin catches a trailing newline, a rename and a
+narrowed glob; a duplicate `000002_*.sql` passes the pin and fails the loader.
+Four subagent-written mutations re-run by the Breaker went red as recorded.
+
+`make check`, `make tidy-check` and `make verify` are green after the two
+fixes. **807** top-level test functions.
 
 ### What this pass did not close
 

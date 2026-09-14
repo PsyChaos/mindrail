@@ -15,7 +15,20 @@ skips entries that are not `.sql`), so it can change freely.
 
 ## `000002_coordination.sql`
 
-The comment above the three indexes reads:
+Two comments in the file state the checkpoint ordering rule that finding F37
+refuted. The first sits above the `checkpoints` table:
+
+> "The last checkpoint" is the newest checkpoint_id rather than the newest
+> created_at, because the id carries a 48-bit millisecond prefix and is
+> monotonic within a millisecond, and a timestamp column is not.
+
+The id is monotonic within a millisecond **within one process**; between two
+processes writing in the same millisecond the two ids order by random bits,
+which is the handover case the milestone exists for. The newest checkpoint is
+the last one inserted, `ORDER BY rowid DESC` (decision D-59 as amended). The
+second half of the sentence stands: `created_at` is not the answer either.
+
+The second comment sits above the three indexes and reads:
 
 > The two queries status and `task list` actually run: tasks of a project by
 > state, and the newest checkpoint of a task. The second index is on

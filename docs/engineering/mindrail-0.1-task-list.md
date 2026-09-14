@@ -125,7 +125,7 @@ içinde; kapsam turunun ölçümleri Ek H'de.
 
 ---
 
-### [ ] MR-003 — Session, Task ve Checkpoint ile sıralı ajan devri
+### [x] MR-003 — Session, Task ve Checkpoint ile sıralı ajan devri
 
 - **Tür:** AFK
 - **Blocked by:** MR-001
@@ -137,24 +137,27 @@ AgentSession, Task ve Checkpoint yaşam döngüsünü SQLite üzerinde kur. İlk
 
 #### Kabul kriterleri
 
-- [ ] Task oluşturma, devam ettirme ve kapatma durumları açıkça modellenir.
-- [ ] Checkpoint yeniden başlatma ve farklı AgentSession sonrasında okunabilir.
-- [ ] Aynı workspace'teki sıralı ajan devri veri kaybı veya gereksiz conflict üretmez.
-- [ ] Domain, persistence ve CLI akışı birlikte integration test ile doğrulanır.
+- [x] Task oluşturma, devam ettirme ve kapatma durumları açıkça modellenir.
+- [x] Checkpoint yeniden başlatma ve farklı AgentSession sonrasında okunabilir.
+- [x] Aynı workspace'teki sıralı ajan devri veri kaybı veya gereksiz conflict üretmez.
+- [x] Domain, persistence ve CLI akışı birlikte integration test ile doğrulanır.
 
 #### Durum
 
-**Uygulandı, denetlendi ve remediasyon yapıldı; ikinci denetim turu bekliyor.**
-Kutular bu yüzden hâlâ işaretsiz: bu depoda bir remediasyon geçişi denetlenir.
-MR-002'nin ilk remediasyonu 22 bulguyu kapattı ve 11 yenisini getirdi; on birinin
-tamamı düzeltme geçişinden çıktı.
+**Tamamlandı.** İki denetim turu, iki remediasyon geçişi ve ikincisinin üzerinde
+iki ajanlık bir doğrulama geçişinden sonra. Kutular ikinci remediasyona kadar
+işaretsiz kaldı, çünkü bu depoda bir remediasyon geçişi denetlenir: MR-002'nin
+ilk remediasyonu 22 bulguyu kapatıp 11 yenisini getirmişti, on birinin tamamı
+düzeltme geçişinden. Üçüncü tur önerilmiyor; bir sonraki kapı MR-004'te görev
+başına.
 
 Sözleşme koda başlanmadan donduruldu ([mr-003-requirements.md](mr-003-requirements.md),
 `cd74767`), tasarım [mr-003-design.md](mr-003-design.md). Milestone'un senaryosu
 bir test olarak çalışıyor: iki ayrı AgentSession, aynı workspace'te, art arda,
 aynı Task'ı sürdürüyor — aralarında Go tarafında hiçbir şey taşınmadan, her adım
 veritabanını açıp kapatan ayrı bir komut çağrısı olarak. `make check`,
-`make verify` ve `make tidy-check` yeşil; 799 test (denetimde 768, temel 732).
+`make verify` ve `make tidy-check` yeşil; 807 test (ilk remediasyondan sonra
+799, denetimde 768, temel 732).
 
 **Birinci denetim turu** (`cd74767..f51478e`, yedi denetçi, 107 ajan) 50 bulgu
 önerdi, 46'sı çürütmeden sağ çıktı, birleştirilince **27 farklı kusur**: 5 HIGH,
@@ -190,13 +193,12 @@ iç içe checkout'ta yeşil kalıyor, ve "en yeni checkpoint" veritabanının at
 sıra oldu. Ayrıntısı ve bu geçişin brifingden ayrıldığı üç yer
 [mr-003-findings.md](mr-003-findings.md) §6'da.
 
-**İkinci denetim** remediasyonun kendisini notladı: 9 denetçi, 85 ajan, 30
+**İkinci denetim** remediasyonun kendisini notladı: 9 denetçi, 35 öneri, 30
 ayrık iddia, **17 doğrulanan — 0 HIGH, 4 MEDIUM, 13 LOW**. Yirmi yedi kusurun
-yirmi yedisi kodda kapanmış; yeni on yedinin yedisi yapılmış işi yanlış anlatan
-cümle, altısı iddia ettiğinden azını doğrulayan test, dördü davranış — ve o
-dördün yalnızca birine bir kullanıcı ulaşıyor: eski sürümün açtığı bir
-veritabanında `task list`, "şema geride, `init` çalıştır" yerine `doctor`'a
-gönderiyordu. Kanıt [mr-003-audit-round-2.md](mr-003-audit-round-2.md); tur
+yirmi yedisi kodda kapanmış; on yedinin on ikisi geçişin kendi düzeltmesini
+olduğundan fazla anlatması — altısı kayıtta düpedüz yanlış cümle — ve
+kullanıcıya ulaşan tek bir gerileme: eski sürümün açtığı bir veritabanında
+`task list`, "şema geride, `init` çalıştır" yerine `doctor`'a gönderiyordu. Kanıt [mr-003-audit-round-2.md](mr-003-audit-round-2.md); tur
 oranı ölçmek için vardı — MR-002'nin ilk remediasyonu 22 kapatıp 11 açmıştı,
 bununki 27 kapatıp 16 açtı, oran düzelmedi ama şiddet çöktü.
 
@@ -204,8 +206,13 @@ bununki 27 kapatıp 16 açtı, oran düzelmedi ama şiddet çöktü.
 biri denetim kaydının kendisi, 9. kalem iki commit) dokuz kalemin dokuzunu
 kapattı ve brifingin backlog'a bıraktığı bir test onarımını öne aldı; her
 mutasyon ana ağaçta yeniden çalıştırıldıktan sonra commit alındı. Üçüncü tur
-önerilmiyor: sıfır HIGH. Kaydı ve brifingten ayrıldığı altı yer
-[mr-003-findings.md](mr-003-findings.md) §7'de. 805 test.
+önerilmiyor: sıfır HIGH. Sonunda iki ajanlık bir doğrulama geçişi — kaydı koda
+karşı okuyan biri, üretim değişikliklerine saldıran biri — bir gerileme buldu
+(bir hamlenin zaman damgası kilidin dışında okunuyordu, `updated_at` geri
+gidebiliyordu) ve düzeltildi; sembolik bağlantı üzerinden girilen bir checkout'ta
+dört mimari muhafızın hiçbir dosya görmemesi de aynı geçişte kapandı. Kaydı,
+brifingten ayrıldığı altı yer ve doğrulama geçişinin dört bulgusu
+[mr-003-findings.md](mr-003-findings.md) §7'de. 807 test.
 
 ---
 
