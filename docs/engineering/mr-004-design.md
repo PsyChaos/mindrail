@@ -244,8 +244,8 @@ Then the effect, by destination:
 |---|---|---|
 | `CLAIMED` (from `OPEN`) | acquire for the mover | the mover |
 | `IN_PROGRESS`, `BLOCKED`, `READY_TO_COMPLETE` | held by the mover: renew. Expired or absent: acquire for the mover (an expired tenure is closed with reason `expired`, and the result names it) | the mover |
-| `OPEN` (from `CLAIMED`) | release, reason `released` | cleared |
-| `COMPLETED`, `ABANDONED` | release the mover's own or an expired tenure, reason `finished`; nothing to release is not an error | unchanged |
+| `OPEN` (from `CLAIMED`) | release, reason `released` — or `expired`, when the tenure had already run out | cleared |
+| `COMPLETED`, `ABANDONED` | release the mover's own tenure with reason `finished`, or an expired one with reason `expired`; nothing to release is not an error | unchanged |
 
 The invariant that falls out, and that a test walks every transition to check
 (D-68): **an `OPEN` task has no active lease, and a task with an active lease

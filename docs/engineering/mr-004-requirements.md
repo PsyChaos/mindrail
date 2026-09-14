@@ -139,6 +139,13 @@ all: **an `OPEN` task has no active lease, and a task with an active lease has
 writes `claimed_by` in the same statement, and the only such paths are inside
 `Transition`.
 
+*Amended during TASK-04's gate.* In the same **transaction**, not the same
+statement — the lease row and the task row are two tables — and there are
+two such paths since D-66's amendment: `Transition`, and the claim without a
+move in `AcquireLease`. Both run the one acquisition and write `claimed_by`
+before they commit, and the invariant test walks the first while the claim's
+own test checks the second.
+
 Once the lease expires or is released, `claimed_by` is what D-58 said it was —
 the attribution of the last claim. `task show` prints it with the tenure's end
 and its reason, so a reader is never shown a claimant as if the claim still
@@ -445,6 +452,11 @@ they were closed.
   proceeds and the result carries *n+1*.
 - **AC-05.5** `revision` rises by exactly one on every successful `Transition`
   and on nothing else; `OpenTask` writes 1.
+
+  *Amended during TASK-04's gate (D-66 as amended).* And on the claim without
+  a move, which updates the task row — `claimed_by` and `updated_at` — and is
+  therefore an update of the row under D-72. A renewal by the holder through
+  the same path changes no column and leaves the revision alone.
 - **AC-05.6** A holder's `WriteCheckpoint` renews (`expires_at` moves forward);
   with `handoff` it releases with reason `handoff`; a non-holder's writes the
   checkpoint and leaves the lease row byte-identical.

@@ -488,9 +488,10 @@ rows among its readers (unowned); the writer's-clock consequence under D-65
 
 ## 4. TASK-04 — the lease and the revision in front of every task move
 
-Commit `ac8f1d0`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
-green; **845** top-level test functions, from 837. Owns REQ-05 and
-`STATE_REVISION_CONFLICT` of REQ-07.
+Commit `ac8f1d0`, and `fa0acc8` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **845** top-level test
+functions after the first, from 837, and **849** after the second. Owns
+REQ-05 and `STATE_REVISION_CONFLICT` of REQ-07.
 
 ### What changed
 
@@ -501,8 +502,8 @@ green; **845** top-level test functions, from 837. Owns REQ-05 and
 | `internal/coordination/model.go` | `Task.Revision`; `Handover.Lease` |
 | `internal/coordination/errors.go` | `ErrRevisionConflict`, `revisionConflict` (current revision and state, expected revision, remedy `task show` then `--expect-revision <current>`); `taskNotClaimableWhereItStands` |
 | `internal/app/code.go`, `internal/cli/envelope_test.go` | `STATE_REVISION_CONFLICT`, registered, `ExitFailed` |
-| `internal/cli/task.go`, `checkpoint.go` | Read `move.Task` and `noted.Checkpoint`; nothing new is published yet (TASK-06) |
-| Tests | `internal/coordination/lifecycle_lease_test.go` (eight, new): `TestEveryDestinationHasItsLeaseEffect` (design §7's table, seven arms), `TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination` (AC-05.2, all seven destinations, row re-read), `TestAStaleRevisionIsRefusedBeforeAnythingElse` (AC-05.4/05.5: judged before the lease, row unchanged, +1 per move and on nothing else, zero expects nothing), `TestTheInvariantHoldsAfterEveryLegalTransition` (AC-05.1: thirteen pairs × two starting states, D-68 checked after each, and the expired tenure's reason on every path), `TestTheTableIsUnchangedByTheLease` (AC-05.7, 36 refusals), `TestAHoldersCheckpointRenewsAndAHandoffReleases` (AC-05.6, three arms, and the handover replayed), `TestACheckpointOnADamagedTaskRowIsRefused`, `TestHandoverReportsTheNewestTenure`. `lease_store_test.go`: `TestATaskTargetIsNotAcquiredDirectly` became `TestATaskIsTakenWhereItStandsOnlyInAWorkingState`. Three MR-003 tests were amended to the rules that changed, with the decision named in each: `TestASecondSessionContinuesTheFirstsTask` and `TestTwoSequentialAgentsContinueOneTaskAcrossAProcessBoundary` (the arriving agent is now the claimant, D-68), `TestASecondClaimNamesTheSessionHoldingIt` (`LEASE_CONFLICT` naming the holder, not `TASK_STATE_INVALID`, D-67) |
+| `internal/cli/task.go`, `checkpoint.go` | Read `move.Task` and `noted.Checkpoint`. Two things reach the wire already, through struct fields with JSON tags rather than through anything these commands do: `task.revision` on every task result, and `task show --json`'s `lease` (the newest tenure). Neither is rendered for a person, neither is pinned by a CLI test, and a takeover is not yet reported by `task state`; TASK-06 owns all three *(the first version of this row said nothing new was published; the Breaker read both keys off the wire)* |
+| Tests | `internal/coordination/lifecycle_lease_test.go` (eight, new): `TestEveryDestinationHasItsLeaseEffect` (design §7's table, seven arms), `TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination` (AC-05.2, all seven destinations, row re-read), `TestAStaleRevisionIsRefusedBeforeAnythingElse` (AC-05.4/05.5: judged before the lease, row unchanged, +1 per move and on nothing else, zero expects nothing), `TestTheInvariantHoldsAfterEveryLegalTransition` (AC-05.1: thirteen pairs × two starting states, D-68 checked after each, and the expired tenure's reason on every path), `TestTheTableIsUnchangedByTheLease` (AC-05.7, 36 refusals), `TestAHoldersCheckpointRenewsAndAHandoffReleases` (AC-05.6, three arms — the stranger's arm compares the lease row column for column, `Status` aside — and the handover replayed), `TestACheckpointOnADamagedTaskRowIsRefused`, `TestHandoverReportsTheNewestTenure`. `lease_store_test.go`: `TestATaskTargetIsNotAcquiredDirectly` became `TestATaskIsTakenWhereItStandsOnlyInAWorkingState`. Three MR-003 tests were amended to the rules that changed, with the decision named in each: `TestASecondSessionContinuesTheFirstsTask` and `TestTwoSequentialAgentsContinueOneTaskAcrossAProcessBoundary` (the arriving agent is now the claimant, D-68), `TestASecondClaimNamesTheSessionHoldingIt` (`LEASE_CONFLICT` naming the holder, not `TASK_STATE_INVALID`, D-67) |
 
 ### A gap in the freeze, and the amendment it needed
 
@@ -551,9 +552,12 @@ tests and the CLI's help text state. Design §10's "there is no `lease acquire
 - **D-66 is amended** as described above; the task-target refusal TASK-03
   recorded is replaced by the working-state rule.
 - **`TransitionExpecting` beside `Transition`**, rather than one method with
-  a revision parameter every caller passes. Twenty-one call sites pass no
-  expectation and never will; the command line calls `TransitionExpecting`
-  with what it was given, zero included.
+  a revision parameter every caller passes. Twenty-three call sites pass no
+  expectation and never will; the command line will call
+  `TransitionExpecting` with what `--expect-revision` gives it once TASK-06
+  adds the flag, and calls `Transition` until then. *(The Reader of this task
+  refuted the first version of this bullet: it said twenty-one, and said the
+  command line already called `TransitionExpecting`.)*
 - **The revision is judged before the lease** as design §7 orders, and T42
   shows what the order buys: a stale caller is told its reading is stale, not
   who holds the task as if its reading were current.
@@ -570,4 +574,71 @@ tests and the CLI's help text state. Design §10's "there is no `lease acquire
 
 ### The gate
 
-*Filled after the Reader/Breaker pair has run.*
+Two agents over `ac8f1d0` and this record at `3e5bb1b`: a Reader (Sonnet)
+over the record, a Breaker (Fable) with a throwaway test under `-race` and
+the built binary over scratch repositories. Fixes: `fa0acc8`; `make check`
+(19 `ok`) and `make tidy-check` green after it; **849** top-level test
+functions, from 845.
+
+**The Reader** checked 31 claims: 26 confirmed, **2 false**, 3 unconfirmed
+(the whole-suite counts and the previous task's number). The two false were
+one sentence of this record's departures — "twenty-one call sites" for
+twenty-three, and "the command line calls `TransitionExpecting`" for a
+command line that calls `Transition` until TASK-06 adds the flag — corrected
+in place above, marked. Two LOW: T46's re-run prints a third line the table
+does not quote (it fires the invariant's second clause as well), and
+"byte-identical" for a comparison that is column for column with `Status`
+aside — the test list above now says so. The three mutations it re-ran (T41,
+T46, T412) matched. Its contract verdict: AC-05.1 … AC-05.7 met.
+
+**The Breaker** produced seven findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | The claim without a move raised the task's revision and reported nothing about it: `Acquisition` carried neither the task nor the new revision, so a claimant that had read the task before claiming it — every agent arriving by the read-then-expect protocol D-72 describes — was refused on its own next move: `current=3 expected=2`. | `ac8f1d0` | `Acquisition.Task` carries the task as the claim left it — claimant, `updated_at`, revision — for a task target, nil for a file. `TestTheClaimWithoutAMoveReportsTheTaskItClaimed`; G41 |
+| LOW | `WriteCheckpoint` judged the lease at a stamp taken before the lock, against D-65's "judged against the clock read inside the transaction": a holder's note that waited on the lock renewed a tenure the in-lock clock had already expired, and a stranger's takeover right after was refused for twenty more minutes. Bounded by `busy_timeout` (five seconds of wait at most) | `ac8f1d0` | The clock is read under the lock, as `Transition` reads it since MR-003's verification pass; the row's stamp, the minted session's start and the lease judgment are one instant. `TestACheckpointIsStampedUnderTheWriteLock`, in `lockProbingClock`'s shape; G42. The departure bullet above that called the pre-lock stamp "not a wrong answer" was wrong by five seconds, and is superseded by this row |
+| LOW | `Handover` read the task and its newest lease in two statements outside a transaction; a takeover committing between them put a claimant beside another session's active lease on the wire — a D-68 violation the rows never had: `7` in `4000` reads under a takeover storm | `ac8f1d0` (`Handover.Lease` was new) | One statement: the task LEFT JOINed with its newest lease row, one snapshot. `TestHandoverReadsTheTaskAndItsLeaseAsOneSnapshot` drives four thousand reads against a takeover loop and asserts zero mismatches; G44 |
+| LOW | "Nothing new is published yet" was false: `task show --json` already carried the whole `lease` row and every task result `task.revision`, through struct tags; no CLI test pinned either | record | Corrected in the table above; the human rendering, the pins and the takeover on the wire are TASK-06's |
+| LOW | A takeover through the binary was silent on both wires — `task state` published neither `superseded` nor the lease — while the history said a tenure was superseded, against D-67's "reported, never silent" | `ac8f1d0`; the wire is TASK-06's | Recorded for TASK-06: `Move.Lease` and `Move.Superseded` exist and are not yet published |
+| LOW | A negative expected revision was treated as no expectation; the command line's `< 1` guard does not stand in front of the domain surface MR-014/15 call | `ac8f1d0` | The store refuses it as a usage error; zero still means no expectation. `TestANegativeExpectationIsRefused`; G43 |
+| LOW | Three contract sentences were not amended with D-66: AC-05.5's "on every successful `Transition` and on nothing else", D-68's "the only such paths are inside `Transition`", and design §7's table reasons for the release paths over an expired tenure (`released`/`finished` where the row says `expired`) | text | All three amended in place in the requirements and the design, marked |
+
+Attacked and not broken, in one line each. Sixteen sessions racing
+`Transition(CLAIMED)` on one `OPEN` task under `-race`: `LEASE_CONFLICT:15
+OK:1`, every refusal naming the winner, `revision=2 unreleased=1`, D-68 true.
+Sixteen racing a working move over an expired tenure: one takeover naming
+the crashed tenure, fifteen refusals, `old.reason=expired revision=4`. Forty
+rounds of the holder's move against the holder's `--handoff` against a
+stranger's `AcquireLease --task`: D-68 true and at most one unreleased lease
+every round. Two stores over one file racing `TransitionExpecting(1)` thirty
+times: one winner each, the loser `STATE_REVISION_CONFLICT current=2`.
+`expect=MaxInt64` refused with the current revision; a planted `revision=0`
+moves to 1; a planted `MaxInt64` is `COORDINATION_WRITE_FAILED` with the row
+untouched and the lease rolled back. A planted `RAISE(IGNORE)` trigger on
+`tasks`: `COORDINATION_WRITE_FAILED`, state and revision unchanged, zero
+unreleased leases (the `doctor` remedy cannot clear a planted trigger, and
+that is acceptable). `AcquireLease --task` over all seven states as design
+§7 and D-66 say; two strangers at once over an expired tenure, one wins; the
+wrong project is `TASK_NOT_FOUND`. A second handoff by the same session
+touches nothing; a stranger's `--handoff` touches nothing; a holder's note
+twenty-five minutes after expiry does **not** revive the tenure — a crashed
+and returned agent cannot reclaim through a note. Every closer of an expired
+tenure writes `expired`; a released tenure then a takeover names nothing
+superseded. Through the binary: B's move while A holds is `LEASE_CONFLICT`
+naming A, the lease and the expiry; after A's `--handoff` B's move succeeds
+with `claimed_by` B and revision 4; A's next move is `LEASE_CONFLICT` naming
+B. The "gap in the freeze" account reproduced verbatim at the binary.
+
+Not demonstrated, for TASK-06: `LEASE_CONFLICT`'s remedy names `mindrail
+lease release <id>`, a command that does not exist until then.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G41 | `claimWhereItStands` reports no task | `TestTheClaimWithoutAMoveReportsTheTaskItClaimed`: `the claim without a move reports no task; the claimant cannot know the revision it raised` |
+| G42 | the checkpoint's stamp read before the transaction again | `TestACheckpointIsStampedUnderTheWriteLock`: `WriteCheckpoint read the clock without holding the write lock; a note that waited on the lock would judge the lease at an instant before the wait` |
+| G43 | the negative guard admits `-1` | `TestANegativeExpectationIsRefused`: `want COMMAND_LINE_INVALID, got no error` |
+| G44 | `Handover` back to two statements | `TestHandoverReadsTheTaskAndItsLeaseAsOneSnapshot`: `3 of 4000 handovers showed a claimant beside another session's active lease` — five runs, red every time (3, 10, 10, 6, 8); at the test's first size of 400 reads the same mutation was red in two runs of five, which is why it reads four thousand |
+
+**Carried forward from this gate:** the takeover and the lease on `task
+state`'s wire, `task show`'s human rendering and the pins for `revision` and
+`lease` (TASK-06).
