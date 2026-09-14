@@ -96,6 +96,13 @@ func NewStore(db *sql.DB, clock app.Clock) *Store {
 // Nothing looks an existing session up first: a session is a run, and two runs
 // against one workspace are two sessions (decision D-56). The label is whatever
 // the caller wants to recognise itself by later and is never interpreted.
+//
+// It is one transaction like every other writer, since MR-004: it used to be a
+// bare ExecContext, which under a held write lock waited the whole busy budget
+// like the others and then published no `waited_ms` where they did — one
+// condition, two answers (TASK-01's gate). Going through InTxMeasured is also
+// what TASK-05 needs, since the operation record must land in the same
+// transaction as the row.
 func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Session, error) {
 	if workspaceID == "" {
 		return Session{}, noWorkspace("a session")
@@ -108,11 +115,14 @@ func (s *Store) OpenSession(ctx context.Context, workspaceID, label string) (Ses
 		StartedAt:   s.clock.Now().UTC(),
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES (?, ?, ?, ?)`,
-		session.ID, session.WorkspaceID, nullable(session.Label), app.FormatTime(session.StartedAt))
+	_, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES (?, ?, ?, ?)`,
+			session.ID, session.WorkspaceID, nullable(session.Label), app.FormatTime(session.StartedAt))
+		return err
+	})
 	if err != nil {
-		return Session{}, s.writeFailure(ctx, "the agent session", session.ID, err)
+		return Session{}, s.adopt(ctx, "the agent session", session.ID, err)
 	}
 
 	return session, nil
@@ -152,15 +162,21 @@ func MintFor(workspaceID string) Attribution {
 }
 
 // Write is what an attributed write reports beside its own result: the session
-// it was attributed to, and whether that session was minted here.
+// it was attributed to, whether that session was minted here, and what the
+// transaction cost.
 //
 // Minted is returned rather than inferred by the caller, because "you are
 // working under a session you did not name" is something the result has to say
 // out loud: an agent that wanted continuity and forgot the flag would otherwise
 // carry on under a fresh identity without noticing.
+//
+// Timing is the wait for the write lock and the time it was held, measured by
+// storage.InTxMeasured on every write (decision D-75). The command logs it;
+// nothing publishes it on the wire until MR-019 decides the shape.
 type Write struct {
 	Session Session
 	Minted  bool
+	Timing  storage.TxStats
 }
 
 // attribute resolves an Attribution inside the transaction that carries the
@@ -238,7 +254,7 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 	}
 
 	var write Write
-	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		resolved, err := s.attribute(ctx, tx, by, now)
 		if err != nil {
 			return err
@@ -257,6 +273,7 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 	if err != nil {
 		return Task{}, Write{}, s.adopt(ctx, "the task", task.ID, err)
 	}
+	write.Timing = stats
 
 	return task, write, nil
 }
@@ -279,7 +296,7 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 		updated Task
 		write   Write
 	)
-	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		// One clock reading per write, and it is taken here, under the write
 		// lock, not before the transaction the way the two inserting writers
 		// take theirs. updated_at replaces an earlier value on the same row,
@@ -342,6 +359,7 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 	if err != nil {
 		return Task{}, Write{}, s.adopt(ctx, "the task state", taskID, err)
 	}
+	write.Timing = stats
 
 	return updated, write, nil
 }
@@ -419,7 +437,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 	}
 
 	var write Write
-	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		resolved, err := s.attribute(ctx, tx, by, checkpoint.CreatedAt)
 		if err != nil {
 			return err
@@ -451,6 +469,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 	if err != nil {
 		return Checkpoint{}, Write{}, s.adopt(ctx, "the checkpoint", checkpoint.ID, err)
 	}
+	write.Timing = stats
 
 	return checkpoint, write, nil
 }

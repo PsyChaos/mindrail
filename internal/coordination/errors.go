@@ -190,3 +190,106 @@ func writeFailed(what, id string, cause error) error {
 		"Run `mindrail doctor` to check the runtime database, then re-run the command.",
 	).WithMetadata("subject_id", id).WithCause(cause)
 }
+
+// The lease conditions (MR-004, decision D-76). Three codes rather than one
+// with a flag because a caller's next action differs: on a conflict it waits
+// or asks the holder; on a lease it no longer holds it acquires again; on an
+// unknown id it looks the id up.
+var (
+	// ErrLeaseConflict means the target's active lease is held by another
+	// session. It is the milestone's scenario refused by name: the second
+	// agent is told who holds the target and until when, never to force.
+	ErrLeaseConflict = errors.New("lease held by another session")
+
+	// ErrLeaseNotHeld means the lease the caller named has expired or been
+	// released, so there is nothing to renew or give up.
+	ErrLeaseNotHeld = errors.New("lease no longer held")
+
+	// ErrLeaseNotFound means no lease carries that id.
+	ErrLeaseNotFound = errors.New("lease not found")
+)
+
+// leaseConflict reports a target another session holds. The expiry is named
+// because it is the one fact that tells the reader how long "wait" is, and
+// the lease id because `lease release` takes it.
+func leaseConflict(lease Lease) error {
+	return app.NewError(
+		app.CodeLeaseConflict,
+		app.KindFailed,
+		fmt.Sprintf("%s is held by session %s until %s", lease.Target(), lease.Holder, app.FormatTime(lease.ExpiresAt)),
+		"Nothing was written; the lease stays with its holder.",
+		fmt.Sprintf("Wait until %s, when the lease expires, then try again.", app.FormatTime(lease.ExpiresAt)),
+		"Or ask the holder to release it: `mindrail lease release "+lease.ID+"`.",
+	).
+		WithMetadata("lease_id", lease.ID).
+		WithMetadata("holder", lease.Holder).
+		WithMetadata("expires_at", app.FormatTime(lease.ExpiresAt)).
+		WithMetadata("target_kind", string(lease.TargetKind)).
+		WithMetadata("target_key", lease.TargetKey).
+		WithCause(ErrLeaseConflict)
+}
+
+// leaseNotHeld reports a renew or a release of a lease that has already
+// ended. The remedy depends on the kind, because a file is taken again with
+// `lease acquire` and a task by moving it (decision D-66).
+func leaseNotHeld(lease Lease, verb string) error {
+	var why string
+	switch lease.Status {
+	case LeaseReleased:
+		when := ""
+		if lease.ReleasedAt != nil {
+			when = " at " + app.FormatTime(*lease.ReleasedAt)
+		}
+		why = fmt.Sprintf("lease %s on %s was released%s (%s), so there is nothing to %s",
+			lease.ID, lease.Target(), when, lease.ReleaseReason, verb)
+	default:
+		why = fmt.Sprintf("lease %s on %s expired at %s, so there is nothing to %s",
+			lease.ID, lease.Target(), app.FormatTime(lease.ExpiresAt), verb)
+	}
+
+	var remedy string
+	switch lease.TargetKind {
+	case TargetTask:
+		remedy = "Move the task with `mindrail task state " + lease.TargetKey + " --to <STATE>`; the move takes the lease again."
+	default:
+		remedy = "Run `mindrail lease acquire --file " + lease.TargetKey + "` to take it again."
+	}
+
+	return app.NewError(
+		app.CodeLeaseNotHeld,
+		app.KindFailed,
+		why,
+		"Nothing was written; the lease's history is unchanged.",
+		remedy,
+	).
+		WithMetadata("lease_id", lease.ID).
+		WithMetadata("status", string(lease.Status)).
+		WithMetadata("target_kind", string(lease.TargetKind)).
+		WithMetadata("target_key", lease.TargetKey).
+		WithCause(ErrLeaseNotHeld)
+}
+
+// leaseNotFound reports a lease id that names nothing.
+func leaseNotFound(id string) error {
+	return app.NewError(
+		app.CodeLeaseNotFound,
+		app.KindFailed,
+		fmt.Sprintf("no lease in this repository carries the id %q", id),
+		"There is no lease to read, renew or release, so nothing was written.",
+		"Run `mindrail lease list` to see the leases this project holds.",
+	).WithMetadata("lease_id", id).WithCause(ErrLeaseNotFound)
+}
+
+// noProject is noWorkspace's sibling for the writers that belong to a project
+// rather than a worktree: a lease acquired for no project would be a row the
+// unique index scopes to nothing.
+func noProject(what string) error {
+	return app.NewError(
+		app.CodeCoordinationUnavailable,
+		app.KindFailed,
+		what+" needs a project to belong to, and none was given",
+		"Nothing was read and nothing was written.",
+		"Pass the id of a project registered in this repository's runtime database.",
+		"Run `mindrail init` in the worktree if it has never been registered.",
+	)
+}

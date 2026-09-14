@@ -95,6 +95,13 @@ var exitForCode = map[app.Code]int{
 	// condition that clears on its own: the lock is released when the other
 	// command finishes, and the remedy is to run this one again (D-74).
 	app.CodeBusyRetryable: app.ExitUnavailable,
+
+	// MR-004's lease codes are ExitFailed like MR-003's task codes (D-76): the
+	// command line was well formed and the refusal depends on rows — who holds
+	// the target, whether a lease has run out, whether an id names one.
+	app.CodeLeaseConflict: app.ExitFailed,
+	app.CodeLeaseNotHeld:  app.ExitFailed,
+	app.CodeLeaseNotFound: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

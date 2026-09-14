@@ -154,6 +154,24 @@ const (
 	// condition shared RUNTIME_DB_UNAVAILABLE with a corrupt path and a missing
 	// directory, whose remedies cannot succeed against a lock (decision D-74).
 	CodeBusyRetryable Code = "MINDRAIL_BUSY_RETRYABLE"
+
+	// The lease conditions (MR-004, decision D-76). Three codes rather than one
+	// with a flag, because a caller's next action differs: on a conflict it
+	// waits for the expiry it is told or asks the holder to release; on a lease
+	// it no longer holds it acquires again; on an unknown id it looks the id up.
+
+	// CodeLeaseConflict marks a target whose active lease another session
+	// holds. It is the milestone's scenario refused by name: the second agent
+	// is told the holder, the lease id and the expiry, never to force.
+	CodeLeaseConflict Code = "LEASE_CONFLICT"
+
+	// CodeLeaseNotHeld marks a renew or a release of a lease this session no
+	// longer holds because it expired or was released. The remedy is to acquire
+	// again, which is why it is not LEASE_CONFLICT: nobody holds it.
+	CodeLeaseNotHeld Code = "LEASE_NOT_HELD"
+
+	// CodeLeaseNotFound marks a lease id no row carries.
+	CodeLeaseNotFound Code = "LEASE_NOT_FOUND"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -189,6 +207,9 @@ var allCodes = sortedCodes([]Code{
 	CodeCoordinationWriteFailed,
 	CodeCoordinationReadFailed,
 	CodeBusyRetryable,
+	CodeLeaseConflict,
+	CodeLeaseNotHeld,
+	CodeLeaseNotFound,
 })
 
 var codeSet = indexCodes(allCodes)
