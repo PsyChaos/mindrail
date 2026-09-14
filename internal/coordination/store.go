@@ -279,7 +279,7 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 		case errors.Is(err, sql.ErrNoRows):
 			return taskNotFound(taskID)
 		case err != nil:
-			return err
+			return readFailed("the task", taskID, err)
 		}
 
 		if !CanTransition(current.State, to) {
@@ -411,7 +411,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, taskID string, by Attributi
 		case errors.Is(err, sql.ErrNoRows):
 			return taskNotFound(taskID)
 		case err != nil:
-			return err
+			return readFailed("the task", taskID, err)
 		}
 
 		handoffValue := 0
@@ -620,6 +620,16 @@ func scanCheckpoint(row rowScanner) (Checkpoint, error) {
 
 // requireSession refuses a handle that names no session, inside the caller's
 // transaction.
+//
+// A row it finds and cannot decode is a read failure naming the session, not a
+// write failure naming the row the caller was about to insert. adopt turns any
+// bare error that leaves a write transaction into COORDINATION_WRITE_FAILED
+// carrying the caller's subject, so a session whose started_at does not parse
+// used to be published as "the task could not be written" with a subject_id no
+// statement ever attempted — and the code is defined by what happened to a row,
+// not by the verb of the command that met it (audit round 2, §4.7). The two
+// precondition reads in Transition and WriteCheckpoint answer the same way, so
+// a damaged row is reported under one code whichever command reaches it.
 func requireSession(ctx context.Context, tx *sql.Tx, id string) (Session, error) {
 	if id == "" {
 		return Session{}, sessionNotFound(id)
@@ -631,7 +641,7 @@ func requireSession(ctx context.Context, tx *sql.Tx, id string) (Session, error)
 	case errors.Is(err, sql.ErrNoRows):
 		return Session{}, sessionNotFound(id)
 	case err != nil:
-		return Session{}, err
+		return Session{}, readFailed("the agent session", id, err)
 	}
 	return session, nil
 }
@@ -652,8 +662,9 @@ func nullable(value string) any {
 // adopt turns a transaction failure into the error a reader can act on.
 //
 // A domain error raised inside the transaction — a missing session, a refused
-// transition — is already the answer and passes through unchanged. Anything else
-// is a write that did not land, and the storage layer classifies it first: an
+// transition, a row that could not be read — is already the answer and passes
+// through unchanged. Anything else is a write that did not land, and the
+// storage layer classifies it first: an
 // unwritable database, a full disk and a busy lock all have remedies of their
 // own, and the generic one is only correct for what is left.
 func (s *Store) adopt(ctx context.Context, what, id string, err error) error {

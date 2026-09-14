@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
 // TestADamagedRowIsReportedWithACode is finding F44.
@@ -123,4 +124,116 @@ func TestNobodyLookedIsStillSaidWhereNobodyLooked(t *testing.T) {
 				name, observation, got.stdout)
 		}
 	}
+}
+
+// TestAReadThatFailsInsideAWriteNamesTheRowItCouldNotRead is audit round 2,
+// §4.7, and the decision item 9 of its brief asked for.
+//
+// Every writing command reads before it writes — the session it is attributed
+// to, the task it moves or annotates — and those reads run inside the write's
+// own transaction. Their failures used to leave it bare, so adopt published
+// them as COORDINATION_WRITE_FAILED, "the task could not be written to the
+// runtime database", with a subject_id naming the row the command was about to
+// insert and nothing had tried to; the session whose started_at could not be
+// parsed appeared only in the free-text cause.
+//
+// The code is decided by what happened to a row, not by the verb of the
+// command that met it: a row the database holds and cannot answer for is
+// COORDINATION_READ_FAILED, which is what `task show` and `task list` already
+// say about the same damage. Beyond the code, what is pinned here is the
+// subject — the row that could not be read, not a phantom — and that the
+// write the command was asked for did not happen, which the envelope alone
+// cannot tell.
+//
+// The two rows are the two reads that decode a row. `checkpoint write`'s
+// existence probe is the third precondition read and is not here: its only
+// failure is a table the file does not hold, and the schema gate answers that
+// with `mindrail init` before any command reaches the store. The store suite
+// covers it for the direct caller that has no gate in front of it.
+func TestAReadThatFailsInsideAWriteNamesTheRowItCouldNotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// damage breaks the row the command will have to read, and returns the
+		// id that row carries.
+		damage func(t *testing.T, repo, session, task string) string
+		args   func(session, task string) []string
+		// unchanged reports whether the write the command was asked for is
+		// still absent afterwards.
+		unchanged func(t *testing.T, repo, task string) bool
+	}{
+		{
+			name: "task open under a session whose started_at cannot be parsed",
+			damage: func(t *testing.T, repo, session, _ string) string {
+				execOnRuntimeDB(t, repo, `UPDATE sessions SET started_at = 'yesterday'`)
+				return session
+			},
+			args: func(session, _ string) []string {
+				return []string{"task", "open", "--title", "a task under a damaged session", "--session", session}
+			},
+			unchanged: func(t *testing.T, repo, _ string) bool { return rowCount(t, repo, "tasks") == 1 },
+		},
+		{
+			name: "task state on a task whose created_at cannot be parsed",
+			damage: func(t *testing.T, repo, _, task string) string {
+				execOnRuntimeDB(t, repo, `UPDATE tasks SET created_at = 'yesterday'`)
+				return task
+			},
+			args: func(session, task string) []string {
+				return []string{"task", "state", task, "--to", "CLAIMED", "--session", session}
+			},
+			unchanged: func(t *testing.T, repo, task string) bool { return taskStateOf(t, repo, task) == "OPEN" },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newInitializedRepo(t)
+			session := sessionID(t, repo)
+			task := openTask(t, repo, session, "a task opened before the damage")
+			subject := tc.damage(t, repo, session, task)
+
+			got := run(t, repo, append(tc.args(session, task), "--json")...)
+			if got.code != app.ExitFailed {
+				t.Fatalf("exit = %d over a row it cannot read, want %d\n%s", got.code, app.ExitFailed, got.stdout)
+			}
+
+			payload := got.errorPayload(t)
+			if payload.Code != app.CodeCoordinationReadFailed {
+				t.Errorf("code = %q, want %q: a row was read and could not be decoded, and nothing was written",
+					payload.Code, app.CodeCoordinationReadFailed)
+			}
+			if payload.Metadata["subject_id"] != subject {
+				t.Errorf("metadata.subject_id = %q, want the row that could not be read, %q",
+					payload.Metadata["subject_id"], subject)
+			}
+			if strings.Contains(payload.Why, "parsing time") {
+				t.Errorf("why = %q is the parser's message rather than a diagnosis", payload.Why)
+			}
+			assertFourErrorKeys(t, got.stdout)
+
+			if !tc.unchanged(t, repo, task) {
+				t.Errorf("the write went through under a row that could not be read; impact says %q", payload.Impact)
+			}
+		})
+	}
+}
+
+// taskStateOf reads one task's state straight from the runtime database. It is
+// for the row above whose write is an UPDATE rather than an insert: a row count
+// cannot tell a refused move from a made one.
+func taskStateOf(t *testing.T, repo, task string) string {
+	t.Helper()
+
+	db, err := storage.Open(t.Context(), storage.Options{
+		Path:     runtimeDBPath(t, repo),
+		ReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("opening the runtime database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var state string
+	if err := db.QueryRowContext(t.Context(), `SELECT state FROM tasks WHERE task_id = ?`, task).Scan(&state); err != nil {
+		t.Fatalf("reading the state of %s: %v", task, err)
+	}
+	return state
 }
