@@ -183,8 +183,10 @@ attempt to provoke it on this driver returned nil. Predates.
 
 ## 2. TASK-02 — migration 000003, and a ledger that can read `ADD COLUMN`
 
-Commit `aa8d1a2`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
-green; **822** top-level test functions, from 817. Owns REQ-02.
+Commit `aa8d1a2`, and `fccc94f` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **822** top-level test
+functions after the first, from 817, and **825** after the second. Owns
+REQ-02.
 
 ### What changed
 
@@ -245,15 +247,17 @@ shipped-file pin red, as they should; that line is given once.
   edit to the file during the remaining tasks turns a test red and has to be
   recorded here, which is the discipline the pin exists for. The comment says
   so.
-- **AC-02.4's "dropping any of the three is reported as damaged" is proved on
-  a fixture table, not on `tasks`.** Dropping `revision` from the real `tasks`
-  under `foreign_keys = 1` needs the same rebuild the migration avoided;
-  `TestStatusExpectsAColumnAMigrationAdded` rebuilds a fixture table without
-  its added column and gets `ErrSchemaShapeChanged`, and
-  `TestLoadReadsTheColumnsOfTheEmbeddedSchema` pins that the real set's
-  `ADD COLUMN` is read as `revision` on `tasks`. The two tables' absence is
-  covered by the existing object check the upgrade test runs (`Status` after
-  the upgrade).
+- **AC-02.4's "dropping any of the three is reported as damaged" was first
+  proved on a fixture table, not on `tasks`** — on the claim that dropping
+  `revision` from the real `tasks` under `foreign_keys = 1` needs the rebuild
+  the migration avoided. *That claim was false* (the Breaker ran
+  `ALTER TABLE tasks DROP COLUMN revision` with foreign keys on and it
+  succeeded): SQLite drops a column that no key, index or constraint names,
+  whatever the foreign keys pointing at the table. The gate added
+  `TestTheRealTasksTableIsCheckedForItsAddedColumn`, which drops the real
+  column and gets `ErrSchemaShapeChanged`. The fixture test stays for the
+  spellings, and `TestLoadReadsTheColumnsOfTheEmbeddedSchema` pins that the
+  real set's `ADD COLUMN` is read as `revision` on `tasks`.
 - **The RENAME arm uses `RENAME COLUMN`, not `RENAME TO`.** AC-02.4 said "an
   `ALTER TABLE … RENAME` in a fixture still forgets the table"; a `RENAME TO`
   is already a schema *effect* (the old name is removed, the new has no
@@ -265,4 +269,87 @@ shipped-file pin red, as they should; that line is given once.
 
 ### The gate
 
-*Filled after the Reader/Breaker pair has run.*
+Two agents over `aa8d1a2` and this record at `85bb2f3`: a Reader (Sonnet)
+over the record, a Breaker (Fable) with the new binary and the MR-003 binary
+built from `6a78f8d` in a second worktree, over scratch repositories and a
+throwaway parser test. Fixes: `fccc94f`; `make check` (19 `ok`) and
+`make tidy-check` green after it; **825** top-level test functions, from 822.
+
+**The Reader** checked 34 claims and D-73's four sentences: 27 confirmed,
+**0 false**, 7 unconfirmed (the whole-suite counts it may not run, the
+ready-band edges, and three mutations it did not re-run; the three it re-ran
+— M2, M3, M6 — matched the recorded red lines, and it derived M5's pin hash
+without touching the file). One MEDIUM: the ready-band edges (240/224,
+288/272 KiB) rest on the sweep this record describes, and no test asserts the
+boundary itself. That is deliberate and now said here: the sweep's own comment
+records that the edge moves with the page size, the migration count and the
+log SQLite keeps, so an assertion on it would be a row that stops reproducing;
+the wide end at 512 KiB is the persisted assertion, and the edges are
+measurements, dated by the commit that recorded them. One LOW — quoted
+identifiers in `ADD COLUMN` unexercised — was overtaken by the Breaker's
+first finding below.
+
+**The Breaker** produced twelve findings, three of them HIGH and all three in
+one place, and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| HIGH | `ALTER TABLE t ADD COLUMN [c] TEXT` (and the backtick form) was read as a column named **`column`**: the pattern's optional `COLUMN` group backtracked and the keyword matched as the name. `Added=map[t:[column]]` → `Status: … missing columns … t (column)` on the schema the migration itself built, with a rebuild remedy that replays the same file into the same error | `aa8d1a2` | The added column is read by `firstToken`, the tokenizer the column list uses, which knows SQLite's four quotings; a bare word `column` after `ADD` is the keyword, a quoted one is a name. `TestAddColumnIsReadTheWayTheColumnListIs`, fifteen shapes, each applied and then `Status`-checked on what it built; G2 below |
+| HIGH | A bare name in another script, `sütun`, was read as `s`: the identifier class was ASCII | `aa8d1a2` | Same fix; the `sütun` row of the same test |
+| HIGH | An `ADD COLUMN` at line start inside a `/* */` block, or inside a string literal spanning lines, was read as real — `Added=map[t:[ghost]]` on a healthy schema. Before this task the same text made the checker *forget* the table | `aa8d1a2` (the CREATE side's analogue predates) | Comments are stripped before the scan (`stripComments`, already in the file); G1. The string-literal case is the one shape neither this nor the CREATE side can tell from a real head — a statement head at line start inside a multi-line literal — and is recorded as the shared limit rather than fixed on one side |
+| MEDIUM | `ALTER TABLE t` on one line and `ADD COLUMN c TEXT` on the next was sorted into `forgotten` — the silent removal from the F9 check D-73 says the task fixes, reachable by a line break | `aa8d1a2` | The words after the head are read across whitespace of any kind up to the semicolon; the "split over two lines" row; G3 |
+| MEDIUM | The gate's sentence at ledger 2 was false: "the migration that creates the sessions, tasks and checkpoints tables has not been applied", on a database that had all three (`sqlite3` listed them). Code, exit and remedy were right | `aa8d1a2` | `schemaBehind` names the gap by number — "has applied migrations up to 2 and the coordination commands need 3" — with `applied_version` and `required_version` in the metadata; `TestCoordinationCommandsSendASchemaBehindDatabaseToInit` asserts both at both downgrades; G5 |
+| MEDIUM | This record's sentence that dropping `revision` from the real `tasks` under `foreign_keys = 1` "needs the same rebuild the migration avoided" was false: `ALTER TABLE tasks DROP COLUMN revision` succeeded with foreign keys on, `foreign_key_check` clean, and the new binary then reported `MIGRATION_FAILED … tasks (revision)` | record | Corrected in place above, marked; `TestTheRealTasksTableIsCheckedForItsAddedColumn` proves AC-02.4 on the table that ships |
+| MEDIUM | `CREATE TABLE cnt AS SELECT count(*) AS n FROM src` was read as a column list `[*]` — the parenthesis in `count(*)` — so every healthy schema was "missing" a column named `*` | predates (`tableColumns`) | The `AS` after the name is checked by word; `TestACreateTableAsSelectIsNotReadAsAColumnList`; G4 |
+| LOW | A `revision` column added by hand at ledger 2 makes `init` fail on `duplicate column name` with the remedy "inspect the migration SQL … re-run `mindrail init`", which fails identically | `aa8d1a2` (first `ADD COLUMN`); needs a hand edit | Recorded, not fixed: it is the shape any hand-created object has against the migration that creates it, and the remedy's wording is MR-001's. Backlog |
+| LOW | `Added` is applied after all of a file's effects, so `ADD COLUMN c; DROP TABLE t; CREATE TABLE t (a)` in one file demands `c` | `aa8d1a2`, contrived | Recorded as a limit: `Columns` is per table and the last `CREATE` wins there too; a file that adds a column and then recreates the table without it is a file that should not be written |
+| LOW | Fail-open variants: `CREATE TABLE Tasks` against `ALTER TABLE tasks` (case), `ALTER TABLE main.t` (schema-qualified, forgotten as `main`), a `/* note */` between the table name and `ADD` (now read, since comments are stripped) | case and `main.` predate in class on the CREATE side | The comment case is closed by G1's fix; the other two are recorded as the CREATE side's existing limits |
+| LOW | The missing-column remedy at ledger 3 is a data-losing rebuild ("move the database aside and run `mindrail init`") for a one-column repair | predates; `migrator.go` defers it to "a milestone that stores something irreplaceable" | Recorded. MR-004 is arguably that milestone; the decision is left to the record's reader rather than taken in a gate |
+| LOW | `DROP INDEX idx_leases_active` by hand is invisible: `status` and `doctor` report the database healthy, and AC-02.1's guard is gone | predates (the object check covers tables; indexes were narrowed out by design) | Recorded. TASK-03's store refuses by name before the index would, so the guard's absence is not silent at the write; whether `doctor` should verify indexes is a question for its own work |
+
+Attacked and not broken, in one line each. The real upgrade: a repository the
+MR-003 binary initialised — one session, four tasks in four states, two
+checkpoints — answered `status` 0 (DEGRADED), `doctor` 0, `task list` and
+`task show` 1 before `init`, all 0 and READY at schema 3 after it; the dump
+diff was the ledger row, `,1` on every task and `workspaces.updated_at`, and
+the ledger's checksum for 3 equals the file's. The MR-003 binary over the
+upgraded database: every command `RUNTIME_DB_SCHEMA_TOO_NEW` at exit 1 and
+the data untouched. The gate at ledger 2 wrote nothing: `sessions=1 tasks=4
+checkpoints=2` after every refusal. `leases` or `operations` dropped at ledger
+3: `MIGRATION_FAILED … table leases` on `status`, `doctor`, `task list` and
+`init`. At SQL level: a second unreleased row and an expired-but-unreleased
+row plus a new one both `UNIQUE constraint failed`; release then re-lease
+allowed; another project allowed; `src/A.go` and `src/a.go` are two targets
+(by design); a holder that is no session and a `DELETE FROM sessions` under a
+lease both `FOREIGN KEY constraint failed`; a hand-inserted task is at
+`revision 1`; a text or real `revision` is refused by `STRICT`, `'2'` is
+stored as 2 by STRICT's documented coercion, and `-7` and
+`target_kind = 'symbol'` are accepted (no `CHECK`). The space edges
+reproduced under `unshare -Urm`: with three migrations `init` exits 4 at 224,
+240, 256 and 272 KiB and 0 from 288; the MR-003 binary exits 4 at 224 and 0
+at 240 — both edges as recorded. Two `init` at once over a schema-2 database:
+one applied `[3]`, the other `[]`, one ledger row, four objects, one
+`revision` column. The parser on `"with space"`, lower-case keywords, `ADD`
+without `COLUMN`, CRLF, `c$1`, a generated column, a `CHECK` whose literal
+says `'ADD COLUMN d'`, `IF NOT EXISTS`, a `--` comment; add-then-drop, a
+later `RENAME TO` and an `AS SELECT` forget by design; a duplicate `ADD` and
+an `ADD` on a table that does not exist are `MIGRATION_FAILED` at `Up`.
+
+Not demonstrated, for TASK-03: a hand-planted `released_at = ''` sits outside
+the partial index while a reader that tests `IS NULL` would call it held.
+TASK-03's reader parses the column; an empty string does not parse and the
+row is refused as damaged (`COORDINATION_READ_FAILED`), which is the answer a
+planted value gets everywhere in this package.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G1 | `alterations` scans the body with comments left in | `TestAddColumnIsReadTheWayTheColumnListIs/inside_a_block_comment`: `Added[t] = [ghost], want []` and `Status = MIGRATION_FAILED: … t (ghost) on the schema the migration built` |
+| G2 | the quoted guard dropped: `"column"` in quotes is the keyword again | `…/a_column_named_column,_quoted`: `Added[t] = [text], want [column]` |
+| G3 | the statement ends at the first newline instead of the semicolon | `…/split_over_two_lines`: `Added[t] = [], want [c]` and `Altered = [t], want forgotten = false` |
+| G4 | `tableColumns` no longer checks for `AS` | `TestACreateTableAsSelectIsNotReadAsAColumnList`: `Columns[cnt] = [*], want the AS SELECT table skipped` and `Status = MIGRATION_FAILED: … cnt (*)` |
+| G5 | the gate's threshold back to 2 | `TestCoordinationCommandsSendASchemaBehindDatabaseToInit`: `task list at schema 2 exited 0 on a schema-behind database, want 1` |
+
+**Carried forward from this gate:** the multi-line-literal limit shared with
+the CREATE side; the hand-added-column `init` loop and the data-losing
+rebuild remedy (backlog, both predate in class); index verification in
+`doctor` (unowned).
