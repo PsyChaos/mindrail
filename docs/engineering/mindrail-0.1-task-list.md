@@ -216,7 +216,7 @@ brifingten ayrıldığı altı yer ve doğrulama geçişinin dört bulgusu
 
 ---
 
-### [ ] MR-004 — Güvenli lease, idempotency ve optimistic revision
+### [x] MR-004 — Güvenli lease, idempotency ve optimistic revision
 
 - **Tür:** AFK
 - **Blocked by:** MR-001, MR-003
@@ -228,11 +228,43 @@ Task/symbol/file lease edinme-yenileme-bırakma akışını; SQLite WAL, kısa t
 
 #### Kabul kriterleri
 
-- [ ] Aynı logical target için iki process aynı anda çakışan aktif lease alamaz.
-- [ ] Aynı `operation_id` ile tekrar edilen mutation duplicate Task, Change veya Evidence üretmez.
-- [ ] Eski revision ile update sessiz last-write-wins yerine açık revision conflict verir.
-- [ ] SQLite concurrency/race testleri bounded retry ve conflict davranışını kanıtlar.
-- [ ] Transaction'lar interactive write starvation yaratmayacak kadar kısa tutulur.
+- [x] Aynı logical target için iki process aynı anda çakışan aktif lease alamaz.
+- [x] Aynı `operation_id` ile tekrar edilen mutation duplicate Task, Change veya Evidence üretmez.
+- [x] Eski revision ile update sessiz last-write-wins yerine açık revision conflict verir.
+- [x] SQLite concurrency/race testleri bounded retry ve conflict davranışını kanıtlar.
+- [x] Transaction'lar interactive write starvation yaratmayacak kadar kısa tutulur.
+
+#### Durum
+
+**Tamamlandı.** Bu milestone, MR-003'ün sonunda kararlaştırılan süreç
+değişikliğini test etmek için koşuldu: denetimi milestone sonuna değil her
+görevin sonuna koymak. Sonuç, sürecin lehine tek cümlelik kanıt — MR-003 iki
+denetim turu ve iki remediasyon geçişi istedi, MR-004 hiçbirini istemedi.
+Sekiz görevin sekizi de kendi Reader/Breaker kapısıyla kapanmadan bir
+sonrakine başlanmadı; kapılar iki düzeltme çıkardı (`1431d9f`, `556e88d`),
+ikisi de kapı içinde kapatıldı, milestone sonrası tek bir denetim turu
+açılmadı ve remediasyon brifi yazılmadı.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-004-requirements.md](mr-004-requirements.md), `e4bad83`), tasarım
+[mr-004-design.md](mr-004-design.md); üçüncü göç
+`migrations/000003_lease_idempotency.sql`, tablo sürümü 3. Milestone'un
+senaryosu bir test olarak çalışıyor: iki ayrı işletim sistemi süreci, tek
+veritabanı, tek korunan hedef — biri kazanırken öteki kazananın oturumunu ve
+bitişini taşıyan `LEASE_CONFLICT` duyuyor, tekrar edilen `operation_id`
+ikinci kez yazmıyor, eski revision sessiz last-write-wins yerine
+`STATE_REVISION_CONFLICT` veriyor, kilit bekleyeni bütçesini bir merdiven
+adımı içinde `MINDRAIL_BUSY_RETRYABLE` ile bırakıyor. İki sürecin
+kanıtladığı yedi mutasyon (P1–P7), sekiz lane'in yüz yazısının kilit
+süreleriyle birlikte [mr-004-findings.md](mr-004-findings.md) §8'de; her
+görevin kaydı ve kapısı aynı belgenin kendi bölümünde.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 872
+test (MR-003'ün kapanışında 807). Kapıların backlog'a bıraktıkları, kendi
+bölümlerinde kayıtlı: `init`'in kilitli veritabanında ikinci open bütçesi,
+`isBusyError`'ın `SQLITE_LOCKED`'ı, `doctor`'un hasarlı satır denetimi
+(lease zaman damgaları dahil) ve MR-015'in alan yüzeyi için
+bilinmeyen-proje muhafızı.
 
 ---
 
