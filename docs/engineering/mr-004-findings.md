@@ -1136,3 +1136,64 @@ went red and the task race needed a mutation of its own.
 | AC-12.5 | `InTxMeasured`: one `db.BeginTx`, no loop around it (`internal/storage/tx.go`) |
 | AC-12.6 | `grep -rn 'Timing\|waited_ms\|held_ms' internal/cli/*.go` outside tests: nothing; `waited_ms` reaches the wire only as the busy refusal's metadata, set in `internal/storage`, which D-74 put there |
 | AC-12.7 | `git diff --name-only e4bad83..HEAD`: 66 files, every one under `docs/engineering/`, `migrations/` or the eight packages MR-004 owns (`app`, `bootstrap`, `cli`, `coordination`, `doctor`, `migration`, `status`, `storage`) |
+
+### The gate
+
+Two agents over `26f8f11` and this record at `ab5e443`, with nothing else
+changing in the tree while they ran: a Reader over the record against the
+freeze, and a Breaker in its own `git archive` copy of `ab5e443` — its own
+worktree as a precondition, not a recovery step, the lesson this repository
+wrote down in MR-003's round 2 — with the built binary over scratch
+repositories and the previous binary from `b98e5eb` beside it for A/B. No fix
+owed: `make check` (19 `ok`) and `make tidy-check` green at the gate; **872**
+top-level test functions, the +6 over TASK-07 being exactly the five
+two-process tests and the load test.
+
+**The Reader** checked 18 claims against the diff and the code: 16 confirmed,
+2 unconfirmed (the run artifacts — timing numbers, ok-counts, and the 866
+baseline it could not reach read-only; the +6 delta is consistent), 0
+refuted. Every named test exists with the AC its comment claims, every one
+skips under `-short` at `startChild`, the TestMain re-exec shape is as
+described (`MINDRAIL_TEST_CLI_CHILD` with `command`/`hold`, children blocked
+on stdin, `MINDRAIL_TEST_CLI_*` vars stripped before the tree runs, the hold
+child actually taking the write lock under the driver's
+`_txlock=immediate`), and REQ-12's greps all return exactly as the table
+says. Both departures it graded are the record's own, recorded above:
+AC-10.1's loser asserted `LEASE_CONFLICT` (stricter than the freeze, fixed by
+D-67's order at `store.go:462`), AC-10.3's TTL passed by the same SQL
+back-dating the `task show` and `status` expired arms use. Its contract
+verdict: AC-10.2/10.4/10.5, AC-11.1/11.2/11.4, REQ-11 and REQ-12 met;
+AC-10.1/10.3/10.6 met with the departures recorded; AC-10.7 and AC-11.3's
+execution side are run artifacts, which the Breaker closed.
+
+**The Breaker** re-ran all seven mutations P1–P7 in its own copy, one at a
+time, each reverted before the next: **all seven turned their named test red,
+and the failure text matches the record** — P1's `the loser's code =
+TASK_STATE_INVALID, want LEASE_CONFLICT (D-67)`, P2's `2 processes succeeded
+and 0 were refused`, P3's `0 unreleased lease rows … want 2`, P4's takeover
+refused at exit 1, P5's `UNIQUE constraint failed: operations.operation_id`
+through the un-replayed second delivery, P6's `waited_ms = 5007, want within
+[300, 700]` (record: 5011), P7's lanes starving with `99 of 200 writes
+completed` and `held the lock for 301.84ms, want under 250ms` (record: 107,
+302.07 ms). The three divergences are nondeterministic quantities — the
+loser's process index, a write count, a waited-milliseconds reading — where
+the mechanism and the assertion are identical. On the pristine tree the five
+two-process tests and the load test pass once with the record's numbers
+(held median 167 µs, longest 1.158 ms; waited longest 53.96 ms; `waited_ms`
+301). A/B against the previous binary on a scratch repository under a held
+`BEGIN IMMEDIATE`: both binaries exit 4 with `MINDRAIL_BUSY_RETRYABLE` and
+`waited_ms` ≈ 5005 — byte-identical behaviour, as a tests-only commit
+requires. Under `-short` the two-process tests skip and the load test runs,
+as recorded. No finding rose to MEDIUM; nothing was broken.
+
+Not re-demonstrated: AC-10.7's five parallel runs with `make check` beside
+them — the six tests were run once cleanly and the seven mutations consumed
+the gate's budget; the five-run demonstration remains this record's own
+artifact, and it is the one claim this gate repeats on trust.
+
+| # | Mutation re-run at the gate | Red |
+|---|---|---|
+| P1–P7 | all seven, verbatim from the table above, in a `git archive` copy | all seven, on their named tests only |
+
+**Carried forward from this gate:** nothing — the first gate of this
+milestone with no backlog item of its own.
