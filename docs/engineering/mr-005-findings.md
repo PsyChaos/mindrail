@@ -195,3 +195,147 @@ verdi (root kapsamı gideriminden sonra). `GOCACHE=/tmp/mindrail-go-build make
 verify`; `go vet`, normal test, race test ve smoke aşamalarında yeşildi.
 `make tidy-check` de yeşildi. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile 921 olarak kaydedildi.
+
+## TASK-03 kabul ve kapı kaydı
+
+TASK-03 bağımsız değerlendirmesinde Reader **PASS**, Breaker **VERIFIED**
+sonucuna ulaştı. Bu kayıt yalnız AC-03.1…03.5'in parser/registry sınırını
+belgeler; bu turda tam `make verify` hâlâ çalıştığından onun nihai sonucunu
+iddia etmez.
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | Sabit registry `.py`, JS uzantıları, TS uzantıları ve `.tsx` için dört ayrı language entry taşır; extension eşlemesi ve deterministik tie-break testlidir. |
+| AC-03.2 | Karşılandı | Grammar'a özgü node ayrıntıları `internal/index/parser` içinde kalır; adapter sınırı `SyntaxAdapter` üzerinden parse, sembol ve reference olgularını normalize eder. |
+| AC-03.3 | Karşılandı | Dil başına gömülü query dosyaları registry kurulurken derlenir; geçersiz query kullanıcı komutuna değil teste düşer. |
+| AC-03.4 | Karşılandı | Breaker'ın bağımsız native 1.000-cycle/error ve 100×16 eşzamanlı close probeleri kaynak yaşam döngüsünü doğruladı. |
+| AC-03.5 | Karşılandı | Geçerli UTF-8 ancak sözdizimsel bozuk girdi partial tree ile birlikte parse error olarak raporlanır; panic veya sessiz kesme yoktur. |
+
+Mutasyon örnekleri: partial parse error'unun bastırılması ilgili fixture'ı
+kırmızıya döndürdü; `QueryCursor.Close` çağrısının çıkarılması native leak
+guard'ını kırmızıya döndürdü. Her mutant geri alındı.
+
+### TASK-05 için kaydedilen önkoşullar
+
+Bunlar TASK-03 blocker değildir; extraction/fingerprint işi başlamadan önce
+TASK-05'in açıkça ele alacağı davranışlardır:
+
+- Python method'ları yanlış etiketlenmemeli.
+- TypeScript overload signature'ları tek sembole indirgenmemeli.
+- JavaScript generator ve arrow declaration'ları atlanmamalı.
+
+TASK-03 kapısının tamamlanan genel doğrulaması:
+`GOCACHE=/tmp/mindrail-go-build make verify` exit 0 ile `go vet`, normal,
+race ve smoke aşamalarını geçti; `make tidy-check` exit 0 verdi.
+`go test -list '.*' ./... | grep -c '^Test'` test sayısını 931 olarak
+raporladı. `git diff --check` temizdi.
+
+## TASK-03 — parser registry and native lifecycle (implementation evidence)
+
+Scope is `internal/index/parser/**`, its embedded queries, and Go dependency
+metadata. TASK-04 caching and TASK-05 extraction/fingerprints are not claimed.
+The normalized `Symbol`, `Reference` and `Range` values own their data and are
+path-independent; `SyntaxSnapshot` is a separate native-tree owner with an
+explicit, idempotent `Close`. The interface follows tech-stack §29, including
+`context.Context`. `ParseSchemaVersion = 1` follows D-85.
+
+### Official dependency evidence
+
+The read-the-damn-docs skill was applied. Before adding imports, the official
+Go module registry was queried with `go list -m -json <module>@latest` for all
+four modules, and the pinned upstream source was downloaded and inspected:
+
+| Module | Pinned/latest registry version | Grammar ABI |
+|---|---|---|
+| `github.com/tree-sitter/go-tree-sitter` | `v0.25.0` | runtime accepts 13–15 |
+| `github.com/tree-sitter/tree-sitter-python` | `v0.25.0` | 15 |
+| `github.com/tree-sitter/tree-sitter-javascript` | `v0.25.0` | 15 |
+| `github.com/tree-sitter/tree-sitter-typescript` | `v0.23.2` | TypeScript 14; TSX 14 |
+
+References: [official binding README](https://github.com/tree-sitter/go-tree-sitter),
+[pinned API](https://pkg.go.dev/github.com/tree-sitter/go-tree-sitter@v0.25.0),
+[parser implementation](https://github.com/tree-sitter/go-tree-sitter/blob/v0.25.0/parser.go),
+[allocator implementation](https://github.com/tree-sitter/go-tree-sitter/blob/v0.25.0/allocator.go),
+[TypeScript/TSX Go bindings](https://github.com/tree-sitter/tree-sitter-typescript/tree/v0.23.2/bindings/go).
+Module release numbers need not match: grammar ABI compatibility is what
+`SetLanguage` checks, and the default test checks all four ABIs and compiles
+every shipped query against its actual grammar. TSX calls `LanguageTSX`,
+separately from TypeScript's `LanguageTypescript`.
+
+Upstream v0.25.0 `ParseWithOptions` saves a non-nil options payload without
+releasing its pointer handle. This implementation uses basic `Parse` (nil
+options), whose source frees input callback C strings and its input handle.
+Context cancellation is checked before validation/allocation and after the
+non-preemptive parse, disposing any completed tree on cancellation. This
+choice matches §48 and avoids inheriting that upstream callback leak.
+
+The binding and grammars require CGO and a native C compiler. The current
+environment reports `CGO_ENABLED=1`, `CC=gcc`. This work makes no claim of
+CGO-disabled or cross-platform release support; tech-stack §26 still requires
+native platform CI. Extra grammar checksums added by `go mod tidy` belong to
+upstream module tests, not extra built-in language registrations.
+
+### AC evidence and RED/GREEN
+
+- AC-03.1: the exact four-entry ordered table, all eight extensions, unknown
+  extensions, defensive metadata copying and first-match conflict are tested.
+- AC-03.2: all adapters satisfy `SyntaxAdapter`; real declarations/calls are
+  extracted in four languages and TSX's fixture contains JSX. Grammar node
+  names remain inside the parser package. No native nodes are exported.
+- AC-03.3: eight embedded `symbols.scm`/`references.scm` files compile in the
+  default test suite. Injected missing and malformed query files also verify
+  constructor failure cleanup, including earlier successfully built queries.
+- AC-03.4: 1,000 parse/symbol/reference/dispose cycles **per language** run in
+  the default suite. The official `SetAllocator` callbacks forward to libc and
+  observe actual live allocation pointers and requested bytes. After warmup,
+  every language remained at **91 blocks / 7,978 bytes**, the held registry
+  queries; registry disposal returned to **0 blocks / 0 bytes**. The helper is
+  imported only by tests, the tests are serial, and deferred allocator restore
+  runs after deferred native disposal. No Go finalizer, heap-size threshold,
+  process RSS threshold or garbage collection is needed. No TreeCursor or
+  LookaheadIterator is allocated by the implementation; Parser, Tree, Query
+  and QueryCursor allocations all have explicit Close ownership.
+- AC-03.5: valid UTF-8 broken fixtures return both a partial snapshot and
+  `ErrSyntax`, and intact declarations before the malformed text remain usable.
+
+The first test run was RED with undefined Registry/SourceFile APIs before
+production source existed. A second RED preceded the native allocator helper.
+The focused normal and race suites are GREEN; statement coverage is 96.5%.
+
+### Deliberate guard mutations (all restored)
+
+Each named mutation ran the focused default test and failed as intended:
+
+| Mutation | Observed failure |
+|---|---|
+| Suppress partial parse error | broken-source tests receive nil error in all four languages |
+| Disable UTF-8 validation | invalid bytes produce a partial parse instead of `ErrInvalidUTF8` |
+| Disable entry cancellation | canceled invalid input returns UTF-8 error instead of cancellation |
+| Disable post-parse cancellation | canceled-after-entry context returns success |
+| Omit canceled tree cleanup | 16 native blocks / 1,360 bytes remain |
+| Remove source copy | extracted name becomes `xxxxx` after caller edits input |
+| Remove foreign snapshot check | wrong-language adapter accepts snapshot |
+| Remove nil snapshot check | nil-dereference failure in the focused test |
+| Remove closed snapshot check | nil native-tree access failure in the focused test |
+| Disable closed parser/query guards | closed adapter returns success or wrong error |
+| Omit Parser.Close | 1,000 Python cycles add 21,000 native blocks |
+| Omit Tree.Close | 1,000 Python cycles add 16,000 native blocks |
+| Omit QueryCursor.Close | 1,000 Python cycles add 13,000 native blocks |
+| Omit symbol Query.Close | registry disposal retains 47 blocks / 4,282 bytes |
+| Omit query read/compile failure cleanup | failed constructor retains 80 blocks / 7,054 bytes |
+| Ship nonexistent query node | embedded-query compilation test fails before user use |
+| Substitute TypeScript grammar for TSX | JSX fixture produces a syntax error |
+| Reverse extension resolution order | conflict test selects JavaScript instead of Python |
+
+The entry-cancellation mutant initially survived because the post-parse check
+still returned cancellation. The test was strengthened to assert cancellation
+precedence over invalid UTF-8, and the same mutant then failed. The mutation
+was restored and the full focused suite passed again.
+
+Final implementation checks: `GOCACHE=/tmp/mindrail-go-build make check build`,
+`go test -race ./internal/index/parser/...`, `make tidy-check`, and
+`git diff --check` all passed. `graphify update .` completed its AST-only
+refresh (it reported the pre-existing optional SQL parser absence). This
+entry records implementation evidence only; subsequent TASK-03 Reader/Breaker
+acceptance is recorded above. No TASK-03 commit was created by the
+implementation worker.
