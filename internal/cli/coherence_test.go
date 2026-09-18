@@ -689,8 +689,8 @@ func TestHealthyRepositoryIsUntouchedByRemedyCoherence(t *testing.T) {
 	var report status.Report
 	decodeData(t, got.stdout, &report)
 
-	if report.Readiness != status.ReadinessReady {
-		t.Fatalf("readiness = %q, want %q on a healthy repository", report.Readiness, status.ReadinessReady)
+	if report.Readiness != status.ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q while a healthy repository's syntax is at INVENTORY", report.Readiness, status.ReadinessPartialReady)
 	}
 	for name, component := range report.Components {
 		if component.State == doctor.StateError || component.State == doctor.StateUnavailable {

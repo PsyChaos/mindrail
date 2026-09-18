@@ -151,8 +151,8 @@ func TestStatusJSONContract(t *testing.T) {
 	if !report.Readiness.Valid() {
 		t.Errorf("readiness %q is outside the four-value enum", report.Readiness)
 	}
-	if report.Readiness != status.ReadinessReady {
-		t.Errorf("readiness = %q, want READY on a freshly initialized repository", report.Readiness)
+	if report.Readiness != status.ReadinessPartialReady {
+		t.Errorf("readiness = %q, want PARTIAL_READY while syntax is at INVENTORY", report.Readiness)
 	}
 
 	wantComponents := status.Components()

@@ -10,6 +10,7 @@ data.components.runtime_db.state
 data.components.runtime_db.summary
 data.components.semantic.state
 data.components.semantic.summary
+data.components.syntax.phase
 data.components.syntax.state
 data.components.syntax.summary
 data.coordination.last_checkpoint

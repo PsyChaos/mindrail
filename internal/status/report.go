@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -210,6 +211,7 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 		// a healthy install must not sit at PARTIAL_READY forever.
 		components[name] = Component{State: doctor.StateNotApplicable, Summary: summary}
 	}
+	applyInventoryComponents(components, s)
 
 	readiness, blocking, next := classify(components)
 
@@ -264,6 +266,36 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 		},
 		Coordination: coordinationInfo(s),
 		DurationMS:   elapsed.Milliseconds(),
+	}
+}
+
+// applyInventoryComponents projects bootstrap's persisted inventory reading
+// into readiness. Build deliberately consumes only Subject fields: status
+// never walks the repository, so it cannot race a changing worktree or turn a
+// report into filesystem work.
+func applyInventoryComponents(components map[ComponentName]Component, s doctor.Subject) {
+	switch {
+	case s.InventoryErr != nil:
+		components[ComponentInventory] = Component{
+			State:   doctor.StateDegraded,
+			Summary: "Project unit inventory could not be read.",
+		}
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateDegraded,
+			Phase:   "INVENTORY",
+			Summary: "Syntax index is waiting for a readable inventory.",
+		}
+	case s.InventoryObserved:
+		units := len(s.Inventory)
+		components[ComponentInventory] = Component{
+			State:   doctor.StateOK,
+			Summary: fmt.Sprintf("%d project units discovered", units),
+		}
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "INVENTORY",
+			Summary: "Syntax index is at INVENTORY; no files have been indexed yet.",
+		}
 	}
 }
 
@@ -462,6 +494,11 @@ func classify(components map[ComponentName]Component) (Readiness, ComponentName,
 	for _, name := range componentOrder {
 		if component := components[name]; component.State == doctor.StateDegraded {
 			return ReadinessDegraded, "", component.NextAction
+		}
+	}
+	for _, name := range []ComponentName{ComponentInventory, ComponentSyntax} {
+		if phase := components[name].Phase; phase != "" && phase != "READY" {
+			return ReadinessPartialReady, "", nil
 		}
 	}
 	return ReadinessReady, "", nil

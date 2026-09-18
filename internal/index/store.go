@@ -147,6 +147,117 @@ func (s *Store) UpsertUnit(ctx context.Context, path string, kind UnitKind) (Pro
 	return unit, nil
 }
 
+// ListUnits returns the ProjectUnits rooted in root, in deterministic path
+// order. The runtime database belongs to a Git common directory, so several
+// worktrees share it; a status read must never report a sibling worktree's
+// inventory. root is supplied canonically by bootstrap/inventory and this
+// method remains filesystem-free.
+func (s *Store) ListUnits(ctx context.Context, root string) ([]ProjectUnit, error) {
+	if err := validUnitRoot(root); err != nil {
+		return nil, err
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	foreignRoots, err := registeredForeignRoots(ctx, s.db, root)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	where, args := pathInRootSQL("path", root)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, path, kind, discovered_at FROM project_units WHERE `+where+` ORDER BY path`, args...)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+
+	var units []ProjectUnit
+	for rows.Next() {
+		var unit ProjectUnit
+		var discoveredAt string
+		if err := rows.Scan(&unit.ID, &unit.Path, &unit.Kind, &discoveredAt); err != nil {
+			return nil, corruptState(err)
+		}
+		if containedByForeignWorktree(unit.Path, root, foreignRoots) {
+			continue
+		}
+		parsed, err := app.ParseTime(discoveredAt)
+		if err != nil {
+			return nil, corruptState(err)
+		}
+		unit.DiscoveredAt = parsed
+		units = append(units, unit)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return units, nil
+}
+
+// ReconcileUnits removes units that a complete inventory scan no longer found
+// below root. It removes only generated index facts, in one short transaction,
+// and excludes paths inside another registered worktree even when that
+// worktree is nested beneath root.
+func (s *Store) ReconcileUnits(ctx context.Context, root string, discoveredPaths []string) error {
+	if err := validUnitRoot(root); err != nil {
+		return err
+	}
+	discovered := make(map[string]struct{}, len(discoveredPaths))
+	for _, path := range discoveredPaths {
+		if !isCleanAbsolutePath(path) || !pathInRoot(root, path) {
+			return invalidInput("discovered project unit path is outside its inventory root")
+		}
+		discovered[path] = struct{}{}
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return err
+	}
+
+	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
+		foreignRoots, err := registeredForeignRoots(ctx, tx, root)
+		if err != nil {
+			return err
+		}
+		where, args := pathInRootSQL("path", root)
+		rows, err := tx.QueryContext(ctx, `SELECT id, path FROM project_units WHERE `+where+` ORDER BY path`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		var stale []string
+		for rows.Next() {
+			var id, path string
+			if err := rows.Scan(&id, &path); err != nil {
+				return err
+			}
+			if _, found := discovered[path]; found || containedByForeignWorktree(path, root, foreignRoots) {
+				continue
+			}
+			stale = append(stale, id)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, unitID := range stale {
+			for _, table := range []string{"symbol_references", "symbol_imports", "symbols", "file_index_state", "project_units"} {
+				column := "unit_id"
+				if table == "project_units" {
+					column = "id"
+				}
+				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE "+column+" = ?", unitID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return writeFailure(ctx, s.db, "project unit reconciliation", err)
+	}
+	return nil
+}
+
 // UpsertFileState registers a pending or unsupported file. Rediscovery with no
 // new content hash preserves an already indexed or failed file; a changed hash
 // makes it pending again without claiming the new bytes have been parsed.
@@ -383,6 +494,75 @@ func fileBelongsToUnit(ctx context.Context, tx *sql.Tx, unitID, path string) err
 		return invalidInput("file path is outside its project unit")
 	}
 	return nil
+}
+
+func validUnitRoot(root string) error {
+	if !isCleanAbsolutePath(root) {
+		return invalidInput("project unit root must be clean and absolute")
+	}
+	return nil
+}
+
+func isCleanAbsolutePath(path string) bool {
+	return filepath.IsAbs(path) && filepath.Clean(path) == path
+}
+
+func pathInRoot(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !filepath.IsAbs(rel) && (rel == "." || len(rel) < 3 || rel[:3] != ".."+string(filepath.Separator))
+}
+
+// pathInRootSQL mirrors pathInRoot without relying on SQL LIKE: % and _ are
+// legal path bytes, so a LIKE predicate would let a root containing either
+// character leak into a sibling worktree. The extra separator check makes the
+// /repo/web versus /repo/website boundary explicit.
+func pathInRootSQL(column, root string) (string, []any) {
+	if isFilesystemRoot(root) {
+		// A volume root already ends in its separator: adding the normal
+		// child-boundary check would look for a second slash (`//child`) and
+		// exclude every descendant. Its prefix is the boundary.
+		return "substr(" + column + ", 1, length(?)) = ?", []any{root, root}
+	}
+	return "(" + column + " = ? OR (substr(" + column + ", 1, length(?)) = ? AND substr(" + column + ", length(?) + 1, 1) = ?))", []any{root, root, root, root, string(filepath.Separator)}
+}
+
+func isFilesystemRoot(path string) bool {
+	return path == filepath.VolumeName(path)+string(filepath.Separator)
+}
+
+type queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func registeredForeignRoots(ctx context.Context, db queryer, root string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT root_path FROM workspaces WHERE root_path <> ?`, root)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var roots []string
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			return nil, err
+		}
+		if isCleanAbsolutePath(candidate) {
+			roots = append(roots, candidate)
+		}
+	}
+	return roots, rows.Err()
+}
+
+func containedByForeignWorktree(path, currentRoot string, roots []string) bool {
+	for _, root := range roots {
+		// A parent worktree contains a nested checkout's path, but it does not
+		// own that nested checkout's inventory. Conversely, a worktree nested
+		// beneath the current root owns its own paths and must be excluded.
+		if pathInRoot(root, path) && !pathInRoot(root, currentRoot) {
+			return true
+		}
+	}
+	return false
 }
 
 type fileScanner interface{ Scan(...any) error }

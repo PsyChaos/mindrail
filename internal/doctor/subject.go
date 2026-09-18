@@ -5,6 +5,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/migration"
@@ -96,6 +97,14 @@ type Subject struct {
 	Coordination         coordination.Summary
 	CoordinationObserved bool
 	CoordinationErr      error
+
+	// Inventory is the persisted ProjectUnit count read at startup step 8.
+	// It stays separate from doctor checks: discovery is non-blocking, but
+	// status must distinguish a completed zero-unit inventory from a step that
+	// did not run or could not read its persisted facts.
+	Inventory         []index.ProjectUnit
+	InventoryObserved bool
+	InventoryErr      error
 
 	// Probes holds what doctor established for itself; see Probe.
 	Probes Probes

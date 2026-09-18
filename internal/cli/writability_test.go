@@ -268,7 +268,8 @@ func carryOutWriteRemedy(t *testing.T, paths []string) {
 }
 
 // assertRepositoryWorksAgain is the proof the loop is closed: `mindrail init`
-// succeeds, `mindrail doctor` is clean and `mindrail status` is READY.
+// succeeds, `mindrail doctor` is clean and `mindrail status` is PARTIAL_READY
+// until a later scheduler task parses the cold inventory.
 func assertRepositoryWorksAgain(t *testing.T, repo string) {
 	t.Helper()
 
@@ -291,8 +292,8 @@ func assertRepositoryWorksAgain(t *testing.T, repo string) {
 
 	var readiness status.Report
 	decodeData(t, state.stdout, &readiness)
-	if readiness.Readiness != status.ReadinessReady {
-		t.Errorf("status readiness = %q after the remedy, want %q", readiness.Readiness, status.ReadinessReady)
+	if readiness.Readiness != status.ReadinessPartialReady {
+		t.Errorf("status readiness = %q after the remedy, want %q", readiness.Readiness, status.ReadinessPartialReady)
 	}
 }
 

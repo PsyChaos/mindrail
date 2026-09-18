@@ -22,6 +22,7 @@ data.status.components.runtime_db.state
 data.status.components.runtime_db.summary
 data.status.components.semantic.state
 data.status.components.semantic.summary
+data.status.components.syntax.phase
 data.status.components.syntax.state
 data.status.components.syntax.summary
 data.status.coordination.last_checkpoint

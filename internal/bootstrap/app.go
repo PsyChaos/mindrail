@@ -37,6 +37,8 @@ import (
 	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
+	"github.com/PsyChaos/mindrail/internal/index/inventory"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
 	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
@@ -235,11 +237,10 @@ func (a *App) start(ctx context.Context) error {
 		}
 	}
 
-	// Index state belongs to MR-005. The step is still announced because §87's
-	// sequence is the contract every later milestone slots into, and a stage
-	// that silently disappeared while it had no work would have to be argued
-	// back in later.
-	a.record(StepLoadIndexState)
+	// Index state belongs to MR-005. Discovery is non-blocking work at this
+	// existing §87 step: a malformed or unreadable source tree cannot hide the
+	// repository/knowledge/runtime findings the earlier steps already made.
+	a.loadIndexState(ctx)
 
 	// Managers are constructed on first use, not here (see lazy.go). The step
 	// marks the point in the sequence where that becomes legal.
@@ -950,6 +951,50 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 func (a *App) schemaHasWorkspaceTable() bool {
 	for _, applied := range a.subject.Migrations {
 		if applied.Version >= workspace.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
+}
+
+// loadIndexState runs the first inventory pass when startup may write and reads
+// the persisted result for a read-only status. It intentionally never changes
+// the §87 step list: MR-005 fills the load_index_state neighbourhood that has
+// been named since MR-001 rather than inserting a new blocking stage.
+func (a *App) loadIndexState(ctx context.Context) {
+	a.record(StepLoadIndexState)
+	if a.db == nil || !a.schemaHasIndexTables() {
+		return
+	}
+
+	store := index.NewStore(a.db.DB, a.clock)
+	root, rootErr := inventory.CanonicalRoot(a.subject.Repo.WorktreeRoot)
+	if rootErr != nil {
+		a.subject.InventoryErr = rootErr
+		a.logger.Debug("index inventory root unavailable", slog.String("error", rootErr.Error()))
+		return
+	}
+	var units []index.ProjectUnit
+	var err error
+	if a.opts.Mode == ModeReadOnly {
+		units, err = store.ListUnits(ctx, root)
+	} else {
+		var result inventory.Result
+		result, err = inventory.Discover(ctx, root, store)
+		units = result.Units
+	}
+	if err != nil {
+		a.subject.InventoryErr = err
+		a.logger.Debug("index inventory unavailable", slog.String("error", err.Error()))
+		return
+	}
+	a.subject.Inventory = units
+	a.subject.InventoryObserved = true
+}
+
+func (a *App) schemaHasIndexTables() bool {
+	for _, applied := range a.subject.Migrations {
+		if applied.Version >= index.TableSchemaVersion {
 			return true
 		}
 	}

@@ -79,6 +79,24 @@ func TestBuildReadyOnHealthySubject(t *testing.T) {
 	}
 }
 
+func TestBuildReportsInventoryPhaseWithoutRescanning(t *testing.T) {
+	subject := healthySubject()
+	subject.InventoryObserved = true
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q when syntax has only reached inventory", report.Readiness, ReadinessPartialReady)
+	}
+	inventory := report.Components[ComponentInventory]
+	if inventory.State != doctor.StateOK || inventory.Summary != "0 project units discovered" {
+		t.Errorf("inventory component = %+v, want observed zero-unit discovery", inventory)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateOK || syntax.Phase != "INVENTORY" {
+		t.Errorf("syntax component = %+v, want the explicit INVENTORY phase", syntax)
+	}
+}
+
 // TestBuildBlockedOnUnopenableDB is acceptance criterion 4 for the runtime
 // store: a database that cannot be opened has to name itself as the blocker and
 // say what to do, not merely report an unhappy overall state.

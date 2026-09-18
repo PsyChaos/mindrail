@@ -15,10 +15,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/status"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
@@ -70,6 +72,145 @@ func TestStartupStepOrderMatchesSpec(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStartupDiscoversInventoryAtTheExistingIndexStateStep(t *testing.T) {
+	repo := newGitRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "pkg", "pyproject.toml"), []byte("[project]\nname = 'pkg'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &stepRecorder{}
+	application := bootstrap.New(options(t, repo, bootstrap.ModeInit, func(o *bootstrap.Options) {
+		o.Recorder = recorder
+	}))
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+	if err := application.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	subject := application.Subject()
+	if !subject.InventoryObserved || len(subject.Inventory) != 1 {
+		t.Fatalf("startup inventory = observed:%t units:%d, want observed one unit", subject.InventoryObserved, len(subject.Inventory))
+	}
+	if got := recorder.steps(); len(got) < 8 || got[7] != bootstrap.StepLoadIndexState {
+		t.Fatalf("startup steps = %v, want discovery at %q", got, bootstrap.StepLoadIndexState)
+	}
+}
+
+func TestReadOnlyStartupReportsPersistedInventoryWithoutWalkingSource(t *testing.T) {
+	repo := newGitRepo(t)
+	pkg := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initialized := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	if err := initialized.Start(t.Context()); err != nil {
+		t.Fatalf("init startup: %v", err)
+	}
+	if err := initialized.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close init database: %v", err)
+	}
+	if err := os.RemoveAll(pkg); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read-only startup: %v", err)
+	}
+	subject := reader.Subject()
+	if !subject.InventoryObserved || len(subject.Inventory) != 1 || subject.Inventory[0].Kind != "javascript" {
+		t.Fatalf("read-only inventory = %+v, observed=%t; want persisted JavaScript unit", subject.Inventory, subject.InventoryObserved)
+	}
+	report := status.Build(subject, time.Millisecond)
+	if got := report.Components[status.ComponentInventory].Summary; got != "1 project units discovered" {
+		t.Errorf("inventory summary = %q, want persisted unit count", got)
+	}
+	if got := report.Components[status.ComponentSyntax].Phase; got != "INVENTORY" {
+		t.Errorf("syntax phase = %q, want INVENTORY", got)
+	}
+}
+
+func TestLinkedWorktreeStatusDoesNotReportAnotherWorktreesInventory(t *testing.T) {
+	repo := newGitRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=Mindrail", "-c", "user.email=test@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture").CombinedOutput(); err != nil {
+		t.Fatalf("commit fixture: %v: %s", err, out)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "-b", "inventory-linked", linked).CombinedOutput(); err != nil {
+		t.Fatalf("add linked worktree: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{repo, linked} {
+		initialized := bootstrap.New(options(t, root, bootstrap.ModeInit, nil))
+		if err := initialized.Start(t.Context()); err != nil {
+			t.Fatalf("init %s: %v", root, err)
+		}
+		if err := initialized.Shutdown(t.Context()); err != nil {
+			t.Fatalf("close init %s: %v", root, err)
+		}
+	}
+
+	reader := bootstrap.New(options(t, linked, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read linked worktree: %v", err)
+	}
+	if got := reader.Subject().Inventory; len(got) != 0 {
+		t.Fatalf("linked worktree inventory includes foreign unit: %+v", got)
+	}
+}
+
+func TestNestedRegisteredWorktreeIsExcludedFromParentInventoryAndPruning(t *testing.T) {
+	repo := newGitRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=Mindrail", "-c", "user.email=test@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture").CombinedOutput(); err != nil {
+		t.Fatalf("commit fixture: %v: %s", err, out)
+	}
+	nested := filepath.Join(repo, "nested")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "-b", "inventory-nested", nested).CombinedOutput(); err != nil {
+		t.Skipf("nested linked worktree unavailable: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nestedInit := bootstrap.New(options(t, nested, bootstrap.ModeInit, nil))
+	if err := nestedInit.Start(t.Context()); err != nil {
+		t.Fatalf("init nested worktree: %v", err)
+	}
+	if err := nestedInit.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close nested init: %v", err)
+	}
+
+	parentInit := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	if err := parentInit.Start(t.Context()); err != nil {
+		t.Fatalf("init parent worktree: %v", err)
+	}
+	if got := parentInit.Subject().Inventory; len(got) != 0 {
+		t.Fatalf("parent inventory includes nested worktree unit: %+v", got)
+	}
+	if err := parentInit.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close parent init: %v", err)
+	}
+
+	nestedReader := bootstrap.New(options(t, nested, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = nestedReader.Shutdown(context.Background()) })
+	if err := nestedReader.Start(t.Context()); err != nil {
+		t.Fatalf("read nested worktree: %v", err)
+	}
+	if got := nestedReader.Subject().Inventory; len(got) != 1 || got[0].Path != nested {
+		t.Fatalf("nested inventory was pruned or hidden: %+v", got)
 	}
 }
 

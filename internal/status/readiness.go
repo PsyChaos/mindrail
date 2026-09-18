@@ -107,10 +107,14 @@ func Components() []ComponentName {
 // five values already describe exactly this: a component that is fine, reduced,
 // broken, unreachable, or not used by this project.
 type Component struct {
-	State      doctor.State `json:"state"`
-	Summary    string       `json:"summary"`
-	Code       app.Code     `json:"code,omitempty"`
-	NextAction []string     `json:"next_action,omitempty"`
+	State doctor.State `json:"state"`
+	// Phase is the index lifecycle stage when this is an index component.
+	// Doctor.State still describes whether that component can answer; phase
+	// carries its progress without inventing a sixth doctor health state.
+	Phase      string   `json:"phase,omitempty"`
+	Summary    string   `json:"summary"`
+	Code       app.Code `json:"code,omitempty"`
+	NextAction []string `json:"next_action,omitempty"`
 }
 
 // blocks reports whether this component's state stops work.

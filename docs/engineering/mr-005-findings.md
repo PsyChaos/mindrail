@@ -1,8 +1,8 @@
 # MR-005 — Bulgular ve kapı kaydı
 
-Bu kayıt, dondurulmuş [gereksinimlerin](mr-005-requirements.md) TASK-01
-kapısı içindir. TASK-02 yazılmadan önceki Reader/Breaker değerlendirmesini ve
-bu turdaki kanıtları korur; gereksinim veya tasarımın yerine geçmez.
+Bu kayıt, dondurulmuş [gereksinimlerin](mr-005-requirements.md) TASK-01 ve
+TASK-02 kapılarını kaydeder. Reader/Breaker değerlendirmelerini ve bu turdaki
+kanıtları korur; gereksinim veya tasarımın yerine geçmez.
 
 ## Başlangıç ve çalışma ağacı
 
@@ -10,9 +10,11 @@ bu turdaki kanıtları korur; gereksinim veya tasarımın yerine geçmez.
   kaydedilen `make verify` ve `make tidy-check` yeşildi.
 - Bu turdaki ilk WIP migration/store hali kırmızıydı; kapı, bu kırmızıyı
   gizlemeden Reader ve Breaker geri bildirimleriyle tamamlandı.
-- Çalışma ağacı hâlâ commitlenmemiştir. `.claude/**` ve `graphify-out/**`
-  altındaki kirli dosyalar kullanıcıya ait/ilgisiz kabul edildi; TASK-01
-  değerlendirmesine veya bu kayda taşınmadı.
+- TASK-01, `4548f38` commit'iyle kapatıldı. Son `make verify` ve
+  `make tidy-check` yeşildi; `go test -list '.*' ./... | grep -c '^Test'`
+  sonucu 906 idi. `.claude/**` ve `graphify-out/**` altındaki kirli dosyalar
+  kullanıcıya ait/ilgisiz kabul edildi; TASK-01 değerlendirmesine veya bu
+  kayda taşınmadı.
 
 ## TASK-01 kabul kanıtı
 
@@ -79,3 +81,117 @@ Geçici artefaktlar bu çalışma ortamında saklanmıştır:
 
 Bu dosyalar `/tmp` altında olduğundan kalıcı proje kaydı değildir; bu özet
 onların sonuçlarını, ölçüm uydurmadan, TASK-01 için kalıcılaştırır.
+
+## TASK-02 kabul kanıtı
+
+Bu bölüm yalnız TASK-02 uygulama/validation kanıtıdır; bağımsız Reader/Breaker
+kapısının sonucunu iddia etmez.
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | `internal/index/inventory.Discover`, `pyproject.toml` ve `package.json` marker'larını, aynı dizindeki `tsconfig.json` ile TypeScript'e rafine eder; `TestDiscoverFindsDeterministicPythonTypeScriptAndJavaScriptUnits` üç birimi path sırasıyla doğrular. `Owner` sınır-güvenli `filepath.Rel` ile en uzun kökü seçer; nested-root testi bunu doğrular. |
+| AC-02.2 | Karşılandı | Sıfır birim kalıcı inventory sonucu `inventory: OK, "0 project units discovered"`, `syntax.phase: "INVENTORY"` ve genel `PARTIAL_READY` üretir. Bu, boş envanter için READY iddiasını engeller; `TestBuildReportsInventoryPhaseWithoutRescanning` kanıtıdır. |
+| AC-02.3 | Karşılandı | `Discover` canonical repository root altında `WalkDir` ile yalnızca okur; symlink dizinlerini izlemez ve `.git`, `.mindrail`, `node_modules` altını atlar. `TestDiscoverIsIdempotentAndDoesNotTouchTheRepository`, tekrarlı pass'te aynı ID/zamanı, tek unit satırını, sıfır `file_index_state` satırını ve değişmeyen marker mtime'ını doğrular; ayrı symlink-escape testi dış kökü reddeder. |
+| AC-02.4 | Karşılandı | Bootstrap mevcut `load_index_state` (§87 step 8) içinde non-blocking discovery yapar; step listesine ek bloklayıcı adım eklenmemiştir. Read-only startup yalnız `Store.ListUnits` ile persisted sonuçları okur. `TestStartupDiscoversInventoryAtTheExistingIndexStateStep` ve marker silindikten sonraki `TestReadOnlyStartupReportsPersistedInventoryWithoutWalkingSource` status'un filesystem rescan yapmadığını doğrular. |
+
+### TASK-02 karar kaydı — boş envanter lifecycle uyuşmazlığı
+
+Dondurulmuş tasarım §9, sıfır unit için `UNINITIALIZED` der; dondurulmuş
+gereksinim AC-02.2 ise açıkça `INVENTORY` ve "no READY" ister. TASK-02,
+ayrıntı kabul kriterini izler: `syntax.phase = INVENTORY` ve genel
+`PARTIAL_READY`. Tasarım dosyası dondurulmuş olduğu için değiştirilmedi; bu
+kayıt uyuşmazlığı görünür kılar.
+
+### TASK-02 mutasyon ve doğrulama
+
+- Longest-root guard'ın gerçek olduğunu göstermek için `Owner` içindeki
+  `len(unit.Path) > len(owner.Path)` karşılaştırması geçici olarak `<` yapıldı.
+  `GOCACHE=/tmp/mindrail-go-build go test ./internal/index/inventory -run
+  '^TestOwnerUsesTheLongestContainingUnitRoot$' -count=1` beklenen kırmızıyı
+  verdi: nested path `UNT-child` yerine `UNT-parent` seçildi. Doğru guard geri
+  yüklendi.
+- Geri yükleme sonrası focused doğrulama:
+  `GOCACHE=/tmp/mindrail-go-build go test ./internal/index/inventory
+  ./internal/index ./internal/status ./internal/bootstrap` yeşildi.
+- Tam doğrulama: `GOCACHE=/tmp/mindrail-go-build go test ./...` yeşildi.
+- Kod grafiği değişiklikten sonra `graphify update .` ile yenilendi. Bu
+  çalışma ağacında önceden var olan `graphify-out/**` ve
+  `internal/cli/testdata/doctor_human.golden` değişiklikleri TASK-02 kanıtı
+  değildir; sonuncusu TASK-01'in schema-v4 golden farkıdır ve bu turda
+  değiştirilmedi.
+
+## TASK-02 Breaker giderimi
+
+Breaker'ın doğruladığı dört eksik aşağıdaki şekilde giderildi; bu bölüm önceki
+TASK-02 kanıtını geçersiz kılmaz, remediation delta'sını kaydeder.
+
+- **Worktree kapsamı:** `Store.ListUnits(ctx, root)` artık canonical ve temiz
+  mutlak root ile sınırlandırılır. SQL predicate'i `LIKE` kullanmaz; `%`/`_`
+  path byte'ları ile `/web`–`/website` prefix çakışmasını separator kontrolüyle
+  kapatır. Bootstrap her iki read/write yolunda `inventory.CanonicalRoot`u
+  geçirir; Store filesystem erişimi yapmaz. Gerçek sibling linked-worktree ve
+  nested registered-worktree testleri, yabancı unit'in status'a sızmadığını
+  doğrular.
+- **Stale reconcile:** Tam `WalkDir` ve bütün upsert'ler başarılı olduktan
+  sonra `ReconcileUnits` tek SQLite transaction'ında stale root'un
+  `symbol_references → symbol_imports → symbols → file_index_state →
+  project_units` olgularını siler. Cancel, walk veya upsert hatasında bu çağrı
+  hiç yapılmaz. `workspaces.root_path` içindeki yabancı registered worktree
+  altı korunur; migration-4 schema gate'i bu MR-001 tablosunun zaten mevcut
+  olmasını garanti eder. Workspace satırları bu Store tarafından değiştirilmez.
+- **Context ve symlink:** Discovery girişte ve walk/upsert/reconcile sınırında
+  context'i denetler; pre-cancelled boş discovery `context.Canceled` döner.
+  File-symlink marker'ı kalıcı testle dışlanır (yalnız directory-symlink
+  davranışına güvenilmez).
+- **Rollback:** `BEFORE DELETE project_units` injected failure'ı, stale prune
+  transaction'ının hem unit hem file-state satırını koruduğunu doğrular.
+
+Giderim guard mutasyonları ve beklenen kırmızıları:
+
+1. Symlink predicate devre dışı bırakıldı →
+   `TestDiscoverDoesNotTreatASymlinkedMarkerFileAsInventory` symlinked
+   `pyproject.toml` için Python unit üreterek kırmızı oldu.
+2. Pre-cancel check devre dışı bırakıldı →
+   `TestDiscoverPrioritizesCanceledContextOverAConfigurationError` nil-store
+   hatası yerine `context.Canceled` beklerken kırmızı oldu.
+3. SQL separator predicate'i kaldırıldı →
+   `TestDiscoverReconcilesRemovedRootWithoutTouchingSiblingRoot` `/web`
+   reconcile'ının `/website` unit'ini de sildiğini göstererek kırmızı oldu.
+4. `file_index_state` delete adımı çıkarıldı → aynı reconcile testi FK
+   constraint hatasıyla kırmızı oldu.
+5. Registered-foreign-worktree filtresi devre dışı bırakıldı →
+   `TestNestedRegisteredWorktreeIsExcludedFromParentInventoryAndPruning`
+   nested unit'in prune edildiğini göstererek kırmızı oldu.
+
+Her mutant geri alındı. Giderim sonrası focused komut
+`GOCACHE=/tmp/mindrail-go-build go test ./internal/index/inventory
+./internal/index ./internal/bootstrap ./internal/status` yeşildi. Host'un
+30-saniyelik command penceresi `go test ./...` çıktısını CLI sonrası kesmeye
+başladığından tam package kümesi iki bounded çalışmada doğrulandı:
+`go test ./internal/cli` ve CLI dışındaki `go list ./...` package'larının
+eksiksiz explicit listesi; ikisi de yeşildi. `git diff --check` de yeşildi.
+
+### TASK-02 final delta — filesystem root kapsamı
+
+Delta Reader/Breaker'ın bulduğu root `"/"` hatası kapatıldı. Normal SQL
+predicate'i child separator'ını ayrıca aradığından `/` için `//` prefix'i
+üretiyor, bu da descendant unit'leri hem `ListUnits` hem `ReconcileUnits`
+tarafından görünmez kılıyordu. `pathInRootSQL`, filesystem/volume root için
+root'un zaten taşıdığı separator'ı boundary kabul eden ayrı predicate kullanır;
+normal `/web`–`/website` koruması değişmeden kalır.
+
+`TestStoreScopesAndReconcilesAtFilesystemRoot`, temp altında persist edilmiş
+unit'in `ListUnits(ctx, "/")` ile göründüğünü ve
+`ReconcileUnits(ctx, "/", nil)` ile silindiğini doğrular. Root branch'i
+geçici olarak devre dışı bırakıldığında aynı test beklenen kırmızıyı verdi
+(0 unit); guard geri yüklendi. Geri yükleme sonrası focused
+`go test ./internal/index/inventory ./internal/index ./internal/bootstrap
+./internal/status` ve `git diff --check` yeşildi.
+
+### TASK-02 final kapı
+
+Son bağımsız değerlendirme Reader **PASS**, Breaker **VERIFIED** sonucunu
+verdi (root kapsamı gideriminden sonra). `GOCACHE=/tmp/mindrail-go-build make
+verify`; `go vet`, normal test, race test ve smoke aşamalarında yeşildi.
+`make tidy-check` de yeşildi. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile 921 olarak kaydedildi.
