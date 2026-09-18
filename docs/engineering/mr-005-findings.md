@@ -339,3 +339,104 @@ refresh (it reported the pre-existing optional SQL parser absence). This
 entry records implementation evidence only; subsequent TASK-03 Reader/Breaker
 acceptance is recorded above. No TASK-03 commit was created by the
 implementation worker.
+
+## TASK-04 — content-addressed snapshot cache (implementation evidence)
+
+Scope is `internal/index/snapshot/**`. `Cache.New` consumes
+`filesystem.RuntimePaths.CacheDir`, so the existing common-dir and override
+rules determine its location. The disk DTO contains only path-independent
+`parser.Symbol`/`Reference` values and a syntax-error flag. Native Tree-sitter
+trees/nodes, file paths, unit IDs, SQLite IDs and durable facts are never
+serialized. TASK-05 must extend this DTO when imports/fingerprints exist and
+bump `parser.ParseSchemaVersion` when snapshot semantics change.
+
+| Criterion | TASK-04 result and evidence |
+|---|---|
+| AC-04.1 | Met at cache level. The filename hashes the JSON identity tuple (language, grammar version, `parser.ParseSchemaVersion`, SHA-256 content hash); the record repeats and verifies it. `TestIdenticalContentSharesOneValidatedSnapshot` reads two differently named files with equal bytes and observes one compute/entry. `TestEveryIdentityComponentSeparatesCacheEntries` checks language, grammar and content; the version test checks schema. |
+| AC-04.2 | Met. `TestRealLinkedWorktreesShareOneParseSnapshot` creates an actual Git repository and linked worktree, resolves each through `git.Adapter` and `filesystem.ResolveRuntimePaths`, and observes one parse across both cache instances. |
+| AC-04.3 | **Partial, not end-to-end met yet.** `TestCacheLossKeepsStoreFactsStableThroughBridgeFixture` parses real Python, writes through the real `index.Store`, then compares persisted symbol/reference facts after warm, deleted-cache and corrupt-cache runs; parse counts are 1/2/3. This is a test bridge, not the production `IndexFile` path: TASK-05 owns that path and must recheck full extracted facts (including imports/fingerprints) with the cache removed. Read/write-unavailable and tampered entries also recompute without changing returned facts. |
+| AC-04.4 | Met at cache level. `TestVersionBumpInvalidatesWithoutDatabaseMutation` increments the cache's internal version seam (simulating a future parser constant bump), observes a miss and second entry, and verifies unchanged bytes at the database path. The cache package imports no database driver/store and never opens the DB. TASK-05 should recheck against a real indexed database path. |
+
+The first focused run was compile-time RED on the missing cache API. A later
+runtime RED exposed that JSON `null` could decode as empty facts; canonical
+payload validation closed it. The final focused normal and race suites are
+GREEN at **84.7% statement coverage** after the FIFO delta below. `make check` (with
+`GOCACHE=/tmp/mindrail-go-build`) and `make tidy-check` passed. Cache
+read/corruption/write failures are
+misses; computation errors and cancellation are returned, never replaced with
+a cache error. Writes use an owner-only temporary file, sync/close, rename and
+deferred temp cleanup.
+
+### TASK-04 guard mutation ledger (all restored)
+
+Each listed mutation ran its focused test and failed for the intended behavior:
+
+| Guard class | Mutant RED |
+|---|---|
+| Common-dir placement | A per-worktree root made the linked-worktree test parse twice. |
+| Key identity | Omitting grammar collapsed four variants to three entries; fixing the schema version instead of using the version seam collapsed the bump test to one compute/entry. |
+| Input validation | Suppressing language/grammar validation computed with an empty language; suppressing the nil-computer check caused the expected nil-call panic. |
+| Cancellation | Suppressing the entry check returned identity error instead of cancellation; suppressing the post-compute check wrote an entry after cancellation. |
+| Cache read fallback | Treating an absent entry as a hit returned empty facts; suppressing the size cap accepted an oversized valid entry. |
+| Record integrity | Suppressing serialized-identity comparison accepted a mismatched schema; suppressing the digest returned tampered `omega` instead of `alpha`; the pre-fix `null` runtime RED proved canonical-shape validation. |
+| Fact validation | Suppressing cached-facts validation accepted an empty name; suppressing range bounds accepted an end byte beyond source; suppressing computed-facts validation wrote an invalid range. |
+| Compute errors | Suppressing propagation returned nil error for a partial failed computation. |
+| Write failure/cleanup | Turning an obstructed-directory return into a panic broke fallback; removing temp cleanup leaked `.snapshot-*` after a forced rename failure. |
+
+The fault-injection scope is bounded. `json.Marshal` of this concrete
+DTO/record cannot fail under its present field types (strings, unsigned
+integers, booleans and slices; no functions, channels, cyclic pointers or
+non-finite floats). Individual `CreateTemp`, `Write`, `Sync` and `Close`
+failures were not separately injected; their branches all return from the
+void best-effort writer, while blocked-directory and rename-failure tests
+exercise the distinct observable outcomes (facts still returned; no temp
+leak). A future filesystem abstraction or changed DTO types invalidates those
+specific exceptions and needs new guards/tests.
+
+No checkpoint commits were made by the implementation worker, as directed by
+the TASK-04 owner. This records implementation evidence, not an independent
+Reader/Breaker gate or a claim that TASK-05 is already complete.
+
+### TASK-04 Breaker delta — nonregular cache entries
+
+Breaker found a MEDIUM cache-read robustness gap: replacing the deterministic
+entry with a FIFO (directly or through a symlink) made `os.Open` block before
+the caller could recheck cancellation. The permanent
+`TestNonRegularCacheEntryDoesNotBlock` uses a bounded child process so this
+failure cannot hang the package run. Before the fix, the direct-FIFO case was
+RED after its four-second child timeout. `readEntry` now uses `os.Lstat` and
+requires a regular file before opening, rejecting both the FIFO and its
+symlink as cache misses. The direct and symlink cases are GREEN. Disabling
+that nonregular guard reproduced the four-second RED, and the guard was
+restored.
+
+`TestConcurrentSameKeyWritersLeaveOneReadableEntry` launched 16 same-key
+calls together; each returned the same facts, the final entry was readable,
+and no temporary files remained. This verifies concurrent-call outcome but
+does not force all 16 calls to overlap inside `writeEntry`; simultaneous write
+syscalls were not independently proven. The focused normal and race suites
+pass after the delta, with 84.7% statement coverage.
+
+The `Lstat`→`Open` sequence has a TOCTOU window: a concurrent actor could
+replace a checked regular file with a FIFO between those calls. This patch
+closes the deterministic corrupted-entry case, not that hostile concurrent
+swap. Eliminating the race would need a platform-specific nonblocking/open
+strategy and is outside this narrow delta; no stronger claim is made.
+
+### TASK-04 final gate
+
+The independent Reader gave a **scoped PASS**. The Breaker gave **VERIFIED**
+after the FIFO delta; the same independent reviewer performed that follow-up
+in a separate adversarial turn. The accepted delta includes the nonregular
+FIFO/symlink guard and the 16-call same-key concurrency test. The disclosed
+`Lstat`→`Open` TOCTOU limitation remains outside this narrow fix.
+
+The final `GOCACHE=/tmp/mindrail-go-build make verify` exited 0 across vet,
+normal tests, race tests and smoke tests. `make tidy-check` exited 0,
+`git diff --check` was clean, and `go test -list '.*' ./... | grep -c '^Test'`
+reported exactly **946** tests.
+
+This gate accepts TASK-04's cache scope only. **AC-04.3 remains partial**
+until TASK-05 exercises warm and deleted-cache equality through the production
+`IndexFile` path, including imports and fingerprints; no end-to-end indexing
+acceptance is claimed here.
