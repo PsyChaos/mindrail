@@ -187,6 +187,30 @@ const (
 	// requests, or changed a request under one, and either way the next
 	// action is a new id.
 	CodeOperationIDConflict Code = "OPERATION_ID_CONFLICT"
+
+	// CodeSyntaxLanguageUnsupported marks a file whose extension maps to no
+	// grammar this binary carries (decision D-88; the task list's MR-005
+	// scope is Python, TypeScript and JavaScript). It is its own code because
+	// the condition is permanent and the remedy is honesty: nothing clears
+	// it, the file is recorded out of scope rather than pending, and the next
+	// action is to leave it alone rather than to retry it.
+	CodeSyntaxLanguageUnsupported Code = "SYNTAX_LANGUAGE_UNSUPPORTED"
+
+	// CodeSyntaxParseFailed marks a file whose grammar this binary carries
+	// but whose parse produced a partial tree or an extraction error
+	// (spec-1.0 §108, decision D-81). It is its own code because the file's
+	// syntax is the thing to fix and nothing else is: the index continues
+	// around the file, which stays failed and pending, and the remedy names
+	// the file rather than the installation.
+	CodeSyntaxParseFailed Code = "SYNTAX_PARSE_FAILED"
+
+	// CodeIndexStateCorrupt marks an index state the binary cannot answer
+	// from — a ledger that holds version rows for tables that do not exist,
+	// or state rows whose content cannot be read back. It is its own code
+	// because the runtime database's index half, not the repository, is the
+	// thing that is wrong, and the remedy is to rebuild that half rather than
+	// to parse anything.
+	CodeIndexStateCorrupt Code = "INDEX_STATE_CORRUPT"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -227,6 +251,9 @@ var allCodes = sortedCodes([]Code{
 	CodeLeaseNotFound,
 	CodeStateRevisionConflict,
 	CodeOperationIDConflict,
+	CodeSyntaxLanguageUnsupported,
+	CodeSyntaxParseFailed,
+	CodeIndexStateCorrupt,
 })
 
 var codeSet = indexCodes(allCodes)

@@ -110,6 +110,12 @@ var exitForCode = map[app.Code]int{
 	// And a reused operation id (D-71): the request was well formed, and the
 	// refusal depends on what the operations table already holds.
 	app.CodeOperationIDConflict: app.ExitFailed,
+
+	// MR-005's three index failures: each is a request that cannot be
+	// fulfilled as made, not a transient database lock.
+	app.CodeSyntaxLanguageUnsupported: app.ExitFailed,
+	app.CodeSyntaxParseFailed:         app.ExitFailed,
+	app.CodeIndexStateCorrupt:         app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

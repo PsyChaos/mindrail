@@ -129,7 +129,7 @@ func TestATaskWrittenBeforeTheRevisionColumnStartsAtOne(t *testing.T) {
 		}
 	}
 
-	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	result, err := migration.New(db.DB, full[:3], fixedClock()).Up(t.Context())
 	if err != nil {
 		t.Fatalf("Up(full) over schema 2 = %v, want no error", err)
 	}
@@ -144,7 +144,7 @@ func TestATaskWrittenBeforeTheRevisionColumnStartsAtOne(t *testing.T) {
 	if revision != 1 {
 		t.Errorf("revision of a task written before the column = %d, want 1", revision)
 	}
-	if _, err := migration.New(db.DB, full, fixedClock()).Status(t.Context()); err != nil {
+	if _, err := migration.New(db.DB, full[:3], fixedClock()).Status(t.Context()); err != nil {
 		t.Errorf("Status after the upgrade = %v, want no error: tasks with its added column is the expected shape", err)
 	}
 }

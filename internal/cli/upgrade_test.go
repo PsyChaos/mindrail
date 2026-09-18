@@ -186,6 +186,67 @@ func TestCoordinationCommandsSendASchemaBehindDatabaseToInit(t *testing.T) {
 	}
 }
 
+// TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination is
+// MR-005 AC-01.5.
+//
+// The upgrade this milestone asks of every existing database is one migration:
+// 000004 adds five tables and touches nothing MR-001 through MR-004 wrote. The
+// fixture is that database — sessions, tasks and checkpoints with rows in
+// them, the index tables and their ledger row removed — and the assertions are
+// that init re-applies the migration without complaint and that the
+// coordination rows it did not touch are still there.
+func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testing.T) {
+	repo := newInitializedRepo(t)
+	run(t, repo, "session", "open", "--json")
+	opened := run(t, repo, "task", "open", "--title", "survives the upgrade", "--json")
+	opened.requireExit(t, app.ExitSuccess)
+
+	downgradeToSchemaThree(t, repo)
+
+	applied := run(t, repo, "init", "--json")
+	if applied.code != app.ExitSuccess {
+		t.Fatalf("init exited %d over a schema-3 database: %s", applied.code, applied.stdout)
+	}
+
+	got := run(t, repo, "status", "--json")
+	got.requireExit(t, app.ExitSuccess)
+	var data struct {
+		Runtime struct {
+			SchemaVersion int64 `json:"schema_version"`
+		} `json:"runtime"`
+	}
+	decodeData(t, got.stdout, &data)
+	if data.Runtime.SchemaVersion != 4 {
+		t.Errorf("schema_version = %d after init re-applied migration 000004, want 4", data.Runtime.SchemaVersion)
+	}
+
+	listed := run(t, repo, "task", "list", "--json")
+	listed.requireExit(t, app.ExitSuccess)
+	if !strings.Contains(listed.stdout, "survives the upgrade") {
+		t.Errorf("the task written before the upgrade did not survive it:\n%s", listed.stdout)
+	}
+}
+
+// downgradeToSchemaThree removes what MR-005's migration created, ledger row
+// included: the database a repository initialised by the MR-004 binary holds.
+func downgradeToSchemaThree(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_refs_resolved`,
+		`DROP INDEX IF EXISTS idx_refs_path`,
+		`DROP INDEX IF EXISTS idx_imports_path`,
+		`DROP INDEX IF EXISTS idx_symbols_path`,
+		`DROP INDEX IF EXISTS idx_symbols_key`,
+		`DROP INDEX IF EXISTS idx_file_state_unit`,
+		`DROP TABLE IF EXISTS symbol_references`,
+		`DROP TABLE IF EXISTS symbol_imports`,
+		`DROP TABLE IF EXISTS symbols`,
+		`DROP TABLE IF EXISTS file_index_state`,
+		`DROP TABLE IF EXISTS project_units`,
+		`DELETE FROM schema_migrations WHERE version = 4`)
+}
+
 // downgradeToSchemaOne removes everything MR-003's and MR-004's migrations
 // created, ledger rows included, which is the state a database written by the
 // MR-002 binary is in.
@@ -207,6 +268,7 @@ func downgradeToSchemaOne(t *testing.T, repo string) {
 // binary holds.
 func downgradeToSchemaTwo(t *testing.T, repo string) {
 	t.Helper()
+	downgradeToSchemaThree(t, repo)
 
 	execOnRuntimeDB(t, repo,
 		`DROP INDEX IF EXISTS idx_leases_holder`,

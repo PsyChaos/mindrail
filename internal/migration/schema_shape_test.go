@@ -32,7 +32,15 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"lease_id", "project_id", "target_kind", "target_key", "holder",
 			"acquired_at", "renewed_at", "expires_at", "released_at", "release_reason",
 		},
-		"operations": {"operation_id", "command", "request_hash", "result", "recorded_at"},
+		"operations":       {"operation_id", "command", "request_hash", "result", "recorded_at"},
+		"project_units":    {"id", "path", "kind", "discovered_at"},
+		"file_index_state": {"path", "unit_id", "language", "content_hash", "state", "attempts", "last_error", "indexed_at"},
+		"symbols": {
+			"id", "unit_id", "path", "logical_key", "kind", "name", "container", "start_line", "start_col",
+			"end_line", "end_col", "signature_hash", "body_hash", "structure_hash",
+		},
+		"symbol_imports":    {"id", "unit_id", "path", "importer_key", "module", "names", "alias", "is_relative"},
+		"symbol_references": {"id", "unit_id", "path", "referrer_key", "target_text", "scope_text", "label", "confidence", "resolved_symbol_id"},
 	}
 
 	got := map[string][]string{}

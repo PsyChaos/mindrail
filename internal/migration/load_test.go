@@ -96,9 +96,10 @@ func TestLoadEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 // assertion below say *which* migration overreached rather than only that the
 // union grew.
 var tablesPerMilestone = map[int64][]string{
-	1: {"projects", "workspaces"},           // MR-001
-	2: {"sessions", "tasks", "checkpoints"}, // MR-003
-	3: {"leases", "operations"},             // MR-004; revision on tasks is an ALTER, not a table
+	1: {"projects", "workspaces"},                                                              // MR-001
+	2: {"sessions", "tasks", "checkpoints"},                                                    // MR-003
+	3: {"leases", "operations"},                                                                // MR-004; revision on tasks is an ALTER, not a table
+	4: {"project_units", "file_index_state", "symbols", "symbol_imports", "symbol_references"}, // MR-005
 }
 
 // TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.
