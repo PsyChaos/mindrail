@@ -278,3 +278,46 @@ Bağımsız Reader **PASS** (AC-04.1…04.4 MET), Breaker **VERIFIED**
 
 Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1113**.
+
+## TASK-05 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-05.1 | Karşılandı | `TestReconcileConvergesWithBaselinePath` (ikiz fixture, sıra-bağımsız final içerik; provenance farklı, içerik aynı). NOT: paylaşılan DB'de ardışık akışlar yakınsamaz (keşif tüketir) — yakınsama aynı editin iki yoldan bağımsız keşfidir; bulgu D-131 olarak kayıtta. |
+| AC-05.2 | Karşılandı | `TestReconcileDivergenceListsOutOfScopeEdits` (yol+tür+sebep, bloklamaz, satırlar durur). |
+| AC-05.3 | Karşılandı | `TestReconcileWithoutTaskCreatesRetroactiveChange` (NULL-task satırları). |
+| AC-05.4 (SLO) | Karşılandı | `TestWarmPathBudgetsReading`: after_change 10 dosya ~9ms (bütçe 1.5s), reconcile ~3ms (bütçe 2s). |
+| AC-05.4 (non-goals) | Karşılandı | `TestNoLaterMilestoneMachinery` (import taraması), `TestNoNewCodesIn01` (40 pin), `TestCommandSurfaceUnchangedIn01` (mevcut), `TestKnowledgeSchemaStaysV1` (mevcut). |
+| Git fixture | Karşılandı | `TestReconcileDiscoversStagedAndWorktreeChanges` (staged + linked worktree, gerçek git) + `TestReconcileStagedMoveMigrates` (staged R → uid taşınır). |
+
+### D-131 — yakınsama bağımsız keşifler üzerinedir (AC-05.1 açıklaması)
+
+Paylaşılan veritabanında ardışık akışlar yakınsayamaz: ilk keşif indexler,
+ikincisi indexlenmiş gerçekleri bulur ve sembol satırı üretmez. Yakınsama
+garantisi şudur: aynı edit, aynı başlangıç durumundan, iki yoldan bağımsız
+keşfedildiğinde aynı dosya+sembol içeriğini üretir. Test ikiz fixture ile
+bunu kanıtlar (uid'ler DB-başına ayrı lineage olduğundan varlıkça
+karşılaştırılır).
+
+## Reader / Breaker bulguları ve giderim — TASK-05 kapısı
+
+(TASK-05 kapısı aşağıda.)
+
+### TASK-05 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | divergence döndürülmez | divergence testi FAIL |
+| M2 | task zorunlu tutulur | retroactive testi FAIL |
+| M3 | hint'ler düşürülür | staged-move testi FAIL (önce SURVIVED kaldı — test uid karşılaştırmıyordu; hint-öncesi uid kurulumuyla güçlendirildi) |
+| M4 | yasak import (`net/http`) belirir | tarama testi FAIL |
+| M5 | 41. kod eklenir | sayı testi FAIL |
+| M6 | SLO 1ns yapılır | bütçe testi FAIL |
+
+Porcelain-sıra notu (status=new-first, diff=old-first): `rename.go`
+yorumunda belgeli; gerçek-git unicode testi `-z` davranışını kanıtlar.
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-05 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1121**.
