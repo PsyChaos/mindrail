@@ -320,7 +320,7 @@ faz notu (ikisi de `mr-005-findings.md` §TASK-06/07'de).
 
 ---
 
-### [ ] MR-006 — Dayanıklı `symbol_uid` tahsisi ve rename/move koruması
+### [x] MR-006 — Dayanıklı `symbol_uid` tahsisi ve rename/move koruması
 
 - **Tür:** AFK
 - **Blocked by:** MR-004, MR-005
@@ -332,10 +332,46 @@ Yapısal fingerprint ve Git sinyallerini kullanarak dayanıklı `symbol_uid` tah
 
 #### Kabul kriterleri
 
-- [ ] İki process aynı yeni sembol için tek bir `symbol_uid` üzerinde uzlaşır.
-- [ ] Güvenilir rename/move, invariant ilişkisini aynı kimliğe taşır.
-- [ ] Belirsiz rename korunan invariant'ı düşürmez; blocking ambiguity üretir.
-- [ ] Concurrent allocation, rename, move ve ambiguity fixture testleri bulunur.
+- [x] İki process aynı yeni sembol için tek bir `symbol_uid` üzerinde uzlaşır.
+- [x] Güvenilir rename/move, invariant ilişkisini aynı kimliğe taşır.
+- [x] Belirsiz rename korunan invariant'ı düşürmez; blocking ambiguity üretir.
+- [x] Concurrent allocation, rename, move ve ambiguity fixture testleri bulunur.
+
+#### Durum
+
+**Tamamlandı.** Beş görev (TASK-01…05) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01 kapısı 1 HIGH buldu (güncellenmemiş
+`required_version` pini — tek satır) + 1 MEDIUM (container_uid FK guard'ı).
+TASK-02 kapıları temizdi (1 LOW remediasyon: yetim-satır fail-closed).
+TASK-03 ilk turda FAIL/BLOCKED verdi (stored-row flip, SYMBOL-ambiguous
+refresh, tarama genişliği, PROJECT) — remediasyon ikinci turda PASS aldı.
+TASK-04 ilk turda FAIL/BLOCKED verdi ve **iki gerçek kusur** çıkardı:
+hayalet ıraksama (ata kümesi staged anahtarları dışlamıyordu) ve
+takeover-sessizliği; çekirdek sayım kuralı yeniden yazıldı, ikinci tur PASS.
+TASK-05 ilk turda FAIL verdi (perde-2 AMBIGUOUS kodu assert edilmiyordu) —
+refresh artık ölü-lineage'da ambiguity satırı varken orphan yerine ambiguous
+raporluyor; ikinci turda dar bir eksik (perde-3 stored-row assertion) kapandı,
+üçüncü tur PASS.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-006-requirements.md](mr-006-requirements.md), `b902237`), tasarım
+[mr-006-design.md](mr-006-design.md); beşinci göç
+`migrations/000005_symbol_identity.sql`, tablo sürümü 5. Kararlar D-93…D-113:
+D-94 tahsis anahtarı, D-95 atomik commit, D-96 bar + sayım kuralı, D-98
+severity-blok, D-99 orphan-kanıtı, D-100 mint-only backfill, D-101 best-effort
+Git, D-109 süreç-ölçeği uzlaşma, D-110 sticky-binding, D-111 bulgu-düzeyi
+orphan, D-112 transaction-içi eşleştirme yerleşimi, D-113 ata-kapsamı ve
+fail-safe sıralama.
+
+Kanıt (`TestEndToEndProtectRenameAmbiguousDelete`): CRITICAL binding taşınır
+(aynı uid), ikizler ambiguity satırı + AMBIGUOUS bloklar, silinen semboller
+orphaned bloklar — iki kod da uçtan uca.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1074
+test (MR-006 başında 1028 idi). Kapıların MR-007'ye bıraktıkları: completion
+tüketimi için bulgu kodları (`SYMBOL_IDENTITY_AMBIGUOUS`,
+`ORPHANED_PROTECTED_SYMBOL`), D-113 sıralama-bağımlılığı notu ve
+stale-satır budama ihtiyacı (reconcile alanı).
 
 ---
 
