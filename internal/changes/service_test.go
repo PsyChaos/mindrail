@@ -257,11 +257,23 @@ func TestSymbolFlagsTypeScriptJavaScript(t *testing.T) {
 			if err != nil || len(rows) != 1 {
 				t.Fatalf("rows = %+v, %v", rows, err)
 			}
+			if tc.dir == "js" {
+				if err := os.WriteFile(path, []byte("var x = 1\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.service.AfterChange(t.Context(), changeProject, f.root, task, ""); err != nil {
+					t.Fatal(err)
+				}
+				gone, err := f.store.ReadChangeSymbols(t.Context(), change.ID)
+				if err != nil || len(gone) != 1 || gone[0].Kind != changes.SymbolRemoved {
+					t.Fatalf("removed = %+v, %v", gone, err)
+				}
+			}
 			if rows[0].Kind != changes.SymbolModified || rows[0].UID == "" {
 				t.Fatalf("row = %+v, want modified with uid", rows[0])
 			}
-			if rows[0].Signature != tc.wantSig {
-				t.Fatalf("row = %+v, want signature=%t", rows[0], tc.wantSig)
+			if rows[0].Signature != tc.wantSig || rows[0].Body == tc.wantSig || rows[0].Structure != tc.wantSig {
+				t.Fatalf("row = %+v, want body=%t signature=%t structure=%t", rows[0], !tc.wantSig, tc.wantSig, tc.wantSig)
 			}
 		})
 	}
@@ -282,8 +294,18 @@ func TestDiscoveryIndexesWhatItReads(t *testing.T) {
 		t.Fatalf("fresh = %+v, stored = %+v", fresh, stored)
 	}
 	for i := range fresh {
-		if fresh[i].LogicalKey != stored[i].LogicalKey || fresh[i].BodyHash != stored[i].BodyHash {
+		if fresh[i].LogicalKey != stored[i].LogicalKey || fresh[i].BodyHash != stored[i].BodyHash ||
+			fresh[i].SignatureHash != stored[i].SignatureHash || fresh[i].StructureHash != stored[i].StructureHash {
 			t.Fatalf("fresh %+v vs stored %+v", fresh[i], stored[i])
+		}
+	}
+	changeRows, err := f.store.ReadChangeSymbols(t.Context(), change.ID)
+	if err != nil || len(changeRows) != len(stored) {
+		t.Fatalf("change rows = %+v, %v", changeRows, err)
+	}
+	for _, row := range changeRows {
+		if row.SigHash == "" || row.BodyHash == "" || row.StructHash == "" {
+			t.Fatalf("change row carries empty hashes: %+v", row)
 		}
 	}
 	oldUID := stored[0].UID
@@ -329,6 +351,28 @@ func freshExtract(t *testing.T, f serviceFixture, dir, path string) []index.Symb
 		t.Fatal(err)
 	}
 	return symbols
+}
+
+// TestAfterChangeEmptyDeltaReturnsOpenChange pins the no-change shape: a
+// quiet run still answers the open change id with zero rows, so callers can
+// never read a zero id as "no change".
+func TestAfterChangeEmptyDeltaReturnsOpenChange(t *testing.T) {
+	f := newServiceFixture(t)
+	path := filepath.Join(f.root, "py", "a.py")
+	if err := os.WriteFile(path, []byte("def f():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CaptureBaseline(t.Context(), "TSK-1", []string{path}, ""); err != nil {
+		t.Fatal(err)
+	}
+	change, err := f.service.AfterChange(t.Context(), changeProject, f.root, "TSK-1", "")
+	if err != nil || change.ID == "" {
+		t.Fatalf("quiet run = %+v, %v", change, err)
+	}
+	files, err := f.store.ReadChangeFiles(t.Context(), change.ID)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("files = %+v, %v", files, err)
+	}
 }
 
 // TestAfterChangeConverges is AC-04.3: calling twice converges on one change
@@ -429,6 +473,21 @@ func TestStagedMoveHintIsLive(t *testing.T) {
 	}
 	if uidsOf(b)["f"] != uidsOf(a)["f"] || uidsOf(a)["f"] == "" {
 		t.Fatalf("hinted move lost the uid: %+v vs %+v", uidsOf(b), uidsOf(a))
+	}
+	// D-129 at row level: the moved file's delta row names the migrated uid,
+	// not just the index store behind it.
+	deltaRows, err := f.store.ReadChangeSymbols(t.Context(), change.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range deltaRows {
+		if row.UID == uidsOf(a)["f"] && row.UID != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no delta row names the migrated uid %+v", deltaRows)
 	}
 	// Without hints: identical content at c.py mints anew.
 	c := write("py/c.py", "def f():\n    return 1\n")

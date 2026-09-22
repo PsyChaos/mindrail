@@ -248,3 +248,33 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 ### TASK-04 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1112**.
+
+## Reader / Breaker bulguları ve giderim — TASK-04 kapısı
+
+Bağımsız Reader **PASS** (AC-04.1…04.4 MET), Breaker **VERIFIED**
+(6 öz mutant + problar temiz).
+
+- **MEDIUM/F1:** TS/JS tam bayrak matrisi eksikti. Giderim: body/structure
+  assertion'ları eklendi; N1 kırmızı.
+- **MEDIUM/F2:** hash değerleri assert edilmiyordu. Giderim: delta satır
+  hash'leri stored facts ile eşitlenir; N2 kırmızı.
+- **LOW/F3:** hint yolu delta-satır uid assert etmiyordu. Giderim: eklendi
+  (M3 de kapsar).
+- **LOW/F4:** TS/JS added/removed tek Python'daydı. Giderim: JS removal
+  turu eklendi.
+- **LOW-8 (Breaker):** boş-delta AfterChange pinsizdi. Giderim:
+  `TestAfterChangeEmptyDeltaReturnsOpenChange` eklendi (Breaker mutant D
+  kırmızı olduğunu kanıtladı).
+- **F5:** işlem yok (kabul).
+
+### TASK-04 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| N1 | structure bayrağı hep false | flags testi FAIL |
+| N2 | change satır hash'leri boş | discovery testi FAIL |
+
+### TASK-04 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
+
+Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile COUNT_PLACEHOLDER.
