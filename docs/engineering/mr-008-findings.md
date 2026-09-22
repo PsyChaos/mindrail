@@ -167,4 +167,18 @@ değil). Değerlendirilen (`EvaluateTask`) yolun tamamı gerçek.
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1138**.
 
-### TASK-04 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-04 kapı — Reader: AC-04.1/04.2 CONFIRMED, AC-04.3 REFUTED→KAPANDI; Breaker: 3/4 REFUTED + 1 maskeleme→KAPANDI
+
+Re-gate (HEAD `469b4a0`): Durum bloğu mevcut ve doğru (1138 test bağımsız
+doğrulandı); E2E'de iki-change-adlandırma + ara-beat assertion'ları mevcut,
+test PASS, her override load-bearing. AC-04.3 satırı artık nitelikli
+("2 kapı-bulgusuyla"). **Karar:** TASK-04 KAPANDI.
+
+---
+
+## MR-008 kapanış
+
+Dört görev kapandı (TASK-01…04), 15 mutant kırmızı, `make check` + `make
+verify` + `make tidy-check` yeşil, 1138 test. MR-009'a devir (Durum
+bloğundaki gibi): blocking set → MR-013; override satırları → MR-015;
+attributed çiftleri → MR-009.
