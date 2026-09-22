@@ -202,6 +202,9 @@ func (s *Store) resolveIdentitiesTx(ctx context.Context, tx *sql.Tx, projectID, 
 		if hadOld && oldBody == added.BodyHash {
 			continue
 		}
+		// One trail per key: the first meeting ancestor names the takeover.
+		// Further absorbers stay silent — the trail points at the question,
+		// not at every bystander, and the rows keep their uid regardless.
 		for _, ancestor := range disappeared {
 			if matchBar(added, ancestor, ancestor.ContainerLocal, corroborated(ancestor.Path, added.Path)) {
 				removed, err := s.ensureAncestorTx(ctx, tx, projectID, unitID, language, ancestor, now)
@@ -284,13 +287,11 @@ func (s *Store) resolveIdentitiesTx(ctx context.Context, tx *sql.Tx, projectID, 
 				contenders = append(contenders, ancestor)
 			}
 		}
+		// Deterministic by key: snapshot order is stable in practice, but
+		// the audit trail must not depend on it.
+		sort.Slice(contenders, func(i, j int) bool { return contenders[i].Key < contenders[j].Key })
 		if len(contenders) >= 2 {
 			first := contenders[0]
-			for _, contender := range contenders[1:] {
-				if contender.Key < first.Key {
-					first = contender
-				}
-			}
 			removed, err := s.ensureAncestorTx(ctx, tx, projectID, unitID, language, first, now)
 			if err != nil {
 				return nil, nil, err

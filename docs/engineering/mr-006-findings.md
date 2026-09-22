@@ -309,4 +309,9 @@ Pre-fix kırmızılar (H1/F2/F3): yukarıdaki 4 yeni testin 4'ü de pre-fix
 koddaki karşılıklarında FAIL verdi (stash/pop ile doğrulandı, restore
 md5'li).
 
-### TASK-04 kapı (PENDING — ikinci tur kapı bekleniyor)
+### TASK-04 kapı — Reader PASS, Breaker VERIFIED (ikinci tur + polish)
+
+Remediasyon bağımsız ikinci turda notlandırıldı: 9 maddenin 9'u doğrulandı,
+remediasyonun getirdiği yeni sorun yok. Kapanış polish'i (üretim, 2 satır):
+contender determinizmi (snapshot-sıra yerine anahtar-sırası) + takeover
+tek-kayıt yorumu; focused süit yeşil. `make check` yeşil, 1071 test.
