@@ -970,11 +970,21 @@ func TestLargeInventoryColdIndexProof(t *testing.T) {
 	if len(discovered) != 3 {
 		t.Fatalf("discovered %d units, want 3", len(discovered))
 	}
+	// Init registers nothing: a synchronously-blocking init would leave file
+	// rows behind, so an empty file_index_state is the non-waiting proof —
+	// stronger than any wall-clock bound.
+	var fileRows int
+	if err := initialized.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM file_index_state`).Scan(&fileRows); err != nil {
+		t.Fatal(err)
+	}
+	if fileRows != 0 {
+		t.Fatalf("init left %d file rows; it must not wait for the cold index", fileRows)
+	}
 	if err := initialized.Shutdown(t.Context()); err != nil {
 		t.Fatalf("close init database: %v", err)
 	}
 	t.Logf("init over %d files: %v", total, initElapsed)
-	if initElapsed > 60*time.Second {
+	if initElapsed > 5*time.Second {
 		t.Fatalf("init took %v over %d unindexed files; it must not wait for the cold index", initElapsed, total)
 	}
 
@@ -1096,6 +1106,16 @@ func TestLargeInventoryColdIndexProof(t *testing.T) {
 	}
 	if attemptRows != total || maxAttempts != 1 {
 		t.Fatalf("rows %d max attempts %d, want %d rows at 1 attempt each (no reprocessing)", attemptRows, maxAttempts, total)
+	}
+	// Parse reality: state transitions alone could be faked by flipping rows
+	// to indexed with empty facts. Every file defines exactly one function,
+	// so the drain must leave exactly one symbol row per file.
+	var symbols int
+	if err := worker.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM symbols`).Scan(&symbols); err != nil {
+		t.Fatal(err)
+	}
+	if symbols != total {
+		t.Fatalf("symbols = %d, want %d (one extracted function per file)", symbols, total)
 	}
 	if err := worker.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)

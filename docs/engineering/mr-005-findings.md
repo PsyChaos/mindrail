@@ -675,9 +675,41 @@ tam olarak yeniden açılan şeydir, fazlası yoktur.
 | M15 | indexer unchanged-skip kapalı | **GEÇERSİZ mutant**: restart sayacı 4'te kalır — CAS fast-path yedeği aynı davranışı verir. Skip guard'ı TASK-05 M3'te pinli. |
 | M15b | CAS unchanged-indexed fast-path kaldırıldı | Tüm index süiti YEŞİL kaldı → guard pinsizdi! `TestRegistrationCASLeavesUnchangedIndexedWithoutNewGeneration` eklendi; mutant altında FAIL, restore sonrası yeşil. AC-07.4'ün yakaladığı gerçek kapsama açığı. |
 
-### TASK-07 kapı (PENDING — Reader/Breaker bekleniyor)
+### TASK-07 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
 
-`make check` yeşil, race (scheduler+status) yeşil, M9–M15 koşuldu (M15
-geçersiz, M15b açığı kapatıldı). Test sayısı
+`make check` yeşil, race (scheduler+status) yeşil, M9–M15 + M17 koşuldu
+(M15 geçersiz, M15b açığı kapatıldı). Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1027** (TASK-06 kapısında
 1017 idi, +10).
+
+Bağımsız Reader **PASS**: AC-07.1…07.4 MET; sayılar mertebe-doğrulamalı
+(init ~16–18ms, status worst ~25–200µs); M15'in geçersizliği onaylı (guard
+TASK-05 M3'te pinli); kapsam üretimde tek dosya (`scheduler.go` reindex
+düzeltmesi). 2 advisory kapatıldı (F-R1, F-R3), 1 süreç notu temiz koşuyla
+kapatıldı (F-R2).
+
+Bağımsız Breaker **VERIFIED**: 6 öz mutant, boş-drain girişimi
+`completed == total`'de takılır, READY-while-pending deliği yok, reindex
+düzeltmesi minimal + eksiksiz, D-92 kör noktası sınırlı (F7). 4 bulgudan
+2'si kapatıldı (F1, F-R1), 2'si nota bağlandı (F2, F4).
+
+**Remediasyon:**
+
+- F-R1 (kanıt sembol satırı denetlemez): drain sonuna `symbols == total`
+  assertion'ı eklendi (dosya başına tam 1 fonksiyon); M17 (sembol eşleme
+  yok) FAIL.
+- F1 (60s sınırı beklememezliği kanıtlayamaz): init sonuna
+  `file_index_state == 0` assertion'ı eklendi — bekleyen init satır bırakırdı;
+  duvar-saat sınırı 60s → 5s sıkılaştırıldı.
+- F-R3: kirli-kapanış kurtarması (WAL replay, kill-mid-transaction) storage
+  sürücüsüne emanettir, TASK-07 probu yoktur — kabul, cümlesi budur.
+- F2: tarama yalnız import-yollarında substring arar; temiz-yoldan vendored
+  kopya veya importsuz `require` yakalamaz. 0.1 tripwire için yeterli; sınırı
+  budur.
+- F4: "remainder only" `resumedParses == 4` + final all-indexed çiftine dayanır;
+  sayaç tek başına zayıflatılırsa yanlış sayıyla geçer. İkili assertion
+  yerindedir; tek-nokta bağı kayıttadır.
+
+Temiz-ağaç kanıt koşusu (F-R2): aşağıdaki commit öncesi
+`TestLargeInventoryColdIndexProof` ve restart testi `-count=1` ile yeniden
+yeşil; sayı ve süreler bulgudaki mertebede.
