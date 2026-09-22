@@ -46,6 +46,11 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"invariant_id", "symbol_uid", "status", "reason", "updated_at",
 		},
 		"symbol_identity_ambiguities": {"id", "unit_id", "removed_uid", "removed_key", "candidate_keys", "created_at"},
+		"changes":                     {"change_id", "task_id", "operation_id", "created_at", "updated_at"},
+		"change_files":                {"change_id", "path", "kind", "old_path", "content_hash", "discovered_via"},
+		"change_symbols":              {"change_id", "logical_key", "symbol_uid", "kind", "body_changed", "signature_changed", "structure_changed", "signature_hash", "body_hash", "structure_hash", "discovered_via"},
+		"change_baselines":            {"task_id", "path", "content_hash", "captured_at"},
+		"change_operations":           {"operation_id", "task_id", "request_hash", "result", "recorded_at"},
 	}
 
 	got := map[string][]string{}

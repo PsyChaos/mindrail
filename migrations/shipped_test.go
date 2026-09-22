@@ -34,6 +34,7 @@ func TestAnAppliedMigrationFileIsNeverEdited(t *testing.T) {
 		"000003_lease_idempotency.sql": "3ca7dbee3971cf6ea165c82738b5f40b792595afbfea58f10304d0f0c38ef488",
 		"000004_index.sql":             "b16fcbb34d59914b5a970b5f4910f3571c230deae67abd34dde287530f24feb9",
 		"000005_symbol_identity.sql":   "780f256b695a383ffb689699dadd753d859bd8c455d58943957cac116f9a3b9a",
+		"000006_changes.sql":           "5ec101203eaa3438818c4733b706e5db71dee640d0b7ffb1e2a2f5f55fd4b903",
 	}
 
 	entries, err := migrations.FS.ReadDir(".")
