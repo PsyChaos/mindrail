@@ -592,8 +592,40 @@ bağlantısı TASK-07'nin kanıtına aittir.
 | M5 | bootstrap: census okunmuyor (`IndexObserved` set edilmiyor) | `TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource` FAIL |
 | M6 | scheduler Register: F3 guard'ı kaldırıldı (bilinmeyen dil pending koluna düşer, nil adapter'da panic) | `TestRegisterMarksUnknownLanguageUnsupported` FAIL |
 
-### TASK-06 kapı (PENDING — Reader/Breaker bekleniyor)
+### TASK-06 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
 
 `make check` yeşil, 6 mutant kırmızı → restore (md5). Test sayısı
-`go test -list '.*' ./... | grep -c '^Test'` ile **1014** (TASK-05 kapısında
-997 idi, +17).
+`go test -list '.*' ./... | grep -c '^Test'` ile **1017** (TASK-05 kapısında
+997 idi, +20).
+
+Bağımsız Reader **PASS**: AC-06.1…06.5 MET; D-84/D-91 uyumlu; F3 kapanışı ve
+korunan davranışlar (AC-02.2, sağlıklı-özne READY, yeni komut yok, doctor
+değişmedi) doğrulandı. 3 LOW advisory + 2 INFO: hepsi aşağıda kapatıldı.
+
+Bağımsız Breaker **VERIFIED**: 6 yeni mutant (G1–G6) — G6 (nil-registry
+guard) SURVIVED → F1; 10 saldırı probu temiz (−race dahil); D-91 doğrulandı.
+1 LOW bulgu daha (F2: relative path kabulü).
+
+**Remediasyon (4 test, 1 guard, 1 dokümantasyon):**
+
+- F1: `TestRegisterRejectsNilRegistry` eklendi; M8 (guard kaldırma) FAIL.
+- F2: `Enqueue` store'un clean-absolute kuralını aynalar; M7 (kural kaldırma)
+  FAIL. İlk M7 derlemeyi bozdu (geçersiz mutant), derlenen varyantla
+  tekrarlandı.
+- Reader #3 (mid-queue failure remainder): `TestRunMidQueueFailureKeepsRemainder`
+  eklendi — bozuk ortanca dosyada run durur, kalan kuyrukta + pending kalır.
+- Reader #2 (P0 sub-order): `Enqueue` dokümantasyonuna işlendi (position-only
+  promote vs `Prioritize` path-sort); D-84 yalnızca remainder-önceliği ister,
+  ihlal yok.
+- Reader #1 (unsupported-only census → INVENTORY): üretim yürüyüşü desteklenen
+  uzantıları filtrelediği için erişilemez; TASK-07'ye kenar-durum notu olarak
+  devredildi (aşağıya bak).
+
+### TASK-07'ye devir — unsupported-only census fazı
+
+Yalnız `unsupported` satırlı (veya boş) census + gözlenmiş birim → syntax
+INVENTORY fazı verir, READY değil (`report.go` default dalı `indexed>0`
+ister). D-81 "unsupported READY'yi engellemez" ile gerilimlidir; üretim
+yürüyüşü (`inventory/files.go`) desteklenmeyen uzantıları hiç kaydetmediği
+için yalnız el-yapımı satırlarla erişilir. TASK-07 kanıtı bu kenar için
+hedef fazı kayda geçirsin.

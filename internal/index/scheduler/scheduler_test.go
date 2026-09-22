@@ -134,6 +134,19 @@ func TestEnqueueP0PromotesQueuedPath(t *testing.T) {
 	}
 }
 
+func TestEnqueueRejectsRelativeAndUncleanPaths(t *testing.T) {
+	f := newFixture(t, 0)
+	unit := mkunit(t, f, "pkg", index.UnitPython)
+	for _, path := range []string{"relative/a.py", unit.Path + "/sub/../a.py", ""} {
+		if _, err := f.sched.Enqueue(unit, path, scheduler.P4ColdRemainder); err == nil {
+			t.Fatalf("path %q accepted; the window mirrors the store's clean-absolute rule", path)
+		}
+	}
+	if got := f.sched.Len(); got != 0 {
+		t.Fatalf("queue holds %d rejected jobs", got)
+	}
+}
+
 func TestQueueBoundRejectsManualOverflow(t *testing.T) {
 	f := newFixture(t, 3)
 	unit := mkunit(t, f, "pkg", index.UnitPython)
@@ -262,6 +275,47 @@ func TestRunStopsOnFirstErrorWithoutSkipping(t *testing.T) {
 	}
 	if got := f.sched.Len(); got != 0 {
 		t.Fatalf("queue holds %d jobs after the failed run", got)
+	}
+}
+
+func TestRunMidQueueFailureKeepsRemainder(t *testing.T) {
+	f := newFixture(t, 0)
+	unit := mkunit(t, f, "pkg", index.UnitPython)
+	sources := map[string]string{
+		"a.py": "def f():\n    pass\n",
+		"b.py": "def broken(:\n    pass\n",
+		"c.py": "def g():\n    pass\n",
+	}
+	for name, content := range sources {
+		path := filepath.Join(unit.Path, name)
+		writeSource(t, path, content)
+		if err := f.store.UpsertFileState(t.Context(), index.FileIndexState{
+			UnitID: unit.ID, Path: path, Language: "python", State: index.StatePending,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit}); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := f.sched.Run(t.Context())
+	if err == nil || completed != 1 {
+		t.Fatalf("run = %d/%v, want 1/failure on the mid-queue broken file", completed, err)
+	}
+	if got := f.sched.Paths(); len(got) != 1 || got[0] != filepath.Join(unit.Path, "c.py") {
+		t.Fatalf("queue = %v, want the unstarted remainder still queued", got)
+	}
+	state, err := f.store.ReadFileState(t.Context(), filepath.Join(unit.Path, "c.py"))
+	if err != nil || state.State.State != index.StatePending {
+		t.Fatalf("remainder state = %+v, %v — unstarted work stays pending for resume", state.State, err)
+	}
+}
+
+func TestRegisterRejectsNilRegistry(t *testing.T) {
+	f := newFixture(t, 0)
+	unit := mkunit(t, f, "pkg", index.UnitPython)
+	if _, _, err := f.sched.Register(t.Context(), nil, []inventory.File{{Unit: unit, Path: filepath.Join(unit.Path, "a.py")}}); err == nil {
+		t.Fatal("nil registry accepted")
 	}
 }
 

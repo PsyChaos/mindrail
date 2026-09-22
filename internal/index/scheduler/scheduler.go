@@ -13,6 +13,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -123,12 +124,15 @@ func (s *Scheduler) Paths() []string {
 
 // Enqueue adds one file, coalescing duplicates by path: a repository of N
 // pending files never holds N queued jobs for one path. A P0 re-enqueue of an
-// already-queued path promotes it to the front; any other duplicate keeps its
-// position. It reports whether the path is newly queued. Past the bound it
-// returns ErrQueueFull and queues nothing.
+// already-queued path promotes it to the front (position only — unlike
+// Prioritize it does not path-sort the head); any other duplicate keeps its
+// position. It reports whether the path is newly queued. It rejects paths the
+// durable layer could never store — mirroring the store's clean-absolute rule
+// so a latent relative path cannot enter the window. Past the bound it returns
+// ErrQueueFull and queues nothing.
 func (s *Scheduler) Enqueue(unit index.ProjectUnit, path string, priority Priority) (bool, error) {
-	if unit.ID == "" || path == "" {
-		return false, fmt.Errorf("scheduler: enqueue needs a unit and a path")
+	if unit.ID == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false, fmt.Errorf("scheduler: enqueue needs a unit ID and a clean absolute path")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
