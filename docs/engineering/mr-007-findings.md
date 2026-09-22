@@ -146,3 +146,35 @@ Bağımsız Reader **PASS** (AC-02.1…02.4 MET), Breaker **VERIFIED**
 
 Giderim sonrası focused + race süitleri yeşil; tam `make check` aşağıda.
 Test sayısı `go test -list '.*' ./... | grep -c '^Test'` ile **1092**.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | `TestDiscoverFilesGitKinds` (6 porcelain şekli) + git `TestStatusEntries*` (fake/hatalı/gerçek). |
+| AC-03.2 | Karşılandı | `TestDiscoverFilesGitExclusions` (satır yok, stat yok) + escape testi (fail-closed). |
+| AC-03.3 | Karşılandı | `TestBaselineFileDeltaConverges` (değişen + kayıtsız kapsam satır olur). |
+| AC-03.4 | Karşılandı | `TestDiscoverFilesGitKinds` + `TestUpsertFileRowsConverges` (tür/hash/via). |
+| AC-03.5 | Karşılandı | `TestGitAndBaselineFileConvergence` (içerik eşit, provenance farklı). |
+
+## Reader / Breaker bulguları ve giderim — TASK-03 kapısı
+
+(TASK-03 kapısı aşağıda.)
+
+### TASK-03 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | `??` → modified eşlemesi | kinds testi FAIL |
+| M2 | exclusion kaldırıldı | exclusions testi FAIL |
+| M3 | root-escape kontrolü kaldırıldı | escape testi FAIL |
+| M4 | upsert kind validasyonu kaldırıldı | Önce SURVIVED — DB CHECK arkadan yakalıyordu. Test usage-kodu denetleyecek şekilde güçlendirildi; mutant FAIL. |
+| M5 | kayıtsız kapsam atlandı | delta + convergence testleri FAIL |
+| M6 | git hatası boş kümeye indi | git paketinin kendi testi FAIL (bu pakette değil, kayıtta) |
+| M7 | baseline via'sı reconcile yazıldı | convergence provenance assertion FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-03 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1101**.
