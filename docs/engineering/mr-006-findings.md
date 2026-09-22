@@ -97,7 +97,42 @@ migration kancası TASK-04'ün).
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
-### TASK-02 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+## Reader / Breaker bulguları ve giderim — TASK-02 kapısı
+
+Bağımsız Reader **PASS** (AC-02.1…02.5 MET; §24, D-95, fail-closed projectID
+doğrulandı), Breaker **VERIFIED** (32×3 yarış -race temiz; 5 öz mutanttan
+4'ü kırmızı, 1'i benign-perf; churn temiz).
+
+- **Breaker F1 (LOW, doğrulandı):** yetim uid-less satırları (dosya-satırsız)
+  backfill sessizce atlıyor, yorum aksi iddiadaydı. Giderim: yetim sayımı
+  fail-closed hataya çevrildi + `TestBackfillRefusesOrphanSymbols` eklendi;
+  M7 (koruma kaldırma) FAIL.
+- **Reader F1 (LOW):** CAS-yolu uid assertion'ı yok (yalnız construction +
+  churned literal'lar). TASK-04'e devir: completion yolu zaten
+  değişeceğinden CAS uid assertion'ı orada eklenecek.
+- **Reader F2:** "6 test" ifadesi 7 fonksiyonu saymıyor (5 AC + 2 guard).
+  Kayıt düzeltildi: yedi test (AC-02.1…02.5 + 2 guard).
+- **Reader F3 (çürütüldü):** "uncommitted store.go değişikliği" — ağaç
+  commit ile birebir temiz (`git status` boş); pre-existing `stash@{0}`
+  MR-002 döneminden, dokunulmadı.
+- **Breaker C (benign):** stamping dedup kaldırma tüm süiti yeşil bırakır —
+  `ensureIdentityTx` idempotent olduğundan dedup perf-only'dir; guard açığı
+  değil, kayıttadır.
+- **Breaker F2/F3 (gözlem):** cross-project stamp first-project-wins; yabancı
+  unit objesi stray identity mintler (FK dışı). İkisi de 0.1 tek-proje
+  varsayımında zararsız; TASK-04 caller-sözleşmesi olarak kayıttadır.
+
+### TASK-02 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M7 | backfill yetim-reddi kaldırıldı | `TestBackfillRefusesOrphanSymbols` FAIL |
+| M2-ilk | (geçersiz) `UPDATE` sökümü derlemeyi bozdu | derlenen `AND 1 = 0` varyantı (M2) FAIL |
+
+### TASK-02 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
+
+Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1040**.
 
 `make check` yeşil (exit 0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1039**.
 

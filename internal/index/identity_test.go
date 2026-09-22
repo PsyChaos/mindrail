@@ -182,6 +182,23 @@ func TestBackfillStampsWithoutReparse(t *testing.T) {
 	}
 }
 
+// TestBackfillRefusesOrphanSymbols pins the fail-closed half of the join:
+// uid-less rows with no file row are damage, and backfill reports them
+// instead of silently leaving them behind.
+func TestBackfillRefusesOrphanSymbols(t *testing.T) {
+	store, db, _ := identityFixture(t)
+	unit := identityUnit(t, store)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO symbols
+		(unit_id, path, logical_key, kind, name, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash)
+		VALUES (?, ?, 'orphan', 'function', 'o', 1, 0, 2, 0, 's', 'b', 't')`,
+		unit.ID, filepath.Join(unit.Path, "gone.py")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BackfillUnit(t.Context(), identityProject, unit.ID); err == nil {
+		t.Fatal("backfill accepted orphan symbols")
+	}
+}
+
 // TestCompletionKeepsUIDsAcrossIdenticalRewrites is AC-02.4: replacing a
 // file's facts twice resolves the same uids instead of minting anew.
 func TestCompletionKeepsUIDsAcrossIdenticalRewrites(t *testing.T) {

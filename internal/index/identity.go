@@ -161,6 +161,15 @@ func (s *Store) BackfillUnit(ctx context.Context, projectID, unitID string) (int
 		// key set is read through a join. A uid-less key with no file row is
 		// damage, not work: backfill refuses it rather than minting into a
 		// language it cannot name.
+		var orphans int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM symbols s
+			LEFT JOIN file_index_state f ON f.unit_id = s.unit_id AND f.path = s.path
+			WHERE s.unit_id = ? AND s.symbol_uid IS NULL AND f.path IS NULL`, unitID).Scan(&orphans); err != nil {
+			return err
+		}
+		if orphans > 0 {
+			return invalidInput("backfill found uid-less symbols with no file row")
+		}
 		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT s.logical_key, f.language FROM symbols s
 			JOIN file_index_state f ON f.unit_id = s.unit_id AND f.path = s.path
 			WHERE s.unit_id = ? AND s.symbol_uid IS NULL ORDER BY s.logical_key`, unitID)
