@@ -236,6 +236,39 @@ func qualifiedKey(unit ProjectUnit, path, local string) string {
 	return string(key)
 }
 
+// ExtractCurrent parses source bytes without touching the database: change
+// discovery needs current facts beside stored ones before indexing replaces
+// them. Unsupported languages return no symbols and no error — there is no
+// delta to compute, and that is a terminal answer, not a failure. Malformed
+// scope is refused; extraction errors propagate (a delta from a tree the
+// parser disowned would be fabricated).
+func (i *Indexer) ExtractCurrent(ctx context.Context, unit ProjectUnit, path string, content []byte) ([]Symbol, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if i == nil || i.registry == nil {
+		return nil, invalidInput("extraction needs a parser registry")
+	}
+	if unit.ID == "" || !isCleanAbsolutePath(unit.Path) || !isCleanAbsolutePath(path) || !pathInRoot(unit.Path, path) || path == unit.Path {
+		return nil, invalidInput("source path must be clean, absolute and inside its project unit")
+	}
+	adapter, ok := i.registry.Lookup(path)
+	if !ok {
+		return nil, nil
+	}
+	facts, err := i.extract(ctx, adapter, parser.SourceFile{Content: content})
+	if err != nil {
+		return nil, err
+	}
+	symbols := make([]Symbol, 0, len(facts.Symbols))
+	for _, sym := range facts.Symbols {
+		symbols = append(symbols, Symbol{LogicalKey: qualifiedKey(unit, path, sym.LocalKey), Kind: sym.Kind, Name: sym.Name,
+			Container: qualifiedKey(unit, path, sym.ContainerLocalKey), StartLine: int(sym.Range.StartRow), StartCol: int(sym.Range.StartColumn),
+			EndLine: int(sym.Range.EndRow), EndCol: int(sym.Range.EndColumn), SignatureHash: sym.SignatureHash, BodyHash: sym.BodyHash, StructureHash: sym.StructureHash})
+	}
+	return symbols, nil
+}
+
 func mapFacts(projectID string, unit ProjectUnit, path, language, hash string, state FileState, lastError string, facts parser.Facts, hints []RenameHint) FileFacts {
 	result := FileFacts{ProjectID: projectID, UnitID: unit.ID, Path: path, Language: language, ContentHash: hash, State: state, LastError: lastError, RenameHints: hints}
 	for _, sym := range facts.Symbols {

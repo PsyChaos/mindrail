@@ -34,7 +34,8 @@ func DiffRenames(ctx context.Context, runner CommandRunner, dir string) ([]Renam
 }
 
 // parseRenameStatus reads NUL-separated --name-status rows. An R entry is
-// status, score, old, new; every other entry is status plus one path and is
+// status, score, old, new — note this is the reverse of status-porcelain -z,
+// which emits new-then-old. Every other entry is status plus one path and is
 // skipped. Malformed tails are dropped rather than reported: a truncated diff
 // is a missing signal, not an error.
 func parseRenameStatus(stdout []byte) []RenameEntry {

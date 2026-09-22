@@ -214,3 +214,37 @@ remediasyonun getirdiği yeni sorun yok. `make check` yeşil, 1104 test.
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1104**.
 
 Remediasyon testleri yeşil; tam `make check` aşağıda.
+
+## TASK-04 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-04.1 | Karşılandı | `TestSymbolFlagsPerLanguage` (body/sig/added/removed + hash'ler) + `TestSymbolFlagsTypeScriptJavaScript` (temsilci akış). |
+| AC-04.2 | Karşılandı | `TestDiscoveryIndexesWhatItReads` (stored == fresh parse, rename uid takibi). |
+| AC-04.3 | Karşılandı | `TestAfterChangeConverges` (tek id, latest-wins flag flip). |
+| AC-04.4 | Karşılandı | `TestStagedMoveHintIsLive` (hintli migrate, hintsiz mint; DiffRenames→hint dönüşümü dahil). |
+
+Ara notlar: ilk-temas her zaman `added` olur (test akışları buna göre);
+porcelain-sıra tuzağı belgelendi (`status` new-first, `diff` old-first).
+
+## Reader / Breaker bulguları ve giderim — TASK-04 kapısı
+
+(TASK-04 kapısı aşağıda.)
+
+### TASK-04 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | çıkarım hatası yutuldu | broken-file testi FAIL |
+| M2 | body bayrağı ters çevrildi | flags testi FAIL |
+| M3 | uid iliştirme atlandı | uid assertion'ları FAIL |
+| M4 | silinen dosya satır üretmez | deletion testi FAIL |
+| M5 | upsert yerine plain INSERT | convergence testi FAIL. İki geçersiz deneme: `OR IGNORE` upsert ile aynı davranır (SQLite önceliği) + string-cerrahi dosyayı bozdu (restore edildi). |
+| M6 | hint'ler IndexFile'a geçmez | hint testi FAIL |
+| M7 | birimsiz dosya hata verir | out-of-unit testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-04 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1112**.
