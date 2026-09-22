@@ -212,7 +212,11 @@ Reader F2-benzeri sayım itirazı yok; bulgu belgesi M1-benzeri notlarla tutarl�
 | M9 | resolved yol prune'u atlar | prune testi FAIL |
 | M10 | bulgu detail'ı düşer | twins remedy assertion FAIL |
 
-### TASK-03 kapı — kapı bulguları remediye edildi, ikinci tur kapı bekleniyor
+### TASK-03 kapı — Reader PASS, Breaker VERIFIED (ikinci tur)
+
+Remediasyon bağımsız ikinci turda notlandırıldı: 7 maddenin 7'si doğrulandı,
+remediasyonun getirdiği yeni sorun yok (2 non-blocking gözlem kayıtta).
+`make check` yeşil, 1053 test.
 
 Reader **FAIL** ve Breaker **BLOCKED** kararlarının istediği 4 test + 1 ifade
 düzeltmesi yukarıda uygulandı (M8–M10 kırmızı). Remediasyonun bağımsız
