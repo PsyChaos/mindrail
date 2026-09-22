@@ -64,6 +64,30 @@ func (s *Store) ListSymbolsInFile(ctx context.Context, unitID, path string) ([]S
 	return symbols, nil
 }
 
+// PathForUID resolves the live file of one durable identity. Attribution
+// (MR-008) keys symbol rows to baseline scopes by file, and the change row
+// carries no path — the uid is the only join key. An empty uid or no live
+// row resolves nothing: callers treat that as unplaceable, never as an
+// error, so undiscovered or pruned work stays outside every verdict.
+func (s *Store) PathForUID(ctx context.Context, uid string) (string, bool, error) {
+	if uid == "" {
+		return "", false, nil
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return "", false, err
+	}
+	var path string
+	err := s.db.QueryRowContext(ctx, `SELECT path FROM symbols
+		WHERE symbol_uid = ? ORDER BY id LIMIT 1`, uid).Scan(&path)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, corruptState(err)
+	}
+	return path, true, nil
+}
+
 // DistinctUIDsInFile returns the allocated uids with live rows in one file,
 // in first-seen order. Unallocated (NULL) rows contribute nothing: callers
 // that need the open-identity case read the rows, not this set.

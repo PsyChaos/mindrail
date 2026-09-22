@@ -59,3 +59,35 @@ bilinmeyen change'e attribution FK reddi eklendi, PASS.
 
 **Karar:** TASK-01 KAPANDI — AC-01.1…AC-01.5 karşılandı, B-1 TASK-03'e
 ertelendi (AC-03.2), GAP-1 kapatıldı.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Tek aday attributes, bulgu yok, çift koşu stabil (`TestAttributeTaskSingleCandidateAttributes`). |
+| AC-02.2 | Karşılandı | Sıfır aday unregistered: kod + provenance + next_action + blocking (`TestAttributeTaskZeroCandidatesIsUnregistered`). |
+| AC-02.3 | Karşılandı | İki aday ambiguous, iki change de adlandırıldı, seçim yok (`TestAttributeTaskTwoCandidatesIsAmbiguous`). |
+| AC-02.4 | Karşılandı | Dosya-dışı drift + blocking; kapsam-içi sessiz (`TestAttributeTaskDriftFiresPerFile`). |
+| AC-02.5 | Karşılandı | Her bulguda provenance + next_action; çözülemeyen uid boş dosya ile unregistered, yol uydurulmuyor (`TestAttributeTaskNeverInventsPaths`). |
+
+**Tasarım notu (D-145 yorumu):** sembol→dosya eşleşmesi `symbol_uid`
+üzerinden canlı index'ten çözülüyor (`index.Store.PathForUID`). Hüküm kümesi
+hâlâ yalnızca discovery satırlarınca sürülüyor — index yalnızca dosya adını
+veriyor; keşfedilmemiş iş her hükmün dışında. Çözülemeyen uid unregistered
+oluyor, hata değil.
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M6 | aday eşitliği bozuldu (`scope == file+"?"`) | attributed + ambiguous testleri FAIL |
+| M7 | drift koşulu tersine çevrildi | drift + single testleri FAIL |
+| M8 | `PathForUID` hep boş döndü | attributed + PathForUID testleri FAIL |
+| M9 | `ListTaskChanges` NULL-task listeledi | ambiguous testi FAIL |
+| M10 | change-yokluğu corruption sayıldı | without-change testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1131**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
