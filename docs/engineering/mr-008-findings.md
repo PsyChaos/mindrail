@@ -157,7 +157,7 @@ anlamda fail-open.
 |---|---|---|
 | AC-04.1 | Karşılandı | `TestOverlappingBaselinesResolveEndToEnd`: TSK-A gerçek `AfterChange` yoluyla, TSK-B aynı lineage ile — paylaşılan semboller iki change'i adlandırıp blokluyor; override biri çözerken diğeri bloklu kalıyor; üçüncü dosya drift + unregistered blokluyor; üç çözüm yolu (override × 2, baseline-genişletme) değerlendirmeyi boşaltıyor. |
 | AC-04.2 | Karşılandı | Grep kanıtı: yeni kodda `impact/evidence/coverage` yok; yeni kod yalnızca REQ-01'in 3 kodu (`SCOPE_DRIFT`, `UNREGISTERED_CHANGE`, `RECONCILE_AMBIGUOUS`); CLI diff'i golden-sayı + test; knowledge `schema.WriteVersion = 1` (`internal/knowledge/schema/registry.go:38`, test-pinli). |
-| AC-04.3 | Karşılandı | M1…M15 defterde, tamamı kırmızı koşuldu. TASK-04 yeni guard eklemiyor (yalnız E2E kanıt testi) — mutasyon borcu yok. |
+| AC-04.3 | Karşılandı (2 kapı-bulgusuyla) | M1…M15 defterde, tamamı kırmızı koşuldu. TASK-04 yeni guard eklemiyor — mutasyon borcu yok. Reader: Durum bloğu yoktu → yazıldı (task-list MR-008). Breaker: `c::h` override'u baseline-genişletmeyle maskeliydi → ara-beat assertion (override'lar sonrası yalnız drift) + iki-change-adlandırma pini eklendi; maskeleme probu FAIL ile doğrulandı. |
 
 E2E dürüstlük notu: TSK-B ayağı satır-seviyesi (aynı içerik → aynı lineage,
 gerçek bağımsız discovery'nin üreteceği satırlar); c.py ayağı ham-SQL

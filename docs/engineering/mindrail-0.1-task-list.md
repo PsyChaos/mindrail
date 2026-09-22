@@ -432,10 +432,35 @@ Reconcile sonucu ile claim/before_change kapsamını karşılaştırarak scope d
 
 #### Kabul kriterleri
 
-- [ ] Beyan edilen scope dışındaki değişiklik yapılandırılmış drift bulgusu üretir.
-- [ ] Birden fazla Change adayı bulunan sembol otomatik sahiplenilmez.
-- [ ] Unregistered veya ambiguous değişiklik completion/verify sırasında bloklanabilir.
-- [ ] Sonuç provenance ve uygulanabilir `next_action` içerir.
+- [x] Beyan edilen scope dışındaki değişiklik yapılandırılmış drift bulgusu üretir.
+- [x] Birden fazla Change adayı bulunan sembol otomatik sahiplenilmez.
+- [x] Unregistered veya ambiguous değişiklik completion/verify sırasında bloklanabilir.
+- [x] Sonuç provenance ve uygulanabilir `next_action` içerir.
+
+#### Durum
+
+**Tamamlandı.** Dört görev (TASK-01…04) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de 2 check-düşürücü vaka (shipped
+pin newline'ı, kod sayacı 40→43) + kapıda FK pini kapatıldı. TASK-02
+kapıları temizdi (D-145 yorumu + tasarım sapması notu). TASK-03 B-1'i
+kapattı (fail-closed `RecordAttribution`); override'un anahtar-global
+olduğu testle pinlendi. TASK-04 ilk turda 2 kapı-bulgusu verdi (Durum bloğu
+yokluğu, E2E'de `c::h` override maskelemesi) — ikisi de aynı turda
+kapatıldı: ara-beat assertion'ı + iki-change-adlandırma pini eklendi.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-008-requirements.md](mr-008-requirements.md),
+[mr-008-design.md](mr-008-design.md), `bf3cc05`), kararlar D-132…D-145:
+D-132 beyan-kapsam-bazelin, D-133 dosya-üyeliği-adaylık, D-134 lease-tavsiye,
+D-136 bulgu-saklanmaz, D-137 override-öncelikli, D-138 hepsi-bloklar. Yedinci
+göç `migrations/000007_scope_attribution.sql`, tablo sürümü 7, 3 yeni kod
+(43 toplam).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1138
+test (MR-008 başında 1122 idi). 15 guard mutasyonu kırmızı koşuldu
+(M1…M15). Kapıların MR-009'a bıraktıkları: blocking set (code + provenance
++ remedy) MR-013'ün kapı girdisi; override satırları MR-015'in atama girdisi;
+attributed (change, symbol) çiftleri MR-009'un traversal girdisi.
 
 ---
 

@@ -3,6 +3,7 @@ package changes_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -103,6 +104,16 @@ func TestOverlappingBaselinesResolveEndToEnd(t *testing.T) {
 		byKey[aSymbols[1].Key] != app.CodeReconcileAmbiguous {
 		t.Fatalf("shared symbols = %+v, want both ambiguous", byKey)
 	}
+	for _, finding := range blocked {
+		if finding.Code != app.CodeReconcileAmbiguous {
+			continue
+		}
+		for _, id := range []string{changeA.ID, changeB.ID} {
+			if !strings.Contains(finding.Detail, id) {
+				t.Fatalf("ambiguous detail names no %q: %q", id, finding.Detail)
+			}
+		}
+	}
 	if byKey[drifted] != app.CodeScopeDrift {
 		t.Fatalf("drifted file = %+v, want drift", byKey)
 	}
@@ -131,8 +142,9 @@ func TestOverlappingBaselinesResolveEndToEnd(t *testing.T) {
 	}
 
 	// Beat 3: resolve everything — override the sibling and the drifted
-	// symbol, extend the baseline over the drifted file — and the
-	// evaluation clears.
+	// symbol first: only the drift finding may remain, which proves each
+	// override is load-bearing. Then extend the baseline over the drifted
+	// file, and the evaluation clears.
 	if err := fx.store.RecordAttribution(t.Context(), aSymbols[1].Key,
 		changeA.ID, "SES-1", "A owns g"); err != nil {
 		t.Fatal(err)
@@ -140,6 +152,13 @@ func TestOverlappingBaselinesResolveEndToEnd(t *testing.T) {
 	if err := fx.store.RecordAttribution(t.Context(), "c::h",
 		changeA.ID, "SES-1", "A owns h"); err != nil {
 		t.Fatal(err)
+	}
+	overridden, err := fx.service.EvaluateTask(t.Context(), "TSK-A", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overridden) != 1 || overridden[0].Code != app.CodeScopeDrift {
+		t.Fatalf("overridden = %+v, want only the drift", overridden)
 	}
 	if err := fx.store.ClearBaseline(t.Context(), "TSK-A"); err != nil {
 		t.Fatal(err)
