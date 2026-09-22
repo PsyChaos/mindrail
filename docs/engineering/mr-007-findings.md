@@ -351,4 +351,4 @@ mutant + problar temiz).
 ### TASK-05 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
 
 Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
-`go test -list '.*' ./... | grep -c '^Test'` ile COUNT_PLACEHOLDER.
+`go test -list '.*' ./... | grep -c '^Test'` ile **1122**.
