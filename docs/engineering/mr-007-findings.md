@@ -73,7 +73,7 @@ kırmızı. B2/B3/B4 kırmızı. B5 (band 512) kırmızı. FK probları (3 adet)
   `TestOperationLogColumnsAreMandatory` + `TestNewStoreRefusesNilHandle` +
   `TestChangeRowsEnforceForeignKeys` (FK duruşu).
 
-### TASK-01 kapı — Reader PASS, Breaker VERIFIED (yazar-koşulu)
+### TASK-01 kapı — Reader PASS, Breaker VERIFIED (ikinci tur re-grade PASS)
 
 Tam `make check` aşağıda. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1083**.
