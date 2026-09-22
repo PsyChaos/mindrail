@@ -54,8 +54,8 @@
     "semantic_hash": ""
   },
   "go.mod": {
-    "mtime": 1790107083.7105432,
-    "seen": 1790107092.3620784,
+    "mtime": 1790114211.0537488,
+    "seen": 1790114220.2226932,
     "ast_hash": "34b5ad0bcb475f9f814c8266e70b209d",
     "semantic_hash": ""
   },
@@ -931,7 +931,7 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1790104937.8363044,
+    "seen": 1790112979.9572158,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -1164,9 +1164,9 @@
     "semantic_hash": ""
   },
   "docs/engineering/mindrail-0.1-task-list.md": {
-    "mtime": 1790107296.4695356,
-    "seen": 1790107344.6526942,
-    "ast_hash": "f458c21be12c411ba34b61c1353e9c0f",
+    "mtime": 1790114294.8835738,
+    "seen": 1790114302.5589485,
+    "ast_hash": "66aa7f3389dc9aceffb69446ffc3e584",
     "semantic_hash": ""
   },
   "docs/engineering/mr-001-findings.md": {
@@ -1651,7 +1651,7 @@
   },
   "migrations/000002_coordination.sql": {
     "mtime": 1789379955.1471324,
-    "seen": 1790104937.836309,
+    "seen": 1790112979.957222,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -1867,7 +1867,7 @@
   },
   "migrations/000003_lease_idempotency.sql": {
     "mtime": 1789412848.636025,
-    "seen": 1790104937.8363118,
+    "seen": 1790112979.957226,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -2017,7 +2017,7 @@
   },
   "migrations/000004_index.sql": {
     "mtime": 1789730820.9643753,
-    "seen": 1790104937.8363152,
+    "seen": 1790112979.95723,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -2203,7 +2203,7 @@
   },
   "migrations/000005_symbol_identity.sql": {
     "mtime": 1790071147.0840511,
-    "seen": 1790104937.836318,
+    "seen": 1790112979.9572341,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -2323,7 +2323,7 @@
   },
   "migrations/000006_changes.sql": {
     "mtime": 1790097209.7048697,
-    "seen": 1790104937.8363204,
+    "seen": 1790112979.957238,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -2431,7 +2431,7 @@
   },
   "migrations/000007_scope_attribution.sql": {
     "mtime": 1790105470.7596946,
-    "seen": 1790106062.5410137,
+    "seen": 1790112979.9572415,
     "ast_hash": "",
     "semantic_hash": ""
   },
@@ -2469,6 +2469,60 @@
     "mtime": 1790107286.9895244,
     "seen": 1790107344.6524904,
     "ast_hash": "f086d704fb7772508cfb61dee898cf9e",
+    "semantic_hash": ""
+  },
+  "docs/engineering/mr-009-design.md": {
+    "mtime": 1790112961.881201,
+    "seen": 1790112979.957516,
+    "ast_hash": "34a231a6c0db5b4f0aceadadccd88f0f",
+    "semantic_hash": ""
+  },
+  "docs/engineering/mr-009-requirements.md": {
+    "mtime": 1790112928.6445296,
+    "seen": 1790112979.957522,
+    "ast_hash": "b3d0824ada6d5097592236c4be2fd56a",
+    "semantic_hash": ""
+  },
+  "internal/impact/impact.go": {
+    "mtime": 1790114257.973312,
+    "seen": 1790114302.5588284,
+    "ast_hash": "01c0efcd90a8482438487e4fd70a44f5",
+    "semantic_hash": ""
+  },
+  "internal/impact/impact_test.go": {
+    "mtime": 1790113702.1006618,
+    "seen": 1790113751.177421,
+    "ast_hash": "c1982745c0a3c4b3f7711034c1f77d0f",
+    "semantic_hash": ""
+  },
+  "internal/index/impact_reads.go": {
+    "mtime": 1790114263.0271182,
+    "seen": 1790114302.5588348,
+    "ast_hash": "2582be5208ff6d53eecd46c30674e94b",
+    "semantic_hash": ""
+  },
+  "internal/index/impact_reads_test.go": {
+    "mtime": 1790113457.0382054,
+    "seen": 1790113535.0858667,
+    "ast_hash": "e95e14da4d47dce9b073dc51173da018",
+    "semantic_hash": ""
+  },
+  "docs/engineering/mr-009-findings.md": {
+    "mtime": 1790114299.194441,
+    "seen": 1790114302.5589657,
+    "ast_hash": "6e058b31a7f29482ced7833867b4d3c4",
+    "semantic_hash": ""
+  },
+  "internal/impact/fallback_test.go": {
+    "mtime": 1790113933.8796396,
+    "seen": 1790114220.2229197,
+    "ast_hash": "209840247abb892224b9a0cf72c321a7",
+    "semantic_hash": ""
+  },
+  "internal/impact/e2e_impact_test.go": {
+    "mtime": 1790113875.282439,
+    "seen": 1790114220.2229173,
+    "ast_hash": "bffc5cc4b704924addbf9eecfb18eb5b",
     "semantic_hash": ""
   }
 }
