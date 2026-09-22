@@ -46,6 +46,21 @@ func pythonInfo(t *testing.T) parser.LanguageInfo {
 	return adapter.Info()
 }
 
+func fixtureFacts(t *testing.T, source []byte) Facts {
+	t.Helper()
+	r, err := parser.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	a, _ := r.Lookup("fixture.py")
+	facts, err := parser.Extract(t.Context(), a, parser.SourceFile{Content: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return facts
+}
+
 func entryFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
@@ -72,7 +87,7 @@ func TestIdenticalContentSharesOneValidatedSnapshot(t *testing.T) {
 	cache := New(paths)
 	info := pythonInfo(t)
 	source := []byte("def alpha(): pass\n")
-	facts := Facts{Symbols: []parser.Symbol{{Name: "alpha", Kind: "function", Range: parser.Range{StartByte: 0, EndByte: uint(len(source))}}}}
+	facts := fixtureFacts(t, source)
 	calls := 0
 	compute := func(context.Context, []byte) (Facts, error) {
 		calls++
@@ -103,7 +118,7 @@ func TestIdenticalContentSharesOneValidatedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(entry, []byte(info.Language)) || !bytes.Contains(entry, []byte(info.GrammarVersion)) ||
-		!bytes.Contains(entry, []byte("\"schema_version\":1")) ||
+		!bytes.Contains(entry, []byte("\"schema_version\":2")) ||
 		!bytes.Contains(entry, []byte(contentHash(source))) {
 		t.Fatalf("entry omits key identity: %s", entry)
 	}
@@ -161,7 +176,7 @@ func TestDeletedCorruptAndUnavailableCacheRecomputes(t *testing.T) {
 	cache := New(paths)
 	info := pythonInfo(t)
 	source := []byte("def alpha(): pass\n")
-	want := Facts{Symbols: []parser.Symbol{{Name: "alpha", Kind: "function", Range: parser.Range{StartByte: 0, EndByte: uint(len(source))}}}}
+	want := fixtureFacts(t, source)
 	calls := 0
 	compute := func(context.Context, []byte) (Facts, error) { calls++; return want, nil }
 	get := func() {
@@ -260,7 +275,7 @@ func TestTamperedDigestAndMalformedFactsAreCacheMisses(t *testing.T) {
 	cache := New(paths)
 	info := pythonInfo(t)
 	source := []byte("def alpha(): pass\n")
-	want := Facts{Symbols: []parser.Symbol{{Name: "alpha", Kind: "function", Range: parser.Range{StartByte: 0, EndByte: uint(len(source))}}}}
+	want := fixtureFacts(t, source)
 	calls := 0
 	compute := func(context.Context, []byte) (Facts, error) { calls++; return want, nil }
 	if _, err := cache.GetOrCompute(t.Context(), info, source, compute); err != nil {
@@ -530,7 +545,7 @@ func TestConcurrentSameKeyWritersLeaveOneReadableEntry(t *testing.T) {
 	cache := New(paths)
 	info := pythonInfo(t)
 	source := []byte("def alpha(): pass\n")
-	want := Facts{Symbols: []parser.Symbol{{Name: "alpha", Kind: "function", Range: parser.Range{EndByte: uint(len(source))}}}}
+	want := fixtureFacts(t, source)
 	const writers = 16
 	start := make(chan struct{})
 	errs := make(chan error, writers)

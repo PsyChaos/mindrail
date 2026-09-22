@@ -91,8 +91,8 @@ func TestFileConflictPredicatesPreserveUnchangedAndRequeueChangedHash(t *testing
 	}
 	var state index.FileState
 	var hash sql.NullString
-	if err := db.QueryRowContext(t.Context(), `SELECT state, content_hash FROM file_index_state WHERE path = ?`, path).Scan(&state, &hash); err != nil || state != index.StatePending || hash.Valid {
-		t.Fatalf("changed hash state=%q hash=%v err=%v, want pending and NULL hash", state, hash, err)
+	if err := db.QueryRowContext(t.Context(), `SELECT state, content_hash FROM file_index_state WHERE path = ?`, path).Scan(&state, &hash); err != nil || state != index.StatePending || !hash.Valid || hash.String != "changed" {
+		t.Fatalf("changed hash state=%q hash=%v err=%v, want pending target hash", state, hash, err)
 	}
 	register("", index.StateUnsupported)
 	if n := queryInt(t, db, `SELECT n FROM audit_file_updates`); n != 2 {

@@ -30,7 +30,7 @@ func newRegistry(queryFS fs.FS) (*Registry, error) {
 		{info: LanguageInfo{"tsx", "v0.23.2", []string{".tsx"}}, language: ts.NewLanguage(typescript.LanguageTSX())},
 	}}
 	for _, a := range r.adapters {
-		for _, kind := range []string{"symbols", "references"} {
+		for _, kind := range []string{"symbols", "references", "imports"} {
 			path := "queries/" + a.info.Language + "/" + kind + ".scm"
 			content, err := fs.ReadFile(queryFS, path)
 			if err != nil {
@@ -44,8 +44,10 @@ func newRegistry(queryFS fs.FS) (*Registry, error) {
 			}
 			if kind == "symbols" {
 				a.symbols = query
-			} else {
+			} else if kind == "references" {
 				a.references = query
+			} else {
+				a.imports = query
 			}
 		}
 	}

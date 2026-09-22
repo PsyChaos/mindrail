@@ -20,14 +20,9 @@ import (
 	"github.com/PsyChaos/mindrail/internal/index/parser"
 )
 
-// Facts is the native-free portion of a parse that TASK-03 can currently
-// extract. TASK-05 will extend this DTO when imports and fingerprints exist.
-// No filesystem path, project-unit identity, or SQLite row ID belongs here.
-type Facts struct {
-	Symbols         []parser.Symbol    `json:"symbols"`
-	References      []parser.Reference `json:"references"`
-	HasSyntaxErrors bool               `json:"has_syntax_errors"`
-}
+// Facts is the complete native-free parser output. No filesystem path,
+// project-unit identity, or SQLite row ID belongs in cached facts.
+type Facts = parser.Facts
 
 // Computer re-derives facts from source bytes. It owns and closes any native
 // parser snapshot it creates. A non-nil error (including a partial parse
@@ -172,17 +167,56 @@ func decodeExact(data []byte, value any) error {
 }
 
 func validFacts(facts Facts, contentLen int) bool {
+	if facts.HasSyntaxErrors {
+		return false
+	}
+	keys := make(map[string]bool, len(facts.Symbols))
 	for _, symbol := range facts.Symbols {
-		if symbol.Name == "" || symbol.Kind == "" || !validRange(symbol.Range, contentLen) {
+		if symbol.Name == "" || symbol.Kind == "" || !validRange(symbol.Range, contentLen) ||
+			symbol.LocalKey != parser.LocalKey(symbol.ContainerLocalKey, symbol.Kind, symbol.Name) ||
+			!validRange(symbol.SignatureRange, contentLen) || !within(symbol.SignatureRange, symbol.Range) ||
+			!validHash(symbol.SignatureHash) || !validHash(symbol.BodyHash) || !validHash(symbol.StructureHash) {
+			return false
+		}
+		if symbol.BodyRange != nil && (!validRange(*symbol.BodyRange, contentLen) || !within(*symbol.BodyRange, symbol.Range) || symbol.SignatureRange.EndByte > symbol.BodyRange.StartByte) {
+			return false
+		}
+		keys[symbol.LocalKey] = true
+	}
+	validKey := func(key string) bool { return key == "" || keys[key] }
+	for _, symbol := range facts.Symbols {
+		if !validKey(symbol.ContainerLocalKey) {
 			return false
 		}
 	}
+	for _, imp := range facts.Imports {
+		if imp.Module == "" || !validKey(imp.ImporterLocalKey) || !validRange(imp.Range, contentLen) {
+			return false
+		}
+		for _, name := range imp.Names {
+			if name == "" {
+				return false
+			}
+		}
+	}
 	for _, reference := range facts.References {
-		if reference.Name == "" || reference.Kind == "" || !validRange(reference.Range, contentLen) {
+		if reference.Name == "" || reference.Kind == "" || !validRange(reference.Range, contentLen) ||
+			!validKey(reference.ReferrerLocalKey) || !validKey(reference.ScopeLocalKey) || !validKey(reference.TargetLocalKey) {
 			return false
 		}
 	}
 	return true
+}
+
+func within(inner, outer parser.Range) bool {
+	return inner.StartByte >= outer.StartByte && inner.EndByte <= outer.EndByte
+}
+func validHash(value string) bool {
+	if len(value) != sha256.Size*2 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func validRange(span parser.Range, contentLen int) bool {

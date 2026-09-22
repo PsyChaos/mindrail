@@ -12,7 +12,7 @@ import (
 
 // ParseSchemaVersion invalidates snapshots when extraction semantics change.
 // It is independent of the database migration version.
-const ParseSchemaVersion = 1
+const ParseSchemaVersion = 2
 
 var (
 	ErrSyntax      = errors.New("source contains syntax errors")
@@ -35,6 +35,7 @@ type SyntaxAdapter interface {
 	Info() LanguageInfo
 	Parse(context.Context, SourceFile) (*SyntaxSnapshot, error)
 	Symbols(*SyntaxSnapshot) ([]Symbol, error)
+	Imports(*SyntaxSnapshot) ([]Import, error)
 	References(*SyntaxSnapshot) ([]Reference, error)
 }
 
@@ -45,14 +46,35 @@ type Range struct {
 }
 
 // Symbol and Reference own their strings and contain no native tree pointers.
-// Fingerprints, imports and durable identity are subsequent extraction work.
+// Local keys describe declarations within one source, including duplicate overloads.
+// They become path-qualified logical keys only when the indexer persists facts.
 type Symbol struct {
-	Name, Kind string
-	Range      Range
+	Name, Kind                             string
+	Range                                  Range
+	LocalKey, ContainerLocalKey            string
+	SignatureRange                         Range
+	BodyRange                              *Range
+	SignatureHash, BodyHash, StructureHash string
+}
+type Import struct {
+	Module           string
+	Names            []string
+	Alias            string
+	IsRelative       bool
+	ImporterLocalKey string
+	Range            Range
 }
 type Reference struct {
-	Name, Kind string
-	Range      Range
+	Name, Kind                                      string
+	Range                                           Range
+	ReferrerLocalKey, ScopeLocalKey, TargetLocalKey string
+}
+
+type Facts struct {
+	Symbols         []Symbol    `json:"symbols"`
+	Imports         []Import    `json:"imports"`
+	References      []Reference `json:"references"`
+	HasSyntaxErrors bool        `json:"has_syntax_errors"`
 }
 
 // SyntaxSnapshot owns one native tree. The caller must Close it, including when

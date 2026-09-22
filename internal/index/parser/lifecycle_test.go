@@ -21,7 +21,7 @@ func TestNativeResourcesReturnToBaselineAfter1000CyclesPerLanguage(t *testing.T)
 	for _, a := range r.adapters {
 		t.Run(a.info.Language, func(t *testing.T) {
 			cycle := func() {
-				s, err := a.Parse(context.Background(), SourceFile{Content: []byte(fixtures[a.info.Language])})
+				s, err := a.Parse(context.Background(), SourceFile{Content: []byte(packageFixtures[a.info.Language])})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -30,6 +30,9 @@ func TestNativeResourcesReturnToBaselineAfter1000CyclesPerLanguage(t *testing.T)
 					t.Fatal(err)
 				}
 				if _, err := a.References(s); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := a.Imports(s); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -58,7 +61,7 @@ func TestEveryEmbeddedQueryCompilesAndGrammarABIIsCompatible(t *testing.T) {
 		if abi < ts.MIN_COMPATIBLE_LANGUAGE_VERSION || abi > ts.LANGUAGE_VERSION {
 			t.Fatalf("%s incompatible ABI %d", a.info.Language, abi)
 		}
-		for _, kind := range []string{"symbols", "references"} {
+		for _, kind := range []string{"symbols", "references", "imports"} {
 			path := "queries/" + a.info.Language + "/" + kind + ".scm"
 			content, err := queries.ReadFile(path)
 			if err != nil {

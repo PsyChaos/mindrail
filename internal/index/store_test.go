@@ -265,7 +265,7 @@ func TestRediscoveryPreservesIndexedHashAndUnitScopedCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	resume, err := store.ListPending(t.Context(), "")
-	if err != nil || len(resume) != 2 || resume[0].Path != a || resume[1].Path != b || resume[0].ContentHash != "" {
+	if err != nil || len(resume) != 2 || resume[0].Path != a || resume[1].Path != b || resume[0].ContentHash != "changed" {
 		t.Fatalf("changed hash resume set = %+v, %v", resume, err)
 	}
 }
@@ -386,7 +386,7 @@ func TestMovingFileToNestedUnitDropsOldFacts(t *testing.T) {
 		t.Fatal("unit reassignment retained old-unit facts")
 	}
 	resume, err := store.ListPending(t.Context(), child.ID)
-	if err != nil || len(resume) != 1 || resume[0].UnitID != child.ID || resume[0].State != index.StatePending || resume[0].ContentHash != "" || resume[0].Attempts != 0 {
+	if err != nil || len(resume) != 1 || resume[0].UnitID != child.ID || resume[0].State != index.StatePending || resume[0].ContentHash != "" || resume[0].Attempts != 2 {
 		t.Fatalf("new unit resume state = %+v, err=%v", resume, err)
 	}
 }

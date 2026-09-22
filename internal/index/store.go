@@ -260,7 +260,8 @@ func (s *Store) ReconcileUnits(ctx context.Context, root string, discoveredPaths
 
 // UpsertFileState registers a pending or unsupported file. Rediscovery with no
 // new content hash preserves an already indexed or failed file; a changed hash
-// makes it pending again without claiming the new bytes have been parsed.
+// makes it pending again. A supplied pending hash names target bytes, not a
+// completed parse, and every update advances the per-path CAS generation.
 func (s *Store) UpsertFileState(ctx context.Context, state FileIndexState) error {
 	if state.State != StatePending && state.State != StateUnsupported {
 		return invalidInput("file registration must be pending or unsupported")
@@ -292,19 +293,20 @@ func (s *Store) UpsertFileState(ctx context.Context, state FileIndexState) error
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO file_index_state
 			(path, unit_id, language, content_hash, state)
-			VALUES (?, ?, ?, NULL, ?)
+			VALUES (?, ?, ?, NULLIF(?, ''), ?)
 			ON CONFLICT(path) DO UPDATE SET
 			  unit_id = excluded.unit_id,
 			  language = excluded.language,
-			  content_hash = NULL,
+			  content_hash = excluded.content_hash,
 			  state = excluded.state,
-			  attempts = CASE WHEN file_index_state.unit_id <> excluded.unit_id THEN 0 ELSE file_index_state.attempts END,
+			  attempts = file_index_state.attempts + 1,
 			  last_error = NULL,
 			  indexed_at = NULL
 			WHERE file_index_state.unit_id <> excluded.unit_id
 			   OR (excluded.state = 'unsupported' AND file_index_state.state <> 'unsupported')
-			   OR (excluded.state = 'pending' AND ? <> '' AND file_index_state.content_hash IS NOT NULL AND file_index_state.content_hash <> ?)`,
-			state.Path, state.UnitID, state.Language, state.State, state.ContentHash, state.ContentHash)
+			   OR (excluded.state = 'pending' AND excluded.content_hash IS NOT NULL
+			       AND (file_index_state.content_hash IS NULL OR file_index_state.content_hash <> excluded.content_hash))`,
+			state.Path, state.UnitID, state.Language, state.ContentHash, state.State)
 		return err
 	})
 	if err != nil {
@@ -317,105 +319,116 @@ func (s *Store) UpsertFileState(ctx context.Context, state FileIndexState) error
 // transaction. The caller parses before this call; no parser or filesystem work
 // runs while SQLite holds its write lock.
 func (s *Store) ReplaceFileFacts(ctx context.Context, facts FileFacts) (storage.TxStats, error) {
-	if facts.UnitID == "" || !filepath.IsAbs(facts.Path) || filepath.Clean(facts.Path) != facts.Path || facts.Language == "" || facts.ContentHash == "" {
-		return storage.TxStats{}, invalidInput("replacement needs unit ID, clean absolute path, language and content hash")
-	}
-	if facts.State != StateIndexed && facts.State != StateFailed {
-		return storage.TxStats{}, invalidInput("replacement state must be indexed or failed")
-	}
-	if facts.State == StateFailed && facts.LastError == "" {
-		return storage.TxStats{}, invalidInput("a failed parse needs its error text")
+	if err := validReplacement(facts); err != nil {
+		return storage.TxStats{}, err
 	}
 	if err := s.requireSchema(ctx); err != nil {
 		return storage.TxStats{}, err
 	}
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		if err := fileBelongsToUnit(ctx, tx, facts.UnitID, facts.Path); err != nil {
-			return err
-		}
-		var owner string
-		if err := tx.QueryRowContext(ctx, `SELECT unit_id FROM file_index_state WHERE path = ?`, facts.Path).Scan(&owner); err != nil {
-			return err
-		}
-		if owner != facts.UnitID {
-			return invalidInput("file belongs to another project unit")
-		}
-		for _, table := range []string{"symbol_references", "symbol_imports", "symbols"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE unit_id = ? AND path = ?", facts.UnitID, facts.Path); err != nil {
-				return err
-			}
-		}
-		for _, sym := range facts.Symbols {
-			_, err := tx.ExecContext(ctx, `INSERT INTO symbols
-				(unit_id, path, logical_key, kind, name, container, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				facts.UnitID, facts.Path, sym.LogicalKey, sym.Kind, sym.Name, sym.Container, sym.StartLine, sym.StartCol, sym.EndLine, sym.EndCol, sym.SignatureHash, sym.BodyHash, sym.StructureHash)
-			if err != nil {
-				return err
-			}
-		}
-		for _, imp := range facts.Imports {
-			names, err := marshalNames(imp.Names)
-			if err != nil {
-				return err
-			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO symbol_imports
-				(unit_id, path, importer_key, module, names, alias, is_relative)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`, facts.UnitID, facts.Path, imp.ImporterKey, imp.Module, names, imp.Alias, imp.IsRelative)
-			if err != nil {
-				return err
-			}
-		}
-		for _, ref := range facts.References {
-			resolved := ref.ResolvedSymbolID
-			if ref.TargetLogicalKey != "" {
-				var err error
-				resolved, err = resolveUniqueSymbol(ctx, tx, facts.UnitID, ref.TargetLogicalKey)
-				if err != nil {
-					return err
-				}
-			} else if resolved != nil {
-				var key string
-				if err := tx.QueryRowContext(ctx, `SELECT logical_key FROM symbols WHERE id = ? AND unit_id = ?`, *resolved, facts.UnitID).Scan(&key); errors.Is(err, sql.ErrNoRows) {
-					return invalidInput("resolved reference points outside its project unit")
-				} else if err != nil {
-					return err
-				}
-				unique, err := resolveUniqueSymbol(ctx, tx, facts.UnitID, key)
-				if err != nil {
-					return err
-				}
-				if unique == nil {
-					resolved = nil
-				} else if *unique != *resolved {
-					return invalidInput("resolved reference does not name the unique symbol for its key")
-				}
-			}
-			label := ref.Label
-			if label == "" {
-				label = "STRUCTURAL_NAME_MATCH"
-			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO symbol_references
-				(unit_id, path, referrer_key, target_text, scope_text, label, confidence, resolved_symbol_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, facts.UnitID, facts.Path, ref.ReferrerKey, ref.TargetText, ref.ScopeText, label, ref.Confidence, resolved)
-			if err != nil {
-				return err
-			}
-		}
-		var lastError any
-		if facts.State == StateFailed {
-			lastError = facts.LastError
-		}
-		_, err := tx.ExecContext(ctx, `UPDATE file_index_state SET
-			language = ?, content_hash = ?, state = ?, attempts = attempts + 1,
-			last_error = ?, indexed_at = ? WHERE unit_id = ? AND path = ?`,
-			facts.Language, facts.ContentHash, facts.State, lastError, app.FormatTime(s.clock.Now()), facts.UnitID, facts.Path)
-		return err
+		return s.replaceFileFactsTx(ctx, tx, facts, 1)
 	})
 	if err != nil {
 		return storage.TxStats{}, writeFailure(ctx, s.db, "structural facts", err)
 	}
 	return stats, nil
+}
+
+func validReplacement(facts FileFacts) error {
+	if facts.UnitID == "" || !filepath.IsAbs(facts.Path) || filepath.Clean(facts.Path) != facts.Path || facts.Language == "" || facts.ContentHash == "" {
+		return invalidInput("replacement needs unit ID, clean absolute path, language and content hash")
+	}
+	if facts.State != StateIndexed && facts.State != StateFailed {
+		return invalidInput("replacement state must be indexed or failed")
+	}
+	if facts.State == StateFailed && facts.LastError == "" {
+		return invalidInput("a failed parse needs its error text")
+	}
+	return nil
+}
+
+func (s *Store) replaceFileFactsTx(ctx context.Context, tx *sql.Tx, facts FileFacts, attemptIncrement int) error {
+	if err := fileBelongsToUnit(ctx, tx, facts.UnitID, facts.Path); err != nil {
+		return err
+	}
+	var owner string
+	if err := tx.QueryRowContext(ctx, `SELECT unit_id FROM file_index_state WHERE path = ?`, facts.Path).Scan(&owner); err != nil {
+		return err
+	}
+	if owner != facts.UnitID {
+		return invalidInput("file belongs to another project unit")
+	}
+	for _, table := range []string{"symbol_references", "symbol_imports", "symbols"} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE unit_id = ? AND path = ?", facts.UnitID, facts.Path); err != nil {
+			return err
+		}
+	}
+	for _, sym := range facts.Symbols {
+		_, err := tx.ExecContext(ctx, `INSERT INTO symbols
+				(unit_id, path, logical_key, kind, name, container, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			facts.UnitID, facts.Path, sym.LogicalKey, sym.Kind, sym.Name, sym.Container, sym.StartLine, sym.StartCol, sym.EndLine, sym.EndCol, sym.SignatureHash, sym.BodyHash, sym.StructureHash)
+		if err != nil {
+			return err
+		}
+	}
+	for _, imp := range facts.Imports {
+		names, err := marshalNames(imp.Names)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO symbol_imports
+				(unit_id, path, importer_key, module, names, alias, is_relative)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`, facts.UnitID, facts.Path, imp.ImporterKey, imp.Module, names, imp.Alias, imp.IsRelative)
+		if err != nil {
+			return err
+		}
+	}
+	for _, ref := range facts.References {
+		resolved := ref.ResolvedSymbolID
+		if ref.TargetLogicalKey != "" {
+			var err error
+			resolved, err = resolveUniqueSymbol(ctx, tx, facts.UnitID, ref.TargetLogicalKey)
+			if err != nil {
+				return err
+			}
+		} else if resolved != nil {
+			var key string
+			if err := tx.QueryRowContext(ctx, `SELECT logical_key FROM symbols WHERE id = ? AND unit_id = ?`, *resolved, facts.UnitID).Scan(&key); errors.Is(err, sql.ErrNoRows) {
+				return invalidInput("resolved reference points outside its project unit")
+			} else if err != nil {
+				return err
+			}
+			unique, err := resolveUniqueSymbol(ctx, tx, facts.UnitID, key)
+			if err != nil {
+				return err
+			}
+			if unique == nil {
+				resolved = nil
+			} else if *unique != *resolved {
+				return invalidInput("resolved reference does not name the unique symbol for its key")
+			}
+		}
+		label := ref.Label
+		if label == "" {
+			label = "STRUCTURAL_NAME_MATCH"
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO symbol_references
+				(unit_id, path, referrer_key, target_text, scope_text, label, confidence, resolved_symbol_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, facts.UnitID, facts.Path, ref.ReferrerKey, ref.TargetText, ref.ScopeText, label, ref.Confidence, resolved)
+		if err != nil {
+			return err
+		}
+	}
+	var lastError any
+	if facts.State == StateFailed {
+		lastError = facts.LastError
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE file_index_state SET
+			language = ?, content_hash = ?, state = ?, attempts = attempts + ?,
+			last_error = ?, indexed_at = ? WHERE unit_id = ? AND path = ?`,
+		facts.Language, facts.ContentHash, facts.State, attemptIncrement, lastError, app.FormatTime(s.clock.Now()), facts.UnitID, facts.Path)
+	return err
 }
 
 // ListPending returns the durable resume set in path order. An empty unitID

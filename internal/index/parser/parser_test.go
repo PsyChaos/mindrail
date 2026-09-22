@@ -54,7 +54,7 @@ func TestRegistryExtensionsAndOrder(t *testing.T) {
 			t.Fatalf("unsupported: %s", path)
 		}
 	}
-	if ParseSchemaVersion != 1 {
+	if ParseSchemaVersion != 2 {
 		t.Fatalf("schema: %d", ParseSchemaVersion)
 	}
 	entries := r.Entries()

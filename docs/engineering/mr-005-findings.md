@@ -440,3 +440,69 @@ This gate accepts TASK-04's cache scope only. **AC-04.3 remains partial**
 until TASK-05 exercises warm and deleted-cache equality through the production
 `IndexFile` path, including imports and fingerprints; no end-to-end indexing
 acceptance is claimed here.
+
+## TASK-05 — structural extraction and the incremental path (implementation evidence)
+
+Scope is `internal/index/indexer.go`, `internal/index/store_cas.go`, the
+`internal/index/parser` extraction files (`symbols.go`, `imports.go`,
+`references.go`, `extract.go`), the four `imports.scm` query files, the
+`internal/index/inventory/files.go` walk, the snapshot DTO/validation update
+and the `ParseSchemaVersion` 1→2 bump (D-85: extraction semantics changed
+shape, so every stored snapshot invalidates without touching the database).
+No scheduler, no readiness wiring, no new CLI surface — those are TASK-06's.
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-05.1 | Karşılandı | `TestCompletePackageExtraction` (parser) + `TestIndexFilePersistsFourLanguagePackageFacts` (store): 4 dilde module function, class method (`method`, container bağlı), import formları (plain/aliased/from — Python; default/named/namespace — JS/TS), aynı-dosya çağrısı; satırlar store üzerinden doğrulanır. TASK-03'ün bıraktığı 3 önkoşul kapandı: Python method etiketi (`function`→`method` ebeveyn class ise), TS overload'lar tek sembole indirgenmez (3 ayrı `Symbol`, tek `LocalKey`), JS generator + arrow declaration atlanmaz. |
+| AC-05.2 | Karşılandı | `TestFingerprintSeparatesBodyAndSignature` + `TestIndexFileStoredFingerprintsSeparateBodyAndSignature`: body değişimi yalnız `body_hash`'i değiştirir (`signature`/`structure` sabit); signature değişimi `signature_hash` + `structure_hash`'i değiştirir (`body` sabit). Structure = declaration/signature projeksiyonu + signature baytları; eşit şekilli rename structure'ı değiştirir. `TestMethodBodyDoesNotChangeEnclosingClassStructure` + Python body-leading-comment testi izolasyonu kapatır. |
+| AC-05.3 | Karşılandı | `TestIndexFileUniqueAndAmbiguousCalls` + `TestCASCompletionResolvesOnlyUniqueSameKey`: tek aynı-`logical_key` satırı `resolved_symbol_id` doldurur; sıfır/çok satır NULL bırakır, edge `STRUCTURAL_NAME_MATCH` + confidence ≤ 0.5 taşır. `Store`, `TargetLogicalKey` ile çözümü completion transaction'ı içinde yapar; receiver'lı (`obj.helper`) ve shadow'lu çağrılar hedef üretmez. |
+| AC-05.4 | Karşılandı | `TestIndexFileUnchangedIndexedSkipsParseAndAllSQLWrites`: değişmemiş hash'te parse çağrısı sıfır, dört tabloya INSERT/UPDATE/DELETE trigger'ıyla sıfır yazı. Sayaç/gözlemle, zamanlamayla değil. |
+| AC-05.5 | Karşılandı | `TestIndexFileChangedReplacesOnlyOwnFacts`: değişen dosyanın eski satırları replace edilir (append değil), kardeş dosyanın `symbols.id`'si oynamaz. |
+| AC-05.6 | Karşılandı (birim ölçek) | `TestIndexFileCancellationLeavesTargetPendingAndRetries` + `TestIndexFileResumeSkipsCompletedAndProcessesOnlyRemainder`: cancel ortası pending hedef hash'i bırakır, resume yalnız kaydedilmemiş kalanı parse eder (2 çağrı). Süreç ölçeği (kill/restart) AC-07.2'ye aittir. |
+| AC-04.3 borcu | Kapatıldı (TASK-04'ten devir) | `TestIndexFileWarmDeletedAndCorruptCacheProduceSameDurableFacts`: production `IndexFile` yoluyla warm/deleted/corrupt cache aynı durable fact'leri üretir (sembol + import + fingerprint + resolved reference dahil); parse sayıları 1/sıcak-0/silinmiş-1/bozuk-1. TASK-04'ün "test köprüsü değil üretim yolu" şartı karşılandı. |
+
+Tasarım-doğruluk notları:
+
+- `Indexer.IndexFile`, parse'u SQLite yazı transaction'ı dışında yapar
+  (`TestIndexFileNeverParsesInsideWriteTransaction`); kayıt (`RegisterFileCAS`)
+  ve tamamlama (`ReplaceFileFactsCAS`) aynı hedef-hash + generation token'ını
+  transaction içinde recheck eder; stale tamamlama no-op'tur. Kaynak
+  okuma-yazma-yeniden-okuma (`readSource` + `sourceStillMatches`) üç noktada
+  koşar; commit sonrası değişim yeni pending hedef kuyruklar, tamamlanmış eski
+  fact'leri silmez; silinmiş/okunamaz kaynak completion'ı invalidate eder —
+  daha yeni registration'a dokunmadan.
+- Snapshot DTO artık `parser.Facts`'in tamamıdır (import + fingerprint +
+  aralıklar); `validFacts` partial-error'lı, hash'siz, anahtarsız, kapsam-dışı
+  fact'i cache'e yazmaz. `ParseSchemaVersion = 2` bump'ı D-85'in öngördüğü
+  seam üzerinden eski snapshot'ları geçersiz kılar.
+- `LocalKey` hash'li tuple'dır (derinlikte 64 bayt sınırında,
+  `TestLocalKeysRemainBoundedAndUnambiguousAtDepth`); overload'lar anahtarı
+  paylaşır, store tek-satır kuralıyla çözer (D-87). Kalıcı `logical_key`
+  path-qualified JSON çiftidir (`qualifiedKey`); D-83 uyarınca UNIQUE değildir.
+- `inventory.Files` yalnızca fiziki repo root'u yürür; symlink izlemez,
+  `.git/.mindrail/node_modules` ve linked-worktree root'larını atlar,
+  deterministic path sırası döner (TASK-06'nın schedule girdisi).
+
+### TASK-05 guard mutasyon defteri (tamamı geri alındı)
+
+Her mutant focused testi kırmızıya döndürdü; dosyalar backup'tan restore
+edilip md5 ile doğrulandı:
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | `symbols.go`: signature/body hash girdileri takas edildi | `TestFingerprintSeparatesBodyAndSignature`: "body contaminated signature/structure" FAIL |
+| M2 | `store.go` `resolveUniqueSymbol`: `len(ids) != 1` → `len(ids) == 0` (ambiguous da çözülür) | `TestCASCompletionResolvesOnlyUniqueSameKey`: ambiguous pointer dolu FAIL |
+| M3 | `indexer.go`: unchanged-hash skip devre dışı | `TestIndexFileUnchangedIndexedSkipsParseAndAllSQLWrites`: `Skipped:false`, parse/yazı FAIL |
+| M4 | `snapshot/cache.go` `validFacts`: `HasSyntaxErrors` reddi devre dışı | `TestCompleteFactsValidation/partial_success`: "malformed facts accepted" FAIL |
+| M5 | `store_cas.go` `ReplaceFileFactsCAS`: CAS token eşitliği devre dışı | `TestCompletionCASRejectsStaleH1BeforeDeletingH2Facts`: stale H1 `applied=true` FAIL |
+
+(Yanlış kurulan ilk M1 — `bodyBytes` kullanılmayıp derleme hatası verdi —
+geçersiz sayılıp derlenen takas mutantıyla tekrarlandı; yukarıdaki M1
+doğru mutanttır.)
+
+### TASK-05 kapı (PENDING — bağımsız değerlendirme çalışmadı)
+
+Tam doğrulama: `GOCACHE=/tmp/mindrail-go-build make check` yeşil (exit 0),
+`git diff --check` temiz, test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **996** (TASK-04 kapısında
+946 idi, +50).

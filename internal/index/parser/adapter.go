@@ -12,11 +12,11 @@ import (
 )
 
 type adapter struct {
-	mu                  sync.RWMutex
-	info                LanguageInfo
-	language            *ts.Language
-	symbols, references *ts.Query
-	closed              bool
+	mu                           sync.RWMutex
+	info                         LanguageInfo
+	language                     *ts.Language
+	symbols, references, imports *ts.Query
+	closed                       bool
 }
 
 var _ SyntaxAdapter = (*adapter)(nil)
@@ -38,6 +38,9 @@ func (a *adapter) close() {
 	}
 	if a.references != nil {
 		a.references.Close()
+	}
+	if a.imports != nil {
+		a.imports.Close()
 	}
 	a.closed = true
 }
@@ -81,28 +84,43 @@ func (a *adapter) Parse(ctx context.Context, src SourceFile) (*SyntaxSnapshot, e
 }
 
 func (a *adapter) Symbols(s *SyntaxSnapshot) ([]Symbol, error) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
 	var symbols []Symbol
-	err := a.capture(s, a.symbols, func(name, kind string, span Range) {
-		symbols = append(symbols, Symbol{Name: name, Kind: kind, Range: span})
+	err := a.withSnapshot(s, func() error {
+		declarations, err := a.declarations(s)
+		for _, declaration := range declarations {
+			symbols = append(symbols, declaration.symbol)
+		}
+		return err
 	})
 	return symbols, err
 }
 
 func (a *adapter) References(s *SyntaxSnapshot) ([]Reference, error) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
 	var references []Reference
-	err := a.capture(s, a.references, func(name, kind string, span Range) {
-		references = append(references, Reference{Name: name, Kind: kind, Range: span})
+	err := a.withSnapshot(s, func() error {
+		var err error
+		references, err = a.extractReferences(s)
+		return err
 	})
 	return references, err
 }
 
-// capture runs a compiled query while the adapter read lock is held. Every
-// match captures @name plus a normalized kind (@function, @class or @call).
-func (a *adapter) capture(s *SyntaxSnapshot, query *ts.Query, emit func(string, string, Range)) error {
+func (a *adapter) Imports(s *SyntaxSnapshot) ([]Import, error) {
+	var imports []Import
+	err := a.withSnapshot(s, func() error {
+		declarations, err := a.declarations(s)
+		if err != nil {
+			return err
+		}
+		imports, err = a.extractImports(s, declarations)
+		return err
+	})
+	return imports, err
+}
+
+func (a *adapter) withSnapshot(s *SyntaxSnapshot, fn func() error) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if a.closed {
 		return ErrClosed
 	}
@@ -114,30 +132,5 @@ func (a *adapter) capture(s *SyntaxSnapshot, query *ts.Query, emit func(string, 
 	if s.tree == nil || s.owner != a {
 		return ErrSnapshot
 	}
-	cursor := ts.NewQueryCursor()
-	defer cursor.Close()
-	matches := cursor.Matches(query, s.tree.RootNode(), s.source)
-	names := query.CaptureNames()
-	for match := matches.Next(); match != nil; match = matches.Next() {
-		var name, kind string
-		var span Range
-		for _, capture := range match.Captures {
-			label := names[capture.Index]
-			if label == "name" {
-				name = capture.Node.Utf8Text(s.source)
-			} else {
-				kind = label
-				n := capture.Node
-				start, end := n.StartPosition(), n.EndPosition()
-				span = Range{n.StartByte(), n.EndByte(), start.Row, start.Column, end.Row, end.Column}
-			}
-		}
-		if name != "" && kind != "" {
-			emit(name, kind, span)
-		}
-	}
-	if cursor.DidExceedMatchLimit() {
-		return fmt.Errorf("%s query exceeded match limit", a.info.Language)
-	}
-	return nil
+	return fn()
 }
