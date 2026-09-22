@@ -67,3 +67,56 @@ func TestImpactReadsServeTraversal(t *testing.T) {
 		t.Fatalf("unknown facts = %v, %v", found, err)
 	}
 }
+
+// TestImpactFallbackReadsServeWeakLayers is MR-009 TASK-02. The fallback
+// layers read names, units and bound bindings: every candidate with its
+// file, the floor's unit, and bound-only invariant ids.
+func TestImpactFallbackReadsServeWeakLayers(t *testing.T) {
+	store, db := indexStore(t)
+	unit, err := store.UpsertUnit(t.Context(), t.TempDir(), index.UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := func(statement string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(t.Context(), statement, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO symbol_identities
+		(symbol_uid, project_id, unit_id, language, logical_key, previous_keys, created_at)
+		VALUES ('SYM-F-A', 'PRJ', ?, 'python', 'a', '[]', '2026-09-23T10:00:00Z'),
+		('SYM-F-W', 'PRJ', ?, 'python', 'w', '[]', '2026-09-23T10:00:00Z')`, unit.ID, unit.ID)
+	exec(`INSERT INTO symbols
+		(unit_id, path, logical_key, kind, name, start_line, start_col, end_line, end_col,
+		signature_hash, body_hash, structure_hash, symbol_uid)
+		VALUES (?, '/r/a.py', 'a', 'function', 'fa', 1, 0, 2, 0, 's', 'b', 't', 'SYM-F-A'),
+		(?, '/r/c.py', 'w', 'function', 'fa', 1, 0, 2, 0, 's', 'b', 't', 'SYM-F-W'),
+		(?, '/r/d.py', 'u', 'function', 'fa', 1, 0, 2, 0, 's', 'b', 't', NULL)`,
+		unit.ID, unit.ID, unit.ID)
+	exec(`INSERT INTO invariant_symbol_bindings (invariant_id, symbol_uid, status, updated_at)
+		VALUES ('INV-1', 'SYM-F-A', 'bound', '2026-09-23T10:00:00Z'),
+		('INV-9', 'SYM-F-A', 'orphaned', '2026-09-23T10:00:00Z')`)
+
+	named, err := store.SymbolsNamed(t.Context(), "fa")
+	if err != nil || len(named) != 2 {
+		t.Fatalf("named = %+v, %v", named, err)
+	}
+	if named[0].UID != "SYM-F-A" || named[1].Path != "/r/c.py" {
+		t.Fatalf("named = %+v", named)
+	}
+	if empty, err := store.SymbolsNamed(t.Context(), "nope"); err != nil || len(empty) != 0 {
+		t.Fatalf("unknown name = %+v, %v", empty, err)
+	}
+	gotUnit, gotPath, found, err := store.UnitForUID(t.Context(), "SYM-F-A")
+	if err != nil || !found || gotUnit != unit.ID || gotPath != "/r/a.py" {
+		t.Fatalf("unit = %q %q, %v, %v", gotUnit, gotPath, found, err)
+	}
+	if _, _, found, err := store.UnitForUID(t.Context(), "SYM-NOPE"); err != nil || found {
+		t.Fatalf("unknown unit = %v, %v", found, err)
+	}
+	bound, err := store.BindingsForUID(t.Context(), "SYM-F-A")
+	if err != nil || len(bound) != 1 || bound[0] != "INV-1" {
+		t.Fatalf("bound = %+v, %v", bound, err)
+	}
+}

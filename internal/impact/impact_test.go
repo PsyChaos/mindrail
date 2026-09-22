@@ -104,7 +104,8 @@ func TestAnalyzeFollowsResolvedEdges(t *testing.T) {
 	seedChain(t, fx)
 
 	result, err := fx.service.Analyze(t.Context(), impact.Request{
-		Symbols: []impact.Input{{UID: "SYM-I-A"}},
+		Symbols:    []impact.Input{{UID: "SYM-I-A"}},
+		DirectOnly: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +141,8 @@ func TestAnalyzeDepthDefaultsToOne(t *testing.T) {
 	seedChain(t, fx)
 
 	shallow, err := fx.service.Analyze(t.Context(), impact.Request{
-		Symbols: []impact.Input{{UID: "SYM-I-A"}},
+		Symbols:    []impact.Input{{UID: "SYM-I-A"}},
+		DirectOnly: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -149,8 +151,9 @@ func TestAnalyzeDepthDefaultsToOne(t *testing.T) {
 		t.Fatalf("shallow = %+v", shallow.Entries)
 	}
 	deep, err := fx.service.Analyze(t.Context(), impact.Request{
-		Symbols: []impact.Input{{UID: "SYM-I-A"}},
-		Depth:   2,
+		Symbols:    []impact.Input{{UID: "SYM-I-A"}},
+		Depth:      2,
+		DirectOnly: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +177,8 @@ func TestAnalyzeKeepsSharedReferrersDistinct(t *testing.T) {
 	seedChain(t, fx)
 
 	result, err := fx.service.Analyze(t.Context(), impact.Request{
-		Symbols: []impact.Input{{UID: "SYM-I-A"}, {UID: "SYM-I-D"}},
+		Symbols:    []impact.Input{{UID: "SYM-I-A"}, {UID: "SYM-I-D"}},
+		DirectOnly: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -200,8 +204,9 @@ func TestAnalyzeBreadthCapAndOverride(t *testing.T) {
 	seedChain(t, fx)
 
 	plain, err := fx.service.Analyze(t.Context(), impact.Request{
-		Symbols: []impact.Input{{UID: "SYM-I-A"}},
-		Depth:   2,
+		Symbols:    []impact.Input{{UID: "SYM-I-A"}},
+		Depth:      2,
+		DirectOnly: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +216,7 @@ func TestAnalyzeBreadthCapAndOverride(t *testing.T) {
 	}
 	lifted, err := fx.service.Analyze(context.Background(), impact.Request{
 		Symbols:         []impact.Input{{Key: "a"}},
+		DirectOnly:      true,
 		BreadthOverride: impact.PackageBreadth,
 		Justification:   "public API rule: exported symbol",
 	})
@@ -229,6 +235,7 @@ func TestAnalyzeBreadthCapAndOverride(t *testing.T) {
 	}
 	bare, err := fx.service.Analyze(t.Context(), impact.Request{
 		Symbols:         []impact.Input{{UID: "SYM-I-A"}},
+		DirectOnly:      true,
 		BreadthOverride: impact.PackageBreadth,
 	})
 	if err != nil {

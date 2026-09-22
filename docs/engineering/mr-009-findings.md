@@ -50,3 +50,33 @@ Düzeltme: override yalnız `Justification != ""` iken uygulanıyor, yoksa
 yapısal cap duruyor (`impact.go`); pin eklendi (M5 ile kırmızı doğrulandı).
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Çözümsüz cross-file kullanıcı name-match ≤0.5 + gerekçe, direct'e yükselmiyor (`TestAnalyzeNameMatchFallback`). |
+| AC-02.2 | Karşılandı | Değişen dosya katmanı gerekçesiyle raporlanıyor, MODULE; sembol edge'i uydurulmuyor (`TestAnalyzeFileFallbackReportsFloor`). |
+| AC-02.3 | Karşılandı | İki aynı-isim tek ambiguous entry'de tüm adaylarla, seçim yok (`TestAnalyzeSameNameAmbiguityNeverCollapses`). |
+| AC-02.4 | Karşılandı | Bound invariant'lar entry yanında + scope metni; bound-dışı statüler yok (`TestAnalyzeListsBoundInvariants`). |
+
+**Tasarım notları:** tırmanış yalnız direct edge'leri izler (zayıf sinyal
+yükseltilmez); `DirectOnly` AC-01.4'ün direct-only modunu korur (dondurulmuş
+metinde yoktu — 3 satırlık gap-fill, kapıda); name-match/ambiguous
+confidence 0.5 indexer sabitinin kelimesi, uydurma değil.
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M6 | name-match confidence 0.5 → 0.9 | fallback + ambiguity testleri FAIL |
+| M7 | ambiguous eşiği `default` → `case 1, 2` (çökertme) | ambiguity testi FAIL |
+| M8 | binding statü filtresi kaldırıldı | invariant testi FAIL (orphaned sızdı) |
+| M9 | `DirectOnly` yok sayıldı | direct-only + breadth testleri FAIL |
+| M10 | `SymbolsNamed` NULL-uid filtresi kaldırıldı | ambiguity testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1150**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

@@ -78,6 +78,99 @@ func (s *Store) UIDForKey(ctx context.Context, unitID, path, key string) (string
 	return uid.String, true, nil
 }
 
+// NamedSymbol is one declaration sharing a name: the fallback's candidate
+// set. Same-name declarations ambiguate instead of collapsing (decision
+// D-154), so callers get every candidate with its file and uid.
+type NamedSymbol struct {
+	UnitID string
+	Path   string
+	Key    string
+	Name   string
+	UID    string
+}
+
+// SymbolsNamed returns every live declaration with one name, in
+// unit/path/key order. Rows without an allocated uid contribute nothing:
+// an unidentified declaration cannot candidate.
+func (s *Store) SymbolsNamed(ctx context.Context, name string) ([]NamedSymbol, error) {
+	if name == "" {
+		return nil, invalidInput("name lookup needs a name")
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT unit_id, path, logical_key, name, symbol_uid
+		FROM symbols WHERE name = ? AND symbol_uid IS NOT NULL AND symbol_uid != ''
+		ORDER BY unit_id, path, logical_key`, name)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	var out []NamedSymbol
+	for rows.Next() {
+		var candidate NamedSymbol
+		if err := rows.Scan(&candidate.UnitID, &candidate.Path, &candidate.Key,
+			&candidate.Name, &candidate.UID); err != nil {
+			return nil, corruptState(err)
+		}
+		out = append(out, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return out, nil
+}
+
+// UnitForUID resolves one durable identity to its unit and file: the
+// file/module fallback's floor. Rows without a live fact resolve nothing.
+func (s *Store) UnitForUID(ctx context.Context, uid string) (unitID, path string, found bool, err error) {
+	if uid == "" {
+		return "", "", false, nil
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return "", "", false, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT unit_id, path FROM symbols
+		WHERE symbol_uid = ? ORDER BY id LIMIT 1`, uid).Scan(&unitID, &path)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", "", false, nil
+		}
+		return "", "", false, corruptState(err)
+	}
+	return unitID, path, true, nil
+}
+
+// BindingsForUID returns the bound invariant ids for one durable identity.
+// Only bound rows count as scope: ambiguous and orphaned bindings are MR-006
+// findings, not MR-009 scope (decision D-98).
+func (s *Store) BindingsForUID(ctx context.Context, uid string) ([]string, error) {
+	if uid == "" {
+		return nil, invalidInput("binding listing needs a symbol uid")
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT invariant_id FROM invariant_symbol_bindings
+		WHERE symbol_uid = ? AND status = ? ORDER BY invariant_id`, uid, BindingBound)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, corruptState(err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return out, nil
+}
+
 // FactsForUID resolves one durable identity to the fact row it lives on:
 // key, name and path. Rows without a live fact resolve nothing, so callers
 // describe the edge they rode rather than a target they cannot show.

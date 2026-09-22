@@ -8,6 +8,8 @@ package impact
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/index"
 )
@@ -26,11 +28,22 @@ const (
 	RepositoryBreadth Breadth = "REPOSITORY"
 )
 
-// Edge kinds. Direct rode a resolved reference; the TASK-02 fallbacks add
-// name-match, file and ambiguous kinds.
+// Edge kinds. Direct rode a resolved reference; name-match is a cross-file
+// name use capped at the structural name-match confidence; file is the
+// changed-file floor; ambiguous names every same-name candidate without
+// choosing.
 const (
-	DirectEdge = "direct"
+	DirectEdge    = "direct"
+	NameMatchEdge = "name-match"
+	FileEdge      = "file"
+	AmbiguousEdge = "ambiguous"
 )
+
+// NameMatchConfidence is the confidence of every name-match and ambiguous
+// entry: the structural name-match constant the indexer itself writes on
+// every reference row, reused as vocabulary rather than invented per entry
+// (decision D-146).
+const NameMatchConfidence = 0.5
 
 // Input is one changed symbol, by durable uid or by logical key. A key may
 // resolve to several uids across units: every one is analyzed, never chosen
@@ -42,13 +55,15 @@ type Input struct {
 }
 
 // Request is one analysis. Depth at or below zero means 1 (decision D-150);
-// above 1 runs only when passed explicitly. BreadthOverride with a
-// Justification records a caller-justified wider breadth (path policy,
-// public API rule, explicit invariant scope); without it the structural cap
-// holds.
+// above 1 runs only when passed explicitly. DirectOnly skips every fallback
+// and holds TARGETED breadth: the direct-only mode AC-01.4 names.
+// BreadthOverride with a Justification records a caller-justified wider
+// breadth (path policy, public API rule, explicit invariant scope); without
+// it the structural cap holds.
 type Request struct {
 	Symbols         []Input
 	Depth           int
+	DirectOnly      bool
 	BreadthOverride Breadth
 	Justification   string
 }
@@ -65,15 +80,19 @@ type Via struct {
 // Entry is one affected symbol with its explanation. Confidence is read
 // from the reference row, never invented; Depth is the entry's own reverse
 // distance; FallbackReason is empty exactly when the edge is direct.
+// Invariants lists the bound invariant ids beside the entry's symbols, and
+// ScopeJustification names them as explicit scope text when present.
 type Entry struct {
-	TargetUID      string
-	TargetKey      string
-	TargetName     string
-	TargetPath     string
-	Via            Via
-	Confidence     float64
-	Depth          int
-	FallbackReason string
+	TargetUID          string
+	TargetKey          string
+	TargetName         string
+	TargetPath         string
+	Via                Via
+	Confidence         float64
+	Depth              int
+	FallbackReason     string
+	Invariants         []string
+	ScopeJustification string
 }
 
 // Result is one analysis. StructuralBreadth is what the evidence alone
@@ -125,6 +144,7 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 		visited[uid] = true
 	}
 	seen := map[[2]string]bool{}
+	fallback := false
 	for level := 1; level <= depth && len(frontier) > 0; level++ {
 		var next []string
 		for _, uid := range frontier {
@@ -139,7 +159,11 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 					continue
 				}
 				seen[key] = true
-				result.Entries = append(result.Entries, Entry{
+				referrerUID, ok, err := s.indexes.UIDForKey(ctx, referrer.UnitID, referrer.Path, referrer.Key)
+				if err != nil {
+					return Result{}, err
+				}
+				entry, err := s.withInvariants(ctx, Entry{
 					TargetUID:  uid,
 					TargetKey:  target.key,
 					TargetName: target.name,
@@ -152,20 +176,159 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 					},
 					Confidence: referrer.Confidence,
 					Depth:      level,
-				})
-				if level < depth {
-					if referrerUID, ok, err := s.indexes.UIDForKey(ctx, referrer.UnitID, referrer.Path, referrer.Key); err != nil {
-						return Result{}, err
-					} else if ok && !visited[referrerUID] {
-						visited[referrerUID] = true
-						next = append(next, referrerUID)
-					}
+				}, uidsOf(ok, referrerUID, uid))
+				if err != nil {
+					return Result{}, err
 				}
+				result.Entries = append(result.Entries, entry)
+				if level < depth && ok && !visited[referrerUID] {
+					visited[referrerUID] = true
+					next = append(next, referrerUID)
+				}
+			}
+			if !request.DirectOnly {
+				engaged, err := s.fallbacks(ctx, &result, seen, uid, target, level)
+				if err != nil {
+					return Result{}, err
+				}
+				fallback = fallback || engaged
 			}
 		}
 		frontier = next
 	}
+	if fallback {
+		result.StructuralBreadth = ModuleBreadth
+		result.Breadth = ModuleBreadth
+	}
 	return result, nil
+}
+
+// fallbacks adds the weak layers for one analyzed symbol: the changed-file
+// floor always, then the name layer — one name-match entry per unresolved
+// name user, or one ambiguous entry naming every candidate when several
+// declarations share the name (decision D-154). The climb never follows
+// fallback edges: weak signals do not amplify. It reports whether any
+// fallback engaged.
+func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[2]string]bool, uid string, target targetFact, level int) (bool, error) {
+	unitID, path, found, err := s.indexes.UnitForUID(ctx, uid)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		file, err := s.withInvariants(ctx, Entry{
+			TargetUID:  uid,
+			TargetKey:  target.key,
+			TargetName: target.name,
+			TargetPath: path,
+			Via: Via{
+				ReferrerPath: path,
+				Kind:         FileEdge,
+			},
+			Confidence:     1,
+			Depth:          level,
+			FallbackReason: "changed file floor: " + path + " in unit " + unitID,
+		}, []string{uid})
+		if err != nil {
+			return false, err
+		}
+		result.Entries = append(result.Entries, file)
+	}
+	if target.name == "" {
+		return found, nil
+	}
+	candidates, err := s.indexes.SymbolsNamed(ctx, target.name)
+	if err != nil {
+		return false, err
+	}
+	var fresh []index.NamedSymbol
+	for _, candidate := range candidates {
+		if candidate.UID == uid || seen[[2]string{candidate.Key, uid}] {
+			continue
+		}
+		fresh = append(fresh, candidate)
+	}
+	switch len(fresh) {
+	case 0:
+	case 1:
+		candidate := fresh[0]
+		seen[[2]string{candidate.Key, uid}] = true
+		match, err := s.withInvariants(ctx, Entry{
+			TargetUID:  uid,
+			TargetKey:  target.key,
+			TargetName: target.name,
+			TargetPath: target.path,
+			Via: Via{
+				ReferrerKey:  candidate.Key,
+				ReferrerPath: candidate.Path,
+				TargetText:   target.name,
+				Kind:         NameMatchEdge,
+			},
+			Confidence:     NameMatchConfidence,
+			Depth:          level,
+			FallbackReason: "cross-file name use of " + target.name + " by " + candidate.Key + ", unresolved (D-90)",
+		}, []string{uid, candidate.UID})
+		if err != nil {
+			return false, err
+		}
+		result.Entries = append(result.Entries, match)
+	default:
+		var uids []string
+		for _, candidate := range fresh {
+			seen[[2]string{candidate.Key, uid}] = true
+			uids = append(uids, candidate.UID)
+		}
+		ambiguous, err := s.withInvariants(ctx, Entry{
+			TargetUID:  uid,
+			TargetKey:  target.key,
+			TargetName: target.name,
+			TargetPath: target.path,
+			Via: Via{
+				TargetText: target.name,
+				Kind:       AmbiguousEdge,
+			},
+			Confidence:     NameMatchConfidence,
+			Depth:          level,
+			FallbackReason: strings.Join(uids, ", ") + " share name " + target.name + ": no choice taken (D-154)",
+		}, append([]string{uid}, uids...))
+		if err != nil {
+			return false, err
+		}
+		result.Entries = append(result.Entries, ambiguous)
+	}
+	return true, nil
+}
+
+// withInvariants lists bound invariant ids beside an entry's symbols and
+// names them as explicit scope text when present (AC-02.4).
+func (s *Service) withInvariants(ctx context.Context, entry Entry, uids []string) (Entry, error) {
+	union := map[string]bool{}
+	for _, uid := range uids {
+		if uid == "" {
+			continue
+		}
+		bound, err := s.indexes.BindingsForUID(ctx, uid)
+		if err != nil {
+			return Entry{}, err
+		}
+		for _, id := range bound {
+			union[id] = true
+		}
+	}
+	for id := range union {
+		entry.Invariants = append(entry.Invariants, id)
+	}
+	sort.Strings(entry.Invariants)
+	if len(entry.Invariants) > 0 {
+		entry.ScopeJustification = "explicit invariant scope: " + strings.Join(entry.Invariants, ", ")
+	}
+	return entry, nil
+}
+
+func uidsOf(ok bool, referrerUID, targetUID string) []string {
+	if ok {
+		return []string{targetUID, referrerUID}
+	}
+	return []string{targetUID}
 }
 
 func (s *Service) resolveInputs(ctx context.Context, inputs []Input) ([]string, error) {
