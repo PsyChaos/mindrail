@@ -692,3 +692,26 @@ func TestIndexFileNeverParsesInsideWriteTransaction(t *testing.T) {
 		t.Fatalf("parse called=%t err=%v", called, err)
 	}
 }
+
+func TestIndexFileRejectsParentDirSymlinkEscape(t *testing.T) {
+	idx, unit, root, _ := indexerFixture(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "a.py"), []byte("def escaped():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "sub")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	escaped := filepath.Join(link, "a.py")
+	if _, err := idx.IndexFile(t.Context(), unit, escaped); err == nil {
+		t.Fatal("parent-dir symlink escape accepted")
+	}
+	state, err := idx.store.ReadFileState(t.Context(), escaped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Exists {
+		t.Fatalf("escape attempt left state: %+v", state.State)
+	}
+}

@@ -500,9 +500,45 @@ edilip md5 ile doğrulandı:
 geçersiz sayılıp derlenen takas mutantıyla tekrarlandı; yukarıdaki M1
 doğru mutanttır.)
 
-### TASK-05 kapı (PENDING — bağımsız değerlendirme çalışmadı)
+### TASK-05 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
 
 Tam doğrulama: `GOCACHE=/tmp/mindrail-go-build make check` yeşil (exit 0),
 `git diff --check` temiz, test sayısı
-`go test -list '.*' ./... | grep -c '^Test'` ile **996** (TASK-04 kapısında
-946 idi, +50).
+`go test -list '.*' ./... | grep -c '^Test'` ile **997** (TASK-04 kapısında
+946 idi, +51).
+
+Bağımsız Reader **PASS**: AC-05.1…05.6 ve TASK-04 AC-04.3 borcu MET;
+D-83/D-85/D-87 uyumlu; bulgu belgesi doğru. 3 LOW: zero-match store-seviyesi
+pin yok (kod `store.go:630` doğru), import-form assertion'ları kolektif,
+gerçek v1→v2 disk-geçiş fixture'ı yok. Üçü de advisory, kapıyı tutmaz.
+
+Bağımsız Breaker önce **BLOCKED** verdi: tek MEDIUM (F1), 2 LOW.
+CAS/recheck/invalidation saldırıları (eşzamanlı IndexFile, stale
+registration/completion, symlink-swap, duplicate-key, unsupported-drain,
+linked-worktree) tuttu; 4 yeni mutant (N1–N4) kırmızıydı. Beşinci mutant
+(N0: `readSource` EvalSymlinks guard'ı devre dışı) **survived** — F1.
+
+**F1 giderimi (MEDIUM, REQ-11):** `TestIndexFileRejectsParentDirSymlinkEscape`
+(`internal/index/indexer_test.go`) eklendi: ebeveyn-dizin symlink'i üzerinden
+birim-içi görünen dosya reddedilir ve state bırakmaz. Guard devre dışı
+bırakıldığında aynı test kırmızı verir (escape kabul edildi); guard geri
+yüklendi (md5 doğrulamalı), focused test yeniden yeşil. F1 kapandı.
+
+### D-90 — cross-file çözümleme dosya-kapsamlıdır, birim-kapsamlı değil
+
+Breaker F2: `qualifiedKey` referring dosyanın rel path'ini `TargetLogicalKey`'e
+gömer, her sembolün `LogicalKey`'i kendi dosyasını gömer — bu yüzden
+birim-içi ama dosya-dışı çağrı (`a.py`'de tek `helper`, `c.py`'den çağrı)
+deneysel olarak NULL döner. Fail-safe'tir (NULL + `STRUCTURAL_NAME_MATCH` +
+0.5), AC-05.3'ün aynı-dosya fixture'ları geçer, ama MR-009'un impact graph'ı
+bu edge'lerden sıfır cross-file kenar alır. D-87'nin "aynı birimde tek
+aynı-anahtar" dili birim-kapsam ima eder; implementasyon dosya-kapsamlıdır.
+Bu kayıt kısıtı dondurur: MR-009 ya anahtarı genişletir ya graph'ı bu kısıtla
+tasarlar; sessiz genişleme yok.
+
+### TASK-06'ya devir (Breaker F3, LOW)
+
+Kayıtsız dilden pending satır (`UpsertFileState` dili doğrulamaz) `ListPending`
+kümesinde terminal `unsupported`'a hiç geçmeden her denemede
+`SYNTAX_LANGUAGE_UNSUPPORTED` verir. Üreten yok (LOW); TASK-06 scheduler
+wiring'i ya kayıtta dili doğrular ya lookup-hatasında terminal duruma çevirir.
