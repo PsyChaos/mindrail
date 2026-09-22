@@ -90,4 +90,19 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1131**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: TEMİZ (5/5 CONFIRMED); Breaker: 6/6 REFUTED
+
+**Reader:** AC-02.1…AC-02.5 CONFIRMED; bulgu kaydı gerçeklikle eşleşiyor;
+D-145 yorum notu dürüst. Gözlem (kapı-dışı): tasarım "symbol paketi dahil
+değil" derken implementasyon uid→dosya için `internal/index`'e dayanıyor —
+canlı filesystem değil, index DB tablosu; kabul edilen tasarım sapması
+olarak kaydedildi.
+
+**Breaker:** 6 sonda da REFUTED (yabancı-task ambiguity, removed satırlar,
+çift-uid tiebreak, rename old_path, prefix sızıntısı, NULL-task adaylığı).
+Gözlem (kapı-dışı): çift-uid tiebreak sessiz lowest-id-wins — pratikte
+imkânsız (twins NULL uid alır), bulgu yok.
+
+**Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı (PENDING)
