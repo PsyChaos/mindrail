@@ -135,4 +135,18 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1137**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: TEMİZ (5/5 CONFIRMED); Breaker: 7/7 REFUTED
+
+**Reader:** AC-03.1…AC-03.5 CONFIRMED; B-1 Go yazım-yolu kapsamında kapandı
+(ham SQL fiziksel olarak mümkün — CHECK yok, kayıtta açık); bulgu kaydı
+gerçeklikle eşleşiyor. Gözlem (kapı-dışı): "malformed key" yalnızca boş
+anahtar — dondurulmuş tanımın dışı değil.
+
+**Breaker:** 7 sonda REFUTED (çapraz-task override çözüyor — D-137 gereği;
+hayalet anahtar sessiz; bilinmeyen lease türü/boş anahtar sızmıyor;
+supersede'de ikinci kazanıyor; iptal edilmiş context hata dönüyor;
+kapsanan ownerless sembol yine unregistered). Gözlem (kapı-dışı): override
+hedef change'i adaylığa karşı doğrulanmıyor — D-137 gereği niyetli, o dar
+anlamda fail-open.
+
+**Karar:** TASK-03 KAPANDI. Breaker B-1 KAPANDI (AC-03.2).
