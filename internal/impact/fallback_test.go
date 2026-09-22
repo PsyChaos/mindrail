@@ -261,3 +261,41 @@ func TestAnalyzeOverrideSurvivesFallback(t *testing.T) {
 		t.Fatalf("override = %q / %q", result.Breadth, result.Justification)
 	}
 }
+
+// TestAnalyzeUnresolvedCallersArriveWeak is the E2E-driven half of AC-02.1:
+// a caller whose reference resolved nowhere still arrives as a name-match
+// entry with the row's confidence and reason — the D-90 layer.
+func TestAnalyzeUnresolvedCallersArriveWeak(t *testing.T) {
+	fx := newImpactFixture(t)
+	seedSymbol(t, fx, "SYM-U-A", "a", "fa", "/r/a.py")
+	w := seedSymbol(t, fx, "SYM-U-W", "w", "fw", "/r/c.py")
+	_ = w
+	if _, err := fx.db.ExecContext(t.Context(), `INSERT INTO symbol_references
+		(unit_id, path, referrer_key, target_text, label, confidence, resolved_symbol_id)
+		VALUES (?, '/r/c.py', 'w', 'fa', 'STRUCTURAL_NAME_MATCH', 0.5, NULL)`,
+		fx.unit.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fx.service.Analyze(t.Context(), impact.Request{
+		Symbols: []impact.Input{{UID: "SYM-U-A"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var caller *impact.Entry
+	for i, entry := range result.Entries {
+		if entry.Via.Kind == impact.DirectEdge {
+			t.Fatalf("unresolved caller promoted to direct: %+v", entry)
+		}
+		if entry.Via.Kind == impact.NameMatchEdge && entry.Via.ReferrerKey == "w" {
+			caller = &result.Entries[i]
+		}
+	}
+	if caller == nil {
+		t.Fatalf("no caller entry in %+v", result.Entries)
+	}
+	if caller.Confidence != 0.5 || caller.FallbackReason == "" {
+		t.Fatalf("caller = %+v", caller)
+	}
+}

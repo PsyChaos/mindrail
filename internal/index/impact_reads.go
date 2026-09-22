@@ -78,6 +78,41 @@ func (s *Store) UIDForKey(ctx context.Context, unitID, path, key string) (string
 	return uid.String, true, nil
 }
 
+// UnresolvedReferringTo returns every unresolved reference row naming one
+// identifier, in unit/path/key order. Cross-file callers live here by
+// construction (decision D-90): their rows carry target_text but no
+// resolved_symbol_id, so MR-009's name layer reads them as weak signals
+// instead of re-resolving them.
+func (s *Store) UnresolvedReferringTo(ctx context.Context, targetText string) ([]Referrer, error) {
+	if targetText == "" {
+		return nil, invalidInput("reference lookup needs a target text")
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT unit_id, path, referrer_key,
+		target_text, label, confidence FROM symbol_references
+		WHERE target_text = ? AND resolved_symbol_id IS NULL
+		ORDER BY unit_id, path, referrer_key`, targetText)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	var out []Referrer
+	for rows.Next() {
+		var referrer Referrer
+		if err := rows.Scan(&referrer.UnitID, &referrer.Path, &referrer.Key,
+			&referrer.TargetText, &referrer.Label, &referrer.Confidence); err != nil {
+			return nil, corruptState(err)
+		}
+		out = append(out, referrer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return out, nil
+}
+
 // NamedSymbol is one declaration sharing a name: the fallback's candidate
 // set. Same-name declarations ambiguate instead of collapsing (decision
 // D-154), so callers get every candidate with its file and uid.

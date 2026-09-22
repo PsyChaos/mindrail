@@ -97,3 +97,31 @@ Düzeltme: override korunuyor, structural MODULE raporlanıyor; test eklendi
 (M12 ile kırmızı doğrulandı).
 
 **Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | `TestAnalyzeRealRepositoryEndToEnd`: gerçek indexlenmiş repo — direct + name-match + file + invariant tek analizde, hepsi açıklamalı, MODULE, depth 1. |
+| AC-03.2 | Karşılandı | Grep kanıtı: migration yok (7 dosya), impact'te `CREATE TABLE` yok, kod 43, knowledge v1, CLI/app diff'i boş. |
+| AC-03.3 | Karşılandı | M1…M13 defterde, tamamı kırmızı koşuldu (aşağıda). Durum bloğu kapıda. |
+
+**E2E bulgusu (AC-02.1 boşluğu, TASK-03'te kapatıldı):** E2E ilk koşuda
+`worker → helper` çağrısını bulamadı — name-match yalnızca aynı-isim
+bildirimleri arıyordu, çözümsüz satırdaki *çağıranları* değil. Oysa AC-02.1
+"name users" diyor. Düzeltme: `UnresolvedReferringTo` (nötr okuma) +
+çağıran katmanı (satır confidence'ı + D-90 gerekçesi, self-hariç,
+seen-dedupe'li); bildirim katmanının gerekçe dili düzeltildi
+("declaration sharing name"). Pin: `TestAnalyzeUnresolvedCallersArriveWeak`
++ E2E; mutant M13 kırmızı.
+
+### TASK-03 guard mutasyon defteri
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M13 | çözümsüz-çağıran katmanı kapatıldı | caller testi + E2E FAIL |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1154**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

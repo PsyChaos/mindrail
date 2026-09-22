@@ -239,6 +239,50 @@ func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[4]str
 	if target.name == "" {
 		return found, nil
 	}
+	targetUnit, _, _, err := s.indexes.UnitForUID(ctx, uid)
+	if err != nil {
+		return false, err
+	}
+	isSelf := func(unitID, path, key string) bool {
+		return unitID == targetUnit && path == target.path && key == target.key
+	}
+	// Unresolved callers first: reference rows that name the target but
+	// resolved nowhere (decision D-90). Row confidence rides along —
+	// capped at 0.5 by the table CHECK, never invented here.
+	unresolved, err := s.indexes.UnresolvedReferringTo(ctx, target.name)
+	if err != nil {
+		return false, err
+	}
+	for _, caller := range unresolved {
+		key := [4]string{caller.UnitID, caller.Path, caller.Key, uid}
+		if seen[key] || isSelf(caller.UnitID, caller.Path, caller.Key) {
+			continue
+		}
+		seen[key] = true
+		callerUID, ok, err := s.indexes.UIDForKey(ctx, caller.UnitID, caller.Path, caller.Key)
+		if err != nil {
+			return false, err
+		}
+		callerEntry, err := s.withInvariants(ctx, Entry{
+			TargetUID:  uid,
+			TargetKey:  target.key,
+			TargetName: target.name,
+			TargetPath: target.path,
+			Via: Via{
+				ReferrerKey:  caller.Key,
+				ReferrerPath: caller.Path,
+				TargetText:   target.name,
+				Kind:         NameMatchEdge,
+			},
+			Confidence:     caller.Confidence,
+			Depth:          level,
+			FallbackReason: "unresolved reference to " + target.name + " by " + caller.Key + " (D-90)",
+		}, uidsOf(ok, callerUID, uid))
+		if err != nil {
+			return false, err
+		}
+		result.Entries = append(result.Entries, callerEntry)
+	}
 	candidates, err := s.indexes.SymbolsNamed(ctx, target.name)
 	if err != nil {
 		return false, err
@@ -268,7 +312,7 @@ func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[4]str
 			},
 			Confidence:     NameMatchConfidence,
 			Depth:          level,
-			FallbackReason: "cross-file name use of " + target.name + " by " + candidate.Key + ", unresolved (D-90)",
+			FallbackReason: "declaration sharing name " + target.name + ": " + candidate.Key + " in " + candidate.Path,
 		}, []string{uid, candidate.UID})
 		if err != nil {
 			return false, err
