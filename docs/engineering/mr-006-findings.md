@@ -176,3 +176,45 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 ### TASK-03 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (exit 0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1051**.
+
+## TASK-03 kabul kanıtı (güncellendi — kapı remediasyonu dahil)
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | Scope-form tablosu + container-collision + prefix (separator guard) + PROJECT sessiz-bound (satırsız). |
+| AC-03.2 | Karşılandı | Bound + idempotent re-refresh + sticky (D-110). |
+| AC-03.3 | Karşılandı | Deferral: satır/bulgu/blok yok. |
+| AC-03.4 | Karşılandı | Stored-row flip (pre-bind → kill → orphaned satır) + finding-only never-bound (D-111) + twins refresh (2 ambiguous satır, severity'e göre blok). |
+| AC-03.5 | Karşılandı | Yazma-çağrısı taraması + import-graf assertion (yalnız `knowledge/record`) + bellek-içi girdiler. |
+
+## Reader / Breaker bulguları ve giderim — TASK-03 kapısı
+
+Bağımsız Reader **FAIL**, Breaker **BLOCKED** — 4 test + 1 ifade açığı:
+
+- **HIGH (kalıcılık):** stored orphaned satırı pinleyen test yoktu. Giderim:
+  orphan testi pre-bind + satır-flip assertion'ı kazandı.
+- **HIGH (SYMBOL-ambiguous refresh):** `blockOnSeverity` refresh-seviyesinde
+  çağrılmıyordu. Giderim: `TestAmbiguousTwinsBlockBySeverity` (CRITICAL bloklar,
+  LOW bloklamaz, 2 satır) + `TestResolvedRefreshPrunesStaleBindings`.
+- **MEDIUM (tarama):** `os.OpenFile` + import-graf assertion'ı eklendi.
+- **MEDIUM (PROJECT):** sessiz-bound + satırsız assertion eklendi.
+- **LOW (F5):** bulgu remedy'si divergence detail + candidates taşır.
+- **LOW (F6):** D-110/D-111 gereksinimlere işlendi (yukarıda).
+
+Breaker probları (a/b) commit'li testlere dönüştü; (c/d/e) yeşildi.
+Reader F2-benzeri sayım itirazı yok; bulgu belgesi M1-benzeri notlarla tutarlı.
+
+### TASK-03 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M8 | sticky ölü-lineage'ı da tutar | extended orphan testi FAIL |
+| M9 | resolved yol prune'u atlar | prune testi FAIL |
+| M10 | bulgu detail'ı düşer | twins remedy assertion FAIL |
+
+### TASK-03 kapı — kapı bulguları remediye edildi, ikinci tur kapı bekleniyor
+
+Reader **FAIL** ve Breaker **BLOCKED** kararlarının istediği 4 test + 1 ifade
+düzeltmesi yukarıda uygulandı (M8–M10 kırmızı). Remediasyonun bağımsız
+yeniden-notlandırılması aşağıda; tam `make check` de öyle. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1053**.

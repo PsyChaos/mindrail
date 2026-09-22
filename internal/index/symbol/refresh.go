@@ -212,7 +212,7 @@ func (s *Service) blockOnSeverity(ctx context.Context, invariant record.Invarian
 	if _, err := s.store.DeleteBindingsExcept(ctx, invariant.ID, uids); err != nil {
 		return Outcome{}, err
 	}
-	finding := index.AmbiguousTarget(invariant.Scope.Target, uids)
+	finding := index.AmbiguousTarget(invariant.Scope.Target, resolution.Detail, uids)
 	return Outcome{InvariantID: invariant.ID, UIDs: uids, Status: index.BindingAmbiguous,
 		Finding: finding, Blocking: blocks(invariant)}, nil
 }

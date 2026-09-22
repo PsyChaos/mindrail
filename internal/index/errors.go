@@ -50,11 +50,20 @@ func AmbiguousIdentity(removedKey string, candidateKeys []string) error {
 // AmbiguousTarget names a target several live lineages answer to. Like
 // AmbiguousIdentity it mints and steals nothing; unlike it, there is no
 // removed identity here, only a reference that stopped naming one thing.
-func AmbiguousTarget(target string, uids []string) error {
+// The detail names why the walk diverged, so the finding stays actionable
+// when there are no candidates to list (open identities).
+func AmbiguousTarget(target, detail string, uids []string) error {
+	remedy := "Narrow the target until it names one declaration."
+	if len(uids) > 0 {
+		remedy += " Candidates: " + strings.Join(uids, ", ") + "."
+	}
+	if detail != "" {
+		remedy += " " + detail
+	}
 	return app.NewError(app.CodeSymbolIdentityAmbiguous, app.KindFailed,
 		fmt.Sprintf("target %s names %d live lineages and binds none", target, len(uids)),
 		"Binding one of them by guess would protect the wrong lineage.",
-		"Narrow the target until it names one declaration: "+strings.Join(uids, ", ")+".")
+		remedy)
 }
 
 // OrphanedProtectedSymbol keeps an active invariant blocking when its symbol

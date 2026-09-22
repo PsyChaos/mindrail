@@ -135,6 +135,26 @@ maps `INV-xxx → SYM-yyy` with status `bound | ambiguous | orphaned`. Only
 invariant block (spec §24); anything else is reported, not blocking. MR-013
 owns the gate; MR-006 produces the findings with reason codes and remedies.
 
+### D-110 — sticky bound persistence and no-owner orphans
+
+A bound binding persists while its uid has live rows, whatever the target
+text now says: the binding names a lineage, not a spelling, so a rename
+carried by migration needs no update and a stale target cannot silently
+unprotect. Divergence that names several live lineages still blocks —
+ambiguity wins over stickiness, because the text may genuinely mean another
+lineage now. A path owned by no discovered unit can never produce rows, so
+absence is proven by construction and the track is orphan, not deferred.
+
+### D-111 — orphan rows need a dead lineage; findings do not
+
+Bindings join lineages, so a stored `orphaned` row attaches to the dropped
+uid of a lineage that died. A target that never bound has no lineage to
+name: its orphanhood is finding-only (code + remedy + blocking), with zero
+stored rows. Both shapes block iff active HIGH/CRITICAL.
+
+(Added at the TASK-03 gate: D-110/D-111 refined AC-03.2/AC-03.4's mechanism
+without changing their verdicts.)
+
 ### D-99 — orphan requires evidence of absence, not absence of evidence
 
 A cold file (pending, never indexed) defers its bindings — it is not orphaned.

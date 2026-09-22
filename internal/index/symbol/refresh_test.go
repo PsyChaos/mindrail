@@ -195,13 +195,24 @@ func TestRefreshBindingsWritesBoundRows(t *testing.T) {
 	invariants := []record.Invariant{
 		activeInvariant("INV-0001", record.SeverityCritical, record.ScopeSymbol, "pkg/a.py:Box.run"),
 		activeInvariant("INV-0002", record.SeverityMedium, record.ScopeFile, "pkg/a.py"),
+		activeInvariant("INV-0007", record.SeverityLow, record.ScopeProject, ""),
 	}
 	report, err := f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit}, invariants)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Outcomes) != 2 {
-		t.Fatalf("outcomes = %d, want 2", len(report.Outcomes))
+	if len(report.Outcomes) != 3 {
+		t.Fatalf("outcomes = %d, want 3", len(report.Outcomes))
+	}
+	if project := report.Outcomes[2]; project.Status != index.BindingBound || project.Finding != nil || len(project.UIDs) != 0 {
+		t.Fatalf("project outcome = %+v, want quiet bound with no uids", project)
+	}
+	projectRows, err := f.store.ListBindingsForInvariant(t.Context(), "INV-0007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projectRows) != 0 {
+		t.Fatalf("project scope left %d rows", len(projectRows))
 	}
 	for _, outcome := range report.Outcomes {
 		if outcome.Status != index.BindingBound || outcome.Finding != nil || outcome.Blocking {
@@ -299,10 +310,18 @@ func TestRefreshDefersColdFiles(t *testing.T) {
 }
 
 // TestOrphanBlocksOnCritical is AC-03.4: a removed symbol over an indexed
-// file records orphaned bindings, blocking iff HIGH/CRITICAL.
+// file records orphaned bindings, blocking iff HIGH/CRITICAL. The CRITICAL
+// case pre-binds first, so the test pins the stored row flipping to orphaned
+// (not just the outcome); the LOW case never bound, pinning the finding-only
+// half of decision D-111.
 func TestOrphanBlocksOnCritical(t *testing.T) {
 	f := newRefreshFixture(t)
 	path := f.indexFile(t, "a.py", packageSource)
+	pre, err := f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit},
+		[]record.Invariant{activeInvariant("INV-0004", record.SeverityCritical, record.ScopeSymbol, "pkg/a.py:tool")})
+	if err != nil || len(pre.Outcomes) != 1 || pre.Outcomes[0].Status != index.BindingBound {
+		t.Fatalf("pre-bind = %+v, %v", pre.Outcomes, err)
+	}
 	// The symbol leaves the file; the file stays indexed.
 	if err := os.WriteFile(path, []byte("def other():\n    pass\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -329,6 +348,17 @@ func TestOrphanBlocksOnCritical(t *testing.T) {
 		outcome := report.Outcomes[0]
 		if outcome.Status != index.BindingOrphaned || outcome.Blocking != tc.blocking {
 			t.Fatalf("%s outcome = %+v, want orphaned blocking=%t", tc.id, outcome, tc.blocking)
+		}
+		rows, err := f.store.ListBindingsForInvariant(t.Context(), tc.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.id == "INV-0004" {
+			if len(rows) != 1 || rows[0].Status != index.BindingOrphaned {
+				t.Fatalf("INV-0004 stored rows = %+v, want one orphaned flip", rows)
+			}
+		} else if len(rows) != 0 {
+			t.Fatalf("never-bound INV-0005 left %d rows, want finding-only", len(rows))
 		}
 		if outcome.Finding == nil {
 			t.Fatalf("%s outcome carries no finding", tc.id)
@@ -471,6 +501,90 @@ func TestOutsideUnitTargetIsOrphaned(t *testing.T) {
 	}
 }
 
+// TestAmbiguousTwinsBlockBySeverity pins blockOnSeverity at refresh level:
+// the function/class twins share one target text, bind ambiguous rows each,
+// and block iff HIGH/CRITICAL.
+func TestAmbiguousTwinsBlockBySeverity(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.indexFile(t, "a.py", packageSource)
+	for _, tc := range []struct {
+		id       string
+		severity record.Severity
+		blocking bool
+	}{
+		{"INV-0040", record.SeverityCritical, true},
+		{"INV-0041", record.SeverityLow, false},
+	} {
+		report, err := f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit},
+			[]record.Invariant{activeInvariant(tc.id, tc.severity, record.ScopeSymbol, "pkg/a.py:f")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Outcomes) != 1 {
+			t.Fatalf("outcomes = %+v", report.Outcomes)
+		}
+		outcome := report.Outcomes[0]
+		if outcome.Status != index.BindingAmbiguous || outcome.Blocking != tc.blocking || len(outcome.UIDs) != 2 {
+			t.Fatalf("%s outcome = %+v, want ambiguous 2-uid blocking=%t", tc.id, outcome, tc.blocking)
+		}
+		if outcome.Finding == nil {
+			t.Fatalf("%s outcome carries no finding", tc.id)
+		}
+		if payload, ok := app.PayloadOf(outcome.Finding); !ok || payload.Code != app.CodeSymbolIdentityAmbiguous {
+			t.Fatalf("%s finding = %v", tc.id, outcome.Finding)
+		}
+		payload, _ := app.PayloadOf(outcome.Finding)
+		remedy := strings.Join(payload.NextAction, " ")
+		if !strings.Contains(remedy, "Candidates:") || !strings.Contains(remedy, "several live lineages") {
+			t.Fatalf("%s remedy = %q, want candidates and divergence detail", tc.id, remedy)
+		}
+		rows, err := f.store.ListBindingsForInvariant(t.Context(), tc.id)
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("%s stored rows = %+v, %v", tc.id, rows, err)
+		}
+		for _, row := range rows {
+			if row.Status != index.BindingAmbiguous {
+				t.Fatalf("%s row = %+v, want ambiguous", tc.id, row)
+			}
+		}
+	}
+}
+
+// TestResolvedRefreshPrunesStaleBindings pins the resolved-path prune: a
+// binding the target no longer names is deleted, not left beside the new one.
+func TestResolvedRefreshPrunesStaleBindings(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.indexFile(t, "a.py", packageSource)
+	rows, err := f.store.ListSymbolsInFile(t.Context(), f.unit.ID, filepath.Join(f.unit.Path, "a.py"))
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+	var toolUID string
+	for _, row := range rows {
+		if row.Name == "tool" {
+			toolUID = row.UID
+		}
+	}
+	if toolUID == "" {
+		t.Fatal("no tool uid")
+	}
+	if err := f.store.UpsertBinding(t.Context(), "INV-0042", toolUID, index.BindingBound, ""); err != nil {
+		t.Fatal(err)
+	}
+	report, err := f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit},
+		[]record.Invariant{activeInvariant("INV-0042", record.SeverityMedium, record.ScopeSymbol, "pkg/a.py:Box.run")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outcomes) != 1 || report.Outcomes[0].Status != index.BindingBound {
+		t.Fatalf("outcome = %+v, want bound", report.Outcomes)
+	}
+	kept, err := f.store.ListBindingsForInvariant(t.Context(), "INV-0042")
+	if err != nil || len(kept) != 1 || kept[0].UID == toolUID {
+		t.Fatalf("rows = %+v, want exactly the run uid", kept)
+	}
+}
+
 // TestRefreshTouchesNoKnowledgeFiles is AC-03.5's structural half: the
 // symbol package performs no filesystem writes, so knowledge records cannot
 // move under a refresh. The assertion scans package sources for write calls
@@ -481,7 +595,7 @@ func TestRefreshTouchesNoKnowledgeFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	banned := []string{"os.WriteFile", "os.Create", "os.Remove", "os.Rename", "os.MkdirAll", "os.Write(", "ioutil.WriteFile"}
+	banned := []string{"os.WriteFile", "os.Create", "os.Remove", "os.Rename", "os.MkdirAll", "os.OpenFile", "os.Write(", "ioutil.WriteFile"}
 	for _, entry := range entries {
 		if entry.IsDir() || len(entry.Name()) < 4 || entry.Name()[len(entry.Name())-3:] != ".go" {
 			continue
@@ -496,6 +610,15 @@ func TestRefreshTouchesNoKnowledgeFiles(t *testing.T) {
 		for _, call := range banned {
 			if strings.Contains(string(body), call) {
 				t.Errorf("%s performs filesystem writes (%s)", entry.Name(), call)
+			}
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "\"") || !strings.Contains(line, "internal/knowledge/") {
+				continue
+			}
+			if !strings.Contains(line, "internal/knowledge/record\"") {
+				t.Errorf("%s imports %s: only knowledge/record is readable here", entry.Name(), line)
 			}
 		}
 	}
