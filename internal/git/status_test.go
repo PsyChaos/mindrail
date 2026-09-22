@@ -24,7 +24,7 @@ func statusRunner(t *testing.T, stdout string, err error) *git.FakeRunner {
 // layer stands on: unstaged and staged modifies, untracked adds, staged
 // renames (new path first, source second), and deletes.
 func TestStatusEntriesParsesKinds(t *testing.T) {
-	out := " M b.py\x00M  staged.py\x00MM both.py\x00R  c.py\x00a.py\x00?? d.py\x00 D gone.py\x00"
+	out := " M b.py\x00M  staged.py\x00MM both.py\x00R  c.py\x00a.py\x00?? d.py\x00 D gone.py\x00" + "C  copy.py\x00src.py\x00T  mode.py\x00UU conflict.py\x00"
 	entries, err := git.StatusEntries(context.Background(), statusRunner(t, out, nil), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +36,9 @@ func TestStatusEntriesParsesKinds(t *testing.T) {
 		{X: 'R', Y: ' ', Path: "c.py", OrigPath: "a.py"},
 		{X: '?', Y: '?', Path: "d.py"},
 		{X: ' ', Y: 'D', Path: "gone.py"},
+		{X: 'C', Y: ' ', Path: "copy.py", OrigPath: "src.py"},
+		{X: 'T', Y: ' ', Path: "mode.py"},
+		{X: 'U', Y: 'U', Path: "conflict.py"},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("entries = %+v, want %+v", entries, want)

@@ -103,6 +103,10 @@ func (s *Store) gitFile(ctx context.Context, root string, entry git.StatusEntry)
 
 // entryKind maps porcelain codes onto the D-117 vocabulary. The worktree
 // code wins when set: what the disk holds now is what discovery reports.
+// Rename similarity is staged-only by Git construction — an unstaged move
+// surfaces as a delete plus an add, which this mapping reports honestly
+// instead of reuniting; Y == 'R' is accepted because a staged rename edited
+// further in the worktree is still a rename.
 func entryKind(entry git.StatusEntry) (kind, oldRel string) {
 	switch {
 	case entry.X == '?' && entry.Y == '?':

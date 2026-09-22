@@ -3,6 +3,7 @@ package changes_test
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -10,6 +11,12 @@ import (
 	"github.com/PsyChaos/mindrail/internal/changes"
 	"github.com/PsyChaos/mindrail/internal/git"
 )
+
+// makeFifo creates a named pipe, or errors where the platform has none;
+// callers skip rather than fail there.
+func makeFifo(path string) error {
+	return syscall.Mkfifo(path, 0o600)
+}
 
 func porcelainRunner(t *testing.T, stdout string) *git.FakeRunner {
 	t.Helper()
@@ -44,7 +51,10 @@ func TestDiscoverFilesGitKinds(t *testing.T) {
 	staged := discoveryFile(t, root, "staged.py", "s = 1\n")
 	untracked := discoveryFile(t, root, "new.py", "n = 1\n")
 	moved := discoveryFile(t, root, "newname.py", "m = 1\n")
-	out := " M a.py\x00A  staged.py\x00?? new.py\x00R  newname.py\x00old.py\x00 D gone.py\x00"
+	copied := discoveryFile(t, root, "copy.py", "c = 1\n")
+	typed := discoveryFile(t, root, "mode.py", "t = 1\n")
+	conflicted := discoveryFile(t, root, "conflict.py", "u = 1\n")
+	out := " M a.py\x00A  staged.py\x00?? new.py\x00R  newname.py\x00old.py\x00 D gone.py\x00" + "C  copy.py\x00src.py\x00T  mode.py\x00UU conflict.py\x00"
 	files, err := store.DiscoverFilesGit(t.Context(), porcelainRunner(t, out), root)
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +71,9 @@ func TestDiscoverFilesGitKinds(t *testing.T) {
 		{untracked, changes.FileAdded, "", shaOf("n = 1\n")},
 		{moved, changes.FileRenamed, filepath.Join(root, "old.py"), shaOf("m = 1\n")},
 		{filepath.Join(root, "gone.py"), changes.FileDeleted, "", ""},
+		{copied, changes.FileAdded, "", shaOf("c = 1\n")},
+		{typed, changes.FileModified, "", shaOf("t = 1\n")},
+		{conflicted, changes.FileModified, "", shaOf("u = 1\n")},
 	}
 	if len(files) != len(cases) {
 		t.Fatalf("files = %+v, want %d", files, len(cases))
@@ -69,6 +82,37 @@ func TestDiscoverFilesGitKinds(t *testing.T) {
 		got, ok := byPath[tc.path]
 		if !ok || got.Kind != tc.kind || got.OldPath != tc.old || got.Hash != tc.hash || got.Via != changes.ViaReconcile {
 			t.Errorf("%s = %+v, want kind %s old %q hash %q", tc.path, got, tc.kind, tc.old, tc.hash)
+		}
+	}
+}
+
+// TestDiscoverFilesGitNonRegularRows pins AC-03.2's second half: paths git
+// names that parse as nothing (a directory, a fifo) still become rows with
+// empty hashes and no symbols — discovery stays complete where parsing
+// cannot follow.
+func TestDiscoverFilesGitNonRegularRows(t *testing.T) {
+	store := changesFixture(t)
+	root := t.TempDir()
+	dir := discoveryFile(t, root, "pkg", "")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := "M  pkg\x00"
+	fifo := filepath.Join(root, "pipe")
+	if err := makeFifo(fifo); err != nil {
+		t.Skipf("fifo unavailable: %v", err)
+	}
+	out += "M  pipe\x00"
+	files, err := store.DiscoverFilesGit(t.Context(), porcelainRunner(t, out), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %+v, want both non-regular paths", files)
+	}
+	for _, file := range files {
+		if file.Hash != "" || file.Kind != changes.FileModified {
+			t.Errorf("file = %+v, want empty-hash modified row", file)
 		}
 	}
 }
@@ -136,6 +180,28 @@ func TestBaselineFileDeltaConverges(t *testing.T) {
 	}
 }
 
+// TestBaselineFileDeltaReportsDeletion pins the deleted shape: a baselined
+// file gone from disk becomes a deleted row with an empty hash.
+func TestBaselineFileDeltaReportsDeletion(t *testing.T) {
+	store, db, _ := changesFixtureDB(t)
+	seedTaskChain(t, db, "TSK-1")
+	dir := t.TempDir()
+	a := writeScopeFile(t, dir, "a.py", "a = 1\n")
+	if _, err := store.CaptureBaseline(t.Context(), "TSK-1", []string{a}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a); err != nil {
+		t.Fatal(err)
+	}
+	delta, err := store.BaselineFileDelta(t.Context(), "TSK-1", []string{a})
+	if err != nil || len(delta) != 1 {
+		t.Fatalf("delta = %+v, %v", delta, err)
+	}
+	if delta[0].Kind != changes.FileDeleted || delta[0].Hash != "" {
+		t.Fatalf("row = %+v, want deleted with empty hash", delta[0])
+	}
+}
+
 // TestUpsertFileRowsConverges pins the AC-15 row shape: redelivery updates
 // in place, and malformed rows are refused before any write.
 func TestUpsertFileRowsConverges(t *testing.T) {
@@ -169,6 +235,30 @@ func TestUpsertFileRowsConverges(t *testing.T) {
 	if err := store.UpsertFileRows(t.Context(), "", rows); err == nil {
 		t.Fatal("rows accepted without a change")
 	}
+}
+
+// TestDiscoverUpsertReadComposes pins the TASK-05 seam early: discovery
+// output writes through upsert and reads back identical.
+func TestDiscoverUpsertReadComposes(t *testing.T) {
+	store := changesFixture(t)
+	root := t.TempDir()
+	a := discoveryFile(t, root, "a.py", "a = 2\n")
+	files, err := store.DiscoverFilesGit(t.Context(), porcelainRunner(t, " M a.py\x00"), root)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("discover = %+v, %v", files, err)
+	}
+	change, err := store.EnsureOpenChange(t.Context(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertFileRows(t.Context(), change.ID, files); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.ReadChangeFiles(t.Context(), change.ID)
+	if err != nil || len(stored) != 1 || stored[0] != files[0] {
+		t.Fatalf("stored = %+v, want %+v", stored, files)
+	}
+	_ = a
 }
 
 // TestGitAndBaselineFileConvergence is AC-03.5: one edit, two paths, same

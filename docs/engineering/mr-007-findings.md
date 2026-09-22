@@ -178,3 +178,36 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 ### TASK-03 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1101**.
+
+## Reader / Breaker bulguları ve giderim — TASK-03 kapısı
+
+Bağımsız Reader **FAIL** (dar: 2 MEDIUM test-boşluğu + 3 LOW), Breaker
+**VERIFIED** (gözlemler + 5 öz mutant: 3 kırmızı, 1 benign, 1 muafiyet).
+
+- **MEDIUM/F1:** non-regular satırları pinsizdi. Giderim:
+  `TestDiscoverFilesGitNonRegularRows` (dizin+fifo, boş hash); N1 kırmızı.
+- **MEDIUM/F2:** C/T/U eşlemeleri fixturesızdı. Giderim: iki katmanda
+  C/T/U satırları; N2 kırmızı.
+- **LOW/F3:** baseline silinme şekli yoktu. Giderim:
+  `TestBaselineFileDeltaReportsDeletion`; N3 kırmızı.
+- **LOW/F4:** discover→upsert→read kompozisyonu yoktu. Giderim:
+  `TestDiscoverUpsertReadComposes`; N4 kırmızı.
+- **LOW/F5:** staged-only rename notu koda işlendi.
+- Breaker gözlemleri: kök-"/" kaçağı (spekülatif, işlem yok), satır-sınırsız
+  upsert (benign), TOCTOU (bilinen sınıf, kayıtta), deleted-early-return
+  kaldırma benign (yokluk-toleranslı hash aynı satırı üretir).
+
+### TASK-03 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| N1 | non-regular hata verir | non-regular testi FAIL |
+| N2 | `C` → modified eşlemesi | kinds testi FAIL |
+| N3 | silinmiş dosya added sayılır | deletion testi FAIL |
+| N4 | upsert via'yı ezer | composition + convergence testleri FAIL |
+
+### TASK-03 kapı (PENDING — ikinci tur kapı bekleniyor)
+
+`make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1104**.
+
+Remediasyon testleri yeşil; tam `make check` aşağıda.
