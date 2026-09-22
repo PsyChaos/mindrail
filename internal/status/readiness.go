@@ -106,6 +106,12 @@ func Components() []ComponentName {
 // It carries doctor.State rather than a vocabulary of its own because §84's
 // five values already describe exactly this: a component that is fine, reduced,
 // broken, unreachable, or not used by this project.
+//
+// Pending, Failed and Units are index-census counts, present only on the two
+// components the census describes. They are pointers so a component with no
+// census carries no keys: a count a consumer infers from an absent key is a
+// count it cannot tell from a report that never took it, and a zero on a
+// component the census never described would be exactly that fabrication.
 type Component struct {
 	State doctor.State `json:"state"`
 	// Phase is the index lifecycle stage when this is an index component.
@@ -115,7 +121,12 @@ type Component struct {
 	Summary    string   `json:"summary"`
 	Code       app.Code `json:"code,omitempty"`
 	NextAction []string `json:"next_action,omitempty"`
+	Pending    *int     `json:"pending,omitempty"`
+	Failed     *int     `json:"failed,omitempty"`
+	Units      *int     `json:"units,omitempty"`
 }
+
+func intPtr(n int) *int { return &n }
 
 // blocks reports whether this component's state stops work.
 //

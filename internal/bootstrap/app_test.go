@@ -19,7 +19,9 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
+	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/status"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
@@ -137,6 +139,90 @@ func TestReadOnlyStartupReportsPersistedInventoryWithoutWalkingSource(t *testing
 	}
 	if got := report.Components[status.ComponentSyntax].Phase; got != "INVENTORY" {
 		t.Errorf("syntax phase = %q, want INVENTORY", got)
+	}
+}
+
+// TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource is AC-06.4's
+// structural proof: the census comes from persisted rows through one SQL
+// aggregate, so files that do not exist on disk are still counted, and a
+// read-only status writes nothing — no hashing, no walking, no row changes.
+func TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource(t *testing.T) {
+	repo := newGitRepo(t)
+	pkg := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "pyproject.toml"), []byte("[project]\nname = 'pkg'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initialized := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	if err := initialized.Start(t.Context()); err != nil {
+		t.Fatalf("init startup: %v", err)
+	}
+	units := initialized.Subject().Inventory
+	if len(units) != 1 {
+		t.Fatalf("startup inventory = %+v, want one unit", units)
+	}
+	store := index.NewStore(initialized.DB(), app.SystemClock{})
+	ghostPending := filepath.Join(pkg, "ghost_pending.py")
+	ghostFailed := filepath.Join(pkg, "ghost_failed.py")
+	for _, seed := range []index.FileIndexState{
+		{UnitID: units[0].ID, Path: ghostPending, Language: "python", State: index.StatePending},
+		{UnitID: units[0].ID, Path: ghostFailed, Language: "python", State: index.StatePending},
+	} {
+		if err := store.UpsertFileState(t.Context(), seed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{
+		UnitID: units[0].ID, Path: ghostFailed, Language: "python",
+		ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		State:       index.StateFailed, LastError: "seeded failure",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var rowsBefore int
+	if err := initialized.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM file_index_state`).Scan(&rowsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := initialized.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close init database: %v", err)
+	}
+	// The sources never existed on disk; the census must still report them.
+	if err := os.RemoveAll(pkg); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read-only startup: %v", err)
+	}
+	subject := reader.Subject()
+	if !subject.IndexObserved {
+		t.Fatal("read-only census not observed")
+	}
+	if got := subject.IndexCounts[index.StatePending]; got != 1 {
+		t.Errorf("census pending = %d, want 1 ghost row", got)
+	}
+	if got := subject.IndexCounts[index.StateFailed]; got != 1 {
+		t.Errorf("census failed = %d, want 1 ghost row", got)
+	}
+	var rowsAfter int
+	if err := reader.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM file_index_state`).Scan(&rowsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if rowsAfter != rowsBefore {
+		t.Errorf("read-only startup changed %d rows to %d; the read path writes nothing", rowsBefore, rowsAfter)
+	}
+	report := status.Build(subject, time.Millisecond)
+	if report.Readiness != status.ReadinessDegraded {
+		t.Errorf("readiness = %q, want DEGRADED over the failed ghost row", report.Readiness)
+	}
+	syntax := report.Components[status.ComponentSyntax]
+	if syntax.State != doctor.StateDegraded || syntax.Phase != "INDEXING" {
+		t.Errorf("syntax component = %+v, want DEGRADED INDEXING", syntax)
 	}
 }
 

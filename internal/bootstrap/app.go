@@ -990,6 +990,20 @@ func (a *App) loadIndexState(ctx context.Context) {
 	}
 	a.subject.Inventory = units
 	a.subject.InventoryObserved = true
+
+	// The census is a second persisted reading, not a second walk: status
+	// reports pending/failed counts from these rows, and re-derivation happens
+	// in the scheduler's normal work. A census that cannot be read degrades
+	// the syntax component rather than stopping a sequence that already
+	// answered every question before it.
+	counts, err := store.CountByState(ctx, "")
+	if err != nil {
+		a.subject.IndexErr = err
+		a.logger.Debug("index census unavailable", slog.String("error", err.Error()))
+		return
+	}
+	a.subject.IndexCounts = counts
+	a.subject.IndexObserved = true
 }
 
 func (a *App) schemaHasIndexTables() bool {

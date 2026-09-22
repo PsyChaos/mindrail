@@ -8,6 +8,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/doctor"
+	"github.com/PsyChaos/mindrail/internal/index"
 )
 
 // RepositoryInfo is the Git layout status reports. CommonDir and WorktreeRoot
@@ -272,7 +273,9 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 // applyInventoryComponents projects bootstrap's persisted inventory reading
 // into readiness. Build deliberately consumes only Subject fields: status
 // never walks the repository, so it cannot race a changing worktree or turn a
-// report into filesystem work.
+// report into filesystem work. The census beside the inventory is the same
+// kind of reading — one SQL aggregate, no hashing — which is why the counts
+// are honest on the read path while the cold index is still running.
 func applyInventoryComponents(components map[ComponentName]Component, s doctor.Subject) {
 	switch {
 	case s.InventoryErr != nil:
@@ -290,11 +293,73 @@ func applyInventoryComponents(components map[ComponentName]Component, s doctor.S
 		components[ComponentInventory] = Component{
 			State:   doctor.StateOK,
 			Summary: fmt.Sprintf("%d project units discovered", units),
+			Units:   intPtr(units),
 		}
+		applySyntaxComponent(components, s)
+	}
+}
+
+// applySyntaxComponent derives the syntax slot from the persisted file-state
+// census. Phase carries progress (INVENTORY before the first row, INDEXING
+// while pending work remains, READY when none does); a failed row degrades
+// the component per spec-1.0 §108 while staying pending work for the
+// scheduler. An unreadable census degrades too: the read ran and failed, which
+// is a different answer from a read that never happened.
+func applySyntaxComponent(components map[ComponentName]Component, s doctor.Subject) {
+	if s.IndexErr != nil {
+		components[ComponentSyntax] = Component{
+			State:      doctor.StateDegraded,
+			Summary:    "Syntax index state could not be read.",
+			Code:       app.CodeIndexStateCorrupt,
+			NextAction: []string{"Move the runtime database aside and run `mindrail init` to rebuild the index state."},
+		}
+		return
+	}
+	if !s.IndexObserved {
 		components[ComponentSyntax] = Component{
 			State:   doctor.StateOK,
 			Phase:   "INVENTORY",
 			Summary: "Syntax index is at INVENTORY; no files have been indexed yet.",
+		}
+		return
+	}
+	pending := s.IndexCounts[index.StatePending]
+	failed := s.IndexCounts[index.StateFailed]
+	indexed := s.IndexCounts[index.StateIndexed]
+	switch {
+	case failed > 0:
+		components[ComponentSyntax] = Component{
+			State:      doctor.StateDegraded,
+			Phase:      "INDEXING",
+			Summary:    fmt.Sprintf("Syntax index is DEGRADED: %d files failed to parse, %d pending.", failed, pending),
+			Code:       app.CodeSyntaxParseFailed,
+			NextAction: []string{"Fix the syntax errors in the failing source files, then trigger a re-index."},
+			Pending:    intPtr(pending),
+			Failed:     intPtr(failed),
+		}
+	case pending > 0:
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "INDEXING",
+			Summary: fmt.Sprintf("Syntax index is INDEXING: %d files pending.", pending),
+			Pending: intPtr(pending),
+			Failed:  intPtr(failed),
+		}
+	case indexed > 0:
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "READY",
+			Summary: fmt.Sprintf("Syntax index is READY: %d files indexed.", indexed),
+			Pending: intPtr(pending),
+			Failed:  intPtr(failed),
+		}
+	default:
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "INVENTORY",
+			Summary: "Syntax index is at INVENTORY; no files have been indexed yet.",
+			Pending: intPtr(pending),
+			Failed:  intPtr(failed),
 		}
 	}
 }

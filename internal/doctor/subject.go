@@ -106,6 +106,15 @@ type Subject struct {
 	InventoryObserved bool
 	InventoryErr      error
 
+	// IndexCounts is the persisted file-state census read at startup step 8
+	// beside the inventory, through one SQL aggregate — never a filesystem
+	// walk, so a read-only status hashes nothing and reports the cold index
+	// honestly instead of pretending otherwise. IndexObserved says the census
+	// was read; IndexErr is the third answer, a census that ran and failed.
+	IndexCounts   map[index.FileState]int
+	IndexObserved bool
+	IndexErr      error
+
 	// Probes holds what doctor established for itself; see Probe.
 	Probes Probes
 }

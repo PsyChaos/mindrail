@@ -16,12 +16,15 @@ data.status.components.coverage_map.state
 data.status.components.coverage_map.summary
 data.status.components.inventory.state
 data.status.components.inventory.summary
+data.status.components.inventory.units
 data.status.components.knowledge.state
 data.status.components.knowledge.summary
 data.status.components.runtime_db.state
 data.status.components.runtime_db.summary
 data.status.components.semantic.state
 data.status.components.semantic.summary
+data.status.components.syntax.failed
+data.status.components.syntax.pending
 data.status.components.syntax.phase
 data.status.components.syntax.state
 data.status.components.syntax.summary

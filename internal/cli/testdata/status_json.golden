@@ -4,12 +4,15 @@ data.components.coverage_map.state
 data.components.coverage_map.summary
 data.components.inventory.state
 data.components.inventory.summary
+data.components.inventory.units
 data.components.knowledge.state
 data.components.knowledge.summary
 data.components.runtime_db.state
 data.components.runtime_db.summary
 data.components.semantic.state
 data.components.semantic.summary
+data.components.syntax.failed
+data.components.syntax.pending
 data.components.syntax.phase
 data.components.syntax.state
 data.components.syntax.summary

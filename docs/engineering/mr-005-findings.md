@@ -542,3 +542,58 @@ Kayıtsız dilden pending satır (`UpsertFileState` dili doğrulamaz) `ListPendi
 kümesinde terminal `unsupported`'a hiç geçmeden her denemede
 `SYNTAX_LANGUAGE_UNSUPPORTED` verir. Üreten yok (LOW); TASK-06 scheduler
 wiring'i ya kayıtta dili doğrular ya lookup-hatasında terminal duruma çevirir.
+
+## TASK-06 — scheduler, preemption ve readiness (implementation evidence)
+
+Scope is `internal/index/scheduler` (new), the `doctor.Subject` census
+fields, the `loadIndexState` census read, the `status` syntax/inventory
+derivation and the two JSON golden key additions. No new CLI commands
+(REQ-09), no startup drain wiring (D-91), no doctor changes (design §9).
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-06.1 | Karşılandı | `TestQueueCoalescesDuplicatePaths`: 20× enqueue → 1 job; P0 re-enqueue coalesce eder (`added=false`). `TestQueueBoundRejectsManualOverflow`: cap üstü `ErrQueueFull`, kuyruk sabit. `MaxQueueJobs` pencereyi, `file_index_state` tamamını tutar (§49). |
+| AC-06.2 | Karşılandı | `TestPrioritizeMovesUnitAheadOfColdRemainder`: hedef birim P0 ile cold remainder önüne, path sırasında. `TestPrioritizeEnqueuesUnqueuedUnitFiles`: kuyrukta olmayan pending satırlar öne alınır. `TestRunHonorsCancelBetweenFiles`: cancel dosya-arası checkpoint'te etki eder; in-flight commitlenmeden pending'e döner, kalan kuyrukta durur, refill+resume tamamlar (§48: mid-parse preemption yok). |
+| AC-06.3 | Karşılandı | `TestBuildReportsIndexingPartialReady` (PARTIAL_READY + pending sayısı), `TestBuildReadyWhenIndexDrained` (READY dönüşü), `TestBuildDegradedOnFailedIndexRows` (failed satırında DEGRADED + `SYNTAX_PARSE_FAILED` + remedy), `TestBuildDegradedOnUnreadableIndexCensus` (`INDEX_STATE_CORRUPT`). Sıfır-birim INVENTORY davranışı (AC-02.2) aynen korunur. |
+| AC-06.4 | Karşılandı | `TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource`: diskte hiç var olmamış ghost satırlar sayılır (yürüme/yok), read-only satır sayısını değiştirmez (hashleme/yok). Üretim okuma yolu = `ListUnits` + `CountByState` (yalnız SQL). |
+| AC-06.5 | Karşılandı | `status_json.golden` + `init_json.golden`: `components.inventory.units`, `components.syntax.pending`, `components.syntax.failed` anahtarları eklendi; human golden'lar özet metni değişmediği INVENTORY yolunda sabit. |
+| F3 (Breaker devri) | Kapatıldı | `TestRegisterMarksUnknownLanguageUnsupported`: `Register` dili kayıtta doğrular; kayıtsız dil terminal `unsupported` olur, `ListPending` kümesine hiç girmez. |
+
+Tasarım-doğruluk notları:
+
+- Kuyruk penceresi in-memory, durable durum `file_index_state`'tedir (D-84):
+  `FillCold` path-sırasında cap'e kadar doldurur (`more` ile kalanı bildirir),
+  `Run` tek worker ile önden arkaya akıtır, refill composition ile devam eder.
+  P1–P3 yalnız adlandırılmış sabittir, mekanizması yoktur (D-84).
+- `Run` ilk dosya-hatasında durur (`TestRunStopsOnFirstErrorWithoutSkipping`):
+  bozuk dosya failed satır olarak kalır, sessiz skip yoktur, kalan kuyrukta
+  ve durable'dır.
+- `Register` hiçbir baytı hashlemez; hash parse zamanında indexer'ındır.
+- `status.Build` hâlâ saf Subject fonksiyonudur: census bootstrap'ta
+  `CountByState` ile okunur, dosya yürümesi yoktur.
+
+### D-91 — TASK-06 scheduler'ı sürmez, readiness'i bağlar
+
+Cold index'i başlatan (init/background) wiring TASK-06'da yoktur: `init`
+soğuk index'i beklemez (AC-07.1'in TASK-07 kanıtı), scheduler testlerde ve
+`FillCold`/`Prioritize`/`Run` composition ile sürülür. Başlangıç
+sıralamasına (§87) bloklayıcı adım eklenmemiştir (AC-02.4 korunur); okuma yolu
+yalnız `ListUnits` + `CountByState` kazanmıştır, ikisi de SQL'dir. Sürücü
+bağlantısı TASK-07'nin kanıtına aittir.
+
+### TASK-06 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | scheduler: coalescing kaldırıldı (her enqueue append) | `TestQueueCoalescesDuplicatePaths`: 20 job FAIL |
+| M2 | scheduler: Enqueue P0 promote kaldırıldı | İlk mutant `TestPrioritize...` ile SURVIVED kaldı — promote'un pinli testi yoktu. `TestEnqueueP0PromotesQueuedPath` eklendi; mutant bu testte FAIL. Kalanı geri alındı. |
+| M3 | scheduler: cap kontrolü kaldırıldı | `TestQueueBoundRejectsManualOverflow`: overflow kabul FAIL |
+| M4 | status: failed satırı DEGRADED yapmıyor | `TestBuildDegradedOnFailedIndexRows` FAIL |
+| M5 | bootstrap: census okunmuyor (`IndexObserved` set edilmiyor) | `TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource` FAIL |
+| M6 | scheduler Register: F3 guard'ı kaldırıldı (bilinmeyen dil pending koluna düşer, nil adapter'da panic) | `TestRegisterMarksUnknownLanguageUnsupported` FAIL |
+
+### TASK-06 kapı (PENDING — Reader/Breaker bekleniyor)
+
+`make check` yeşil, 6 mutant kırmızı → restore (md5). Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1014** (TASK-05 kapısında
+997 idi, +17).

@@ -1,6 +1,7 @@
 package status
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
 	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
@@ -95,6 +97,118 @@ func TestBuildReportsInventoryPhaseWithoutRescanning(t *testing.T) {
 	if syntax.State != doctor.StateOK || syntax.Phase != "INVENTORY" {
 		t.Errorf("syntax component = %+v, want the explicit INVENTORY phase", syntax)
 	}
+}
+
+func indexedSubject() doctor.Subject {
+	subject := healthySubject()
+	subject.InventoryObserved = true
+	subject.Inventory = []index.ProjectUnit{{ID: "UNT-01", Path: "/repo/pkg", Kind: index.UnitPython}}
+	return subject
+}
+
+func assertComponentRemedy(t *testing.T, name ComponentName, component Component) {
+	t.Helper()
+	if component.Code == "" {
+		t.Errorf("component %q reported %q with no code", name, component.State)
+	}
+	if component.Code != "" && !app.IsRegistered(component.Code) {
+		t.Errorf("component %q reported unregistered code %q", name, component.Code)
+	}
+	if len(component.NextAction) == 0 {
+		t.Errorf("component %q reported %q with no next_action", name, component.State)
+	}
+	for i, action := range component.NextAction {
+		assertActionable(t, string(name), i, action)
+	}
+}
+
+// TestBuildReportsIndexingPartialReady is the task list's fifth acceptance
+// criterion: a running cold index is explicit pending work with a count, not a
+// silent gap and not a blocker.
+func TestBuildReportsIndexingPartialReady(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StatePending: 3, index.StateIndexed: 5}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q while files are pending", report.Readiness, ReadinessPartialReady)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateOK || syntax.Phase != "INDEXING" {
+		t.Errorf("syntax component = %+v, want OK INDEXING", syntax)
+	}
+	if syntax.Pending == nil || *syntax.Pending != 3 {
+		t.Errorf("syntax pending = %v, want 3", syntax.Pending)
+	}
+	if syntax.Failed == nil || *syntax.Failed != 0 {
+		t.Errorf("syntax failed = %v, want explicit 0", syntax.Failed)
+	}
+	inventory := report.Components[ComponentInventory]
+	if inventory.Units == nil || *inventory.Units != 1 {
+		t.Errorf("inventory units = %v, want 1", inventory.Units)
+	}
+}
+
+// TestBuildReadyWhenIndexDrained proves READY returns once the cold remainder
+// is gone: PARTIAL_READY must not stick after the work finishes.
+func TestBuildReadyWhenIndexDrained(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StateIndexed: 8}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessReady {
+		t.Fatalf("readiness = %q, want %q when nothing is pending", report.Readiness, ReadinessReady)
+	}
+	if phase := report.Components[ComponentSyntax].Phase; phase != "READY" {
+		t.Errorf("syntax phase = %q, want %q", phase, "READY")
+	}
+}
+
+// TestBuildDegradedOnFailedIndexRows is spec-1.0 §108: any failed row degrades
+// syntax health while the row stays pending work for the scheduler.
+func TestBuildDegradedOnFailedIndexRows(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StateFailed: 1, index.StatePending: 2}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessDegraded {
+		t.Fatalf("readiness = %q, want %q with failed index rows", report.Readiness, ReadinessDegraded)
+	}
+	if report.BlockingComponent != "" {
+		t.Errorf("blocking_component = %q, want none: DEGRADED still works", report.BlockingComponent)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateDegraded || syntax.Phase != "INDEXING" {
+		t.Errorf("syntax component = %+v, want DEGRADED INDEXING", syntax)
+	}
+	if syntax.Code != app.CodeSyntaxParseFailed {
+		t.Errorf("syntax code = %q, want %q", syntax.Code, app.CodeSyntaxParseFailed)
+	}
+	if syntax.Pending == nil || *syntax.Pending != 2 || syntax.Failed == nil || *syntax.Failed != 1 {
+		t.Errorf("syntax counts = %v/%v, want pending 2 failed 1", syntax.Pending, syntax.Failed)
+	}
+	assertComponentRemedy(t, ComponentSyntax, syntax)
+}
+
+// TestBuildDegradedOnUnreadableIndexCensus keeps "looked and failed" apart
+// from "nobody looked": a census that ran and failed degrades the component
+// instead of publishing uninspected zeros as findings.
+func TestBuildDegradedOnUnreadableIndexCensus(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexErr = errors.New("index census unavailable")
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessDegraded {
+		t.Fatalf("readiness = %q, want %q with an unreadable census", report.Readiness, ReadinessDegraded)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateDegraded || syntax.Code != app.CodeIndexStateCorrupt {
+		t.Errorf("syntax component = %+v, want DEGRADED INDEX_STATE_CORRUPT", syntax)
+	}
+	assertComponentRemedy(t, ComponentSyntax, syntax)
 }
 
 // TestBuildBlockedOnUnopenableDB is acceptance criterion 4 for the runtime
