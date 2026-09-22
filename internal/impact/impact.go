@@ -113,7 +113,7 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 	}
 	result := Result{StructuralBreadth: TargetedBreadth, Justification: request.Justification}
 	result.Breadth = result.StructuralBreadth
-	if request.BreadthOverride != "" {
+	if request.BreadthOverride != "" && request.Justification != "" {
 		result.Breadth = request.BreadthOverride
 	}
 	frontier, err := s.resolveInputs(ctx, request.Symbols)

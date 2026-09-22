@@ -31,6 +31,7 @@ ayrışıyor. Gereksinim dondurulmadan önce tasarıma işlendi.
 | M1 | depth-default `<= 0` → `< 0` | depth testi FAIL |
 | M2 | dedupe-anahtarı `(referrer, target)` → `(referrer, path)` | ilk varyant ayırt etmedi → paylaşılan-referrer testi eklendi (`TestAnalyzeKeepsSharedReferrersDistinct`), mutant FAIL |
 | M3 | breadth-override koşulsuz | breadth testi FAIL |
+| M5 | justification-kontrolü kapatıldı (kapı bulgusu) | yeni unjustified-override pini FAIL |
 | M4 | resolved-join'e `IS NULL` eklendi | direct testi FAIL |
 
 M2 dürüstlük notu: ilk mutant kırmızı vermedi (fixture'da ayrım yoktu) —
@@ -38,4 +39,14 @@ test eklendikten sonra koşuldu, kırmızı doğrulandı.
 
 `make check` **yeşil** (exit 0, ikinci koşu — ilki `gofmt` düşürdü, düzeltildi). Test sayısı **1144**.
 
-### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-01 kapı — Reader: 4/4 CONFIRMED + 1 gap; Breaker: 5/6 REFUTED + 1 BROKEN→KAPANDI
+
+**Reader:** AC-01.1…AC-01.4 CONFIRMED. Gap (kapı-dışı değil): override
+justification gerektirmiyordu (tasarım §4'e aykırı) — Breaker B-1 ile aynı
+delik.
+
+**Breaker B-1 (KAPATILDI):** justification'sız `BreadthOverride` yükseltiyordu.
+Düzeltme: override yalnız `Justification != ""` iken uygulanıyor, yoksa
+yapısal cap duruyor (`impact.go`); pin eklendi (M5 ile kırmızı doğrulandı).
+
+**Karar:** TASK-01 KAPANDI.

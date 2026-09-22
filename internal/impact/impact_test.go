@@ -227,6 +227,16 @@ func TestAnalyzeBreadthCapAndOverride(t *testing.T) {
 		lifted.Justification != "public API rule: exported symbol" {
 		t.Fatalf("override = %q / %q", lifted.Breadth, lifted.Justification)
 	}
+	bare, err := fx.service.Analyze(t.Context(), impact.Request{
+		Symbols:         []impact.Input{{UID: "SYM-I-A"}},
+		BreadthOverride: impact.PackageBreadth,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.Breadth != impact.TargetedBreadth {
+		t.Fatalf("unjustified override lifted to %q", bare.Breadth)
+	}
 }
 
 // TestAnalyzeDropsUnknownInputs pins the no-invention rule: inputs that
