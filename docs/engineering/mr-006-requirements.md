@@ -172,8 +172,11 @@ bump. Migration matching runs only on the live completion path.
 ### D-101 — Git signal is best-effort corroboration
 
 The rename set comes from
-`git -c core.quotepath=off diff --no-color --name-status -z -M HEAD -- <paths>`,
-parsed for `R` entries. Any failure (no HEAD, not a repo, no git) yields an
+`git diff --no-color --name-status -z -M HEAD -- <paths>`, parsed for `R`
+entries. No `-c` config flag rides along: `-z` already disables pathname
+munging, and the literal would trip the no-shell tripwire (tech-stack §35).
+(Amended at TASK-04 implementation: the frozen text carried `-c
+core.quotepath=off`.) Any failure (no HEAD, not a repo, no git) yields an
 empty set, never an error: matching proceeds structurally. Tests inject via
 the `git.CommandRunner` interface (fake) plus one real-repository test.
 

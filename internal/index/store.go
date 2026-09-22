@@ -109,6 +109,10 @@ type FileFacts struct {
 	Symbols     []Symbol
 	Imports     []Import
 	References  []Reference
+	// RenameHints carries Git-corroborated moves into this file: callers that
+	// can afford one diff per batch fetch them, the indexer never runs git.
+	// An empty set means structural-only matching.
+	RenameHints []RenameHint
 }
 
 // Store owns only the SQLite facts; parser snapshots are a separate disk cache.
@@ -350,6 +354,11 @@ func validReplacement(facts FileFacts) error {
 	if facts.State == StateFailed && facts.LastError == "" {
 		return invalidInput("a failed parse needs its error text")
 	}
+	for _, hint := range facts.RenameHints {
+		if hint.OldPath == "" || hint.NewPath == "" || !filepath.IsAbs(hint.OldPath) || filepath.Clean(hint.OldPath) != hint.OldPath || !filepath.IsAbs(hint.NewPath) || filepath.Clean(hint.NewPath) != hint.NewPath {
+			return invalidInput("rename hints need clean absolute old and new paths")
+		}
+	}
 	return nil
 }
 
@@ -364,32 +373,47 @@ func (s *Store) replaceFileFactsTx(ctx context.Context, tx *sql.Tx, facts FileFa
 	if owner != facts.UnitID {
 		return invalidInput("file belongs to another project unit")
 	}
+	// Ancestor snapshot before the delete: migration matching reads the old
+	// rows this commit replaces (same-file renames) plus hint-named files
+	// (moves). Rows deleted here are exactly what "disappeared" means.
+	ancestors, err := s.snapshotFileAncestorsTx(ctx, tx, facts.UnitID, facts.Language, facts.Path, facts.RenameHints)
+	if err != nil {
+		return err
+	}
 	for _, table := range []string{"symbol_references", "symbol_imports", "symbols"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE unit_id = ? AND path = ?", facts.UnitID, facts.Path); err != nil {
 			return err
 		}
 	}
-	// Identity stamping shares the transaction with the facts it names
-	// (decision D-95): the same commit that replaces a file's symbols assigns
-	// each distinct key its lineage uid, so facts and identities never
-	// diverge. Migration matching arrives in TASK-04 between the lookup miss
-	// and the mint; this task only looks up or mints.
-	uids := make(map[string]string, len(facts.Symbols))
+	// Identity resolution shares the transaction with the facts it names
+	// (decision D-95): lookup hits keep their uid, one confident heir
+	// migrates, twins ambiguate, and only the truly new mints — all in the
+	// same commit that replaces the file's symbols.
+	staged := make([]stagedKey, 0, len(facts.Symbols))
 	for _, sym := range facts.Symbols {
-		if _, ok := uids[sym.LogicalKey]; ok {
-			continue
-		}
-		uid, err := s.ensureIdentityTx(ctx, tx, facts.ProjectID, facts.UnitID, facts.Language, sym.LogicalKey)
+		containerLocal, err := localPart(sym.Container)
 		if err != nil {
-			return err
+			return corruptState(err)
 		}
-		uids[sym.LogicalKey] = uid
+		staged = append(staged, stagedKey{
+			Key: sym.LogicalKey, Kind: sym.Kind, ContainerLocal: containerLocal,
+			BodyHash: sym.BodyHash, Path: facts.Path,
+		})
+	}
+	now := app.FormatTime(s.clock.Now())
+	uids, ambiguous, err := s.resolveIdentitiesTx(ctx, tx, facts.ProjectID, facts.UnitID, facts.Language, staged, ancestors, facts.RenameHints, now)
+	if err != nil {
+		return err
 	}
 	for _, sym := range facts.Symbols {
+		uid := sql.NullString{}
+		if !ambiguous[sym.LogicalKey] {
+			uid = sql.NullString{String: uids[sym.LogicalKey], Valid: true}
+		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO symbols
 				(unit_id, path, logical_key, kind, name, container, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash, symbol_uid)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			facts.UnitID, facts.Path, sym.LogicalKey, sym.Kind, sym.Name, sym.Container, sym.StartLine, sym.StartCol, sym.EndLine, sym.EndCol, sym.SignatureHash, sym.BodyHash, sym.StructureHash, uids[sym.LogicalKey])
+			facts.UnitID, facts.Path, sym.LogicalKey, sym.Kind, sym.Name, sym.Container, sym.StartLine, sym.StartCol, sym.EndLine, sym.EndCol, sym.SignatureHash, sym.BodyHash, sym.StructureHash, uid)
 		if err != nil {
 			return err
 		}
@@ -446,7 +470,7 @@ func (s *Store) replaceFileFactsTx(ctx context.Context, tx *sql.Tx, facts FileFa
 	if facts.State == StateFailed {
 		lastError = facts.LastError
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE file_index_state SET
+	_, err = tx.ExecContext(ctx, `UPDATE file_index_state SET
 			language = ?, content_hash = ?, state = ?, attempts = attempts + ?,
 			last_error = ?, indexed_at = ? WHERE unit_id = ? AND path = ?`,
 		facts.Language, facts.ContentHash, facts.State, attemptIncrement, lastError, app.FormatTime(s.clock.Now()), facts.UnitID, facts.Path)

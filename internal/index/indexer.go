@@ -103,8 +103,9 @@ func sourceStillMatches(path string, captured sourceVersion) (sourceVersion, boo
 //
 // projectID scopes every identity this call mints or reuses: callers resolve
 // it from the workspace (one explicit parameter, never ambient), and an empty
-// project is refused before anything is read.
-func (i *Indexer) IndexFile(ctx context.Context, projectID string, unit ProjectUnit, path string) (IndexResult, error) {
+// project is refused before anything is read. Optional rename hints corroborate
+// cross-file moves; without them matching is structural-only.
+func (i *Indexer) IndexFile(ctx context.Context, projectID string, unit ProjectUnit, path string, hints ...RenameHint) (IndexResult, error) {
 	if err := ctx.Err(); err != nil {
 		return IndexResult{}, err
 	}
@@ -174,7 +175,7 @@ func (i *Indexer) IndexFile(ctx context.Context, projectID string, unit ProjectU
 		result.Stale = true
 		return result, nil
 	}
-	fileFacts := mapFacts(projectID, unit, path, adapter.Info().Language, source.hash, state, lastError, facts)
+	fileFacts := mapFacts(projectID, unit, path, adapter.Info().Language, source.hash, state, lastError, facts, hints)
 	started := time.Now()
 	completed, stats, applied, err := i.store.ReplaceFileFactsCAS(ctx, registered, fileFacts)
 	result.Timing.Write = time.Since(started)
@@ -235,8 +236,8 @@ func qualifiedKey(unit ProjectUnit, path, local string) string {
 	return string(key)
 }
 
-func mapFacts(projectID string, unit ProjectUnit, path, language, hash string, state FileState, lastError string, facts parser.Facts) FileFacts {
-	result := FileFacts{ProjectID: projectID, UnitID: unit.ID, Path: path, Language: language, ContentHash: hash, State: state, LastError: lastError}
+func mapFacts(projectID string, unit ProjectUnit, path, language, hash string, state FileState, lastError string, facts parser.Facts, hints []RenameHint) FileFacts {
+	result := FileFacts{ProjectID: projectID, UnitID: unit.ID, Path: path, Language: language, ContentHash: hash, State: state, LastError: lastError, RenameHints: hints}
 	for _, sym := range facts.Symbols {
 		result.Symbols = append(result.Symbols, Symbol{LogicalKey: qualifiedKey(unit, path, sym.LocalKey), Kind: sym.Kind, Name: sym.Name,
 			Container: qualifiedKey(unit, path, sym.ContainerLocalKey), StartLine: int(sym.Range.StartRow), StartCol: int(sym.Range.StartColumn),

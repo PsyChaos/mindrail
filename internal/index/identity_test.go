@@ -2,7 +2,10 @@ package index_test
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,6 +24,18 @@ import (
 )
 
 const identityProject = "PRJ-TEST-IDENTITY"
+
+const migrationProject = "PRJ-TEST-MIGRATION"
+
+// sourceFile writes content to name under root for the migration fixtures.
+func sourceFile(t *testing.T, root, name, content string) string {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 func identityFixture(t *testing.T) (*index.Store, *sql.DB, string) {
 	t.Helper()
@@ -340,5 +355,414 @@ func TestIdentityGuardsRejectEmptyScope(t *testing.T) {
 	}
 	if _, err := symbol.New(nil); err == nil {
 		t.Fatal("service accepted a nil store")
+	}
+}
+
+// migrationFixture indexes one file and returns its symbol uids by name.
+
+func migrationFixture(t *testing.T) (*index.Indexer, index.ProjectUnit, string, *sql.DB) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	db, err := storage.Open(t.Context(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := app.FixedClock{Instant: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)}
+	if _, err := migration.New(db.DB, set, clock).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store := index.NewStore(db.DB, clock)
+	root := t.TempDir()
+	unit, err := store.UpsertUnit(t.Context(), root, index.UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := parser.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(registry.Close)
+	cache := snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache")})
+	return index.NewIndexer(store, registry, cache), unit, root, db.DB
+}
+
+// allocDatabase opens a migratable database at a stable path for the
+// subprocess agreement test: workers reopen the same file.
+func allocDatabase(t *testing.T) (*index.Store, *sql.DB, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "alloc.db")
+	db, err := storage.Open(t.Context(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := app.FixedClock{}
+	if _, err := migration.New(db.DB, set, clock).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return index.NewStore(db.DB, clock), db.DB, path
+}
+
+// allocWorker is the subprocess half of AC-04.7: it opens nobody else's
+// memory, mints through SQLite alone, and prints the agreed uid.
+func allocWorker(t *testing.T) {
+	t.Helper()
+	db, err := storage.Open(t.Context(), storage.Options{Path: os.Getenv("MINDRAIL_TEST_ALLOC_DB")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store := index.NewStore(db.DB, app.SystemClock{})
+	identity, err := store.MintIdentity(t.Context(), migrationProject,
+		os.Getenv("MINDRAIL_TEST_ALLOC_UNIT"), "python", "race-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(identity.UID)
+}
+
+func uidsByName(t *testing.T, db *sql.DB, path string) map[string]string {
+	t.Helper()
+	rows, err := db.QueryContext(t.Context(), `SELECT name, symbol_uid FROM symbols WHERE path = ?`, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var name string
+		var uid sql.NullString
+		if err := rows.Scan(&name, &uid); err != nil {
+			t.Fatal(err)
+		}
+		out[name] = uid.String
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func identityCount(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM symbol_identities`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func ambiguityRows(t *testing.T, db *sql.DB) []struct {
+	removedUID string
+	removedKey string
+	candidates string
+} {
+	t.Helper()
+	rows, err := db.QueryContext(t.Context(), `SELECT removed_uid, removed_key, candidate_keys FROM symbol_identity_ambiguities ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []struct {
+		removedUID string
+		removedKey string
+		candidates string
+	}
+	for rows.Next() {
+		var row struct {
+			removedUID string
+			removedKey string
+			candidates string
+		}
+		if err := rows.Scan(&row.removedUID, &row.removedKey, &row.candidates); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestRenameMigratesUID is AC-04.1: the uid follows the new key, the
+// abandoned key joins the lineage memory, and no new identity is minted.
+func TestRenameMigratesUID(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def old():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	oldUID := before["old"]
+	if oldUID == "" {
+		t.Fatalf("old has no uid: %+v", before)
+	}
+	var oldKey string
+	if err := db.QueryRowContext(t.Context(), `SELECT logical_key FROM symbols WHERE path = ? AND name = 'old'`, path).Scan(&oldKey); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile(t, root, "a.py", "def new():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["new"] != oldUID {
+		t.Fatalf("renamed uid = %q, want carried %q (all: %+v)", after["new"], oldUID, after)
+	}
+	if identityCount(t, db) != 1 {
+		t.Fatal("rename minted a second identity")
+	}
+	var previousRaw string
+	if err := db.QueryRowContext(t.Context(), `SELECT previous_keys FROM symbol_identities WHERE symbol_uid = ?`, oldUID).Scan(&previousRaw); err != nil {
+		t.Fatal(err)
+	}
+	var previous []string
+	if err := json.Unmarshal([]byte(previousRaw), &previous); err != nil {
+		t.Fatal(err)
+	}
+	if len(previous) != 1 || previous[0] != oldKey {
+		t.Fatalf("previous_keys = %s, want exactly abandoned %s", previousRaw, oldKey)
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 0 {
+		t.Fatalf("clean rename recorded %d ambiguities", len(rows))
+	}
+}
+
+// TestMoveWithGitHintMigrates is AC-04.2's first half: identical content at
+// a new path migrates under a Git-corroborated move.
+func TestMoveWithGitHintMigrates(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	a := sourceFile(t, root, "a.py", "def f():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, a); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, a)
+	b := sourceFile(t, root, "b.py", "def f():\n    return 1\n")
+	hints := []index.RenameHint{{OldPath: a, NewPath: b}}
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, b, hints...); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, b)
+	if after["f"] != before["f"] || after["f"] == "" {
+		t.Fatalf("moved uid = %q, want carried %q", after["f"], before["f"])
+	}
+}
+
+// TestMoveWithoutGitHintMintsAnew is AC-04.2's documented limitation: a
+// changed path with no corroboration mints instead of guessing.
+func TestMoveWithoutGitHintMintsAnew(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	a := sourceFile(t, root, "a.py", "def f():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, a); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, a)
+	c := sourceFile(t, root, "c.py", "def f():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, c); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, c)
+	if after["f"] == "" || after["f"] == before["f"] {
+		t.Fatalf("uncorroborated move uid = %q, want a fresh uid distinct from %q", after["f"], before["f"])
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 0 {
+		t.Fatalf("mint recorded %d ambiguities", len(rows))
+	}
+}
+
+// TestClassRenameCascades is AC-04.3: the class migrates first and its
+// methods follow through the container remap, with the pointer set.
+func TestClassRenameCascades(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "class Box:\n    def run(self):\n        return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "class Crate:\n    def run(self):\n        return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["Crate"] != before["Box"] || after["run"] != before["run"] {
+		t.Fatalf("cascaded uids = %+v, want carried %+v", after, before)
+	}
+	if identityCount(t, db) != 2 {
+		t.Fatalf("cascade minted: %d identities", identityCount(t, db))
+	}
+	var container sql.NullString
+	if err := db.QueryRowContext(t.Context(), `SELECT container_uid FROM symbol_identities WHERE symbol_uid = ?`, after["run"]).Scan(&container); err != nil {
+		t.Fatal(err)
+	}
+	if !container.Valid || container.String != after["Crate"] {
+		t.Fatalf("method container_uid = %+v, want the class uid", container)
+	}
+}
+
+// TestTwinsRecordAmbiguity is AC-04.4: one removed key meeting two added keys
+// records ambiguity, mints nothing, and leaves both heirs uid-less.
+func TestTwinsRecordAmbiguity(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def f():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "def g1():\n    return 1\ndef g2():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["g1"] != "" || after["g2"] != "" {
+		t.Fatalf("twins got uids %+v; ambiguity mints nothing", after)
+	}
+	if identityCount(t, db) != 1 {
+		t.Fatalf("twins minted: %d identities", identityCount(t, db))
+	}
+	rows := ambiguityRows(t, db)
+	if len(rows) != 1 {
+		t.Fatalf("ambiguity rows = %d, want exactly one", len(rows))
+	}
+	if rows[0].removedUID != before["f"] {
+		t.Fatalf("removed uid = %s, want %s", rows[0].removedUID, before["f"])
+	}
+	var candidates []string
+	if err := json.Unmarshal([]byte(rows[0].candidates), &candidates); err != nil {
+		t.Fatal(err)
+	}
+	stagedRows, err := db.QueryContext(t.Context(), `SELECT logical_key FROM symbols WHERE path = ?`, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := map[string]bool{}
+	for stagedRows.Next() {
+		var key string
+		if err := stagedRows.Scan(&key); err != nil {
+			stagedRows.Close()
+			t.Fatal(err)
+		}
+		staged[key] = true
+	}
+	stagedRows.Close()
+	if len(candidates) != 2 || !staged[candidates[0]] || !staged[candidates[1]] || candidates[0] == candidates[1] {
+		t.Fatalf("candidates = %s, want both staged heir keys", rows[0].candidates)
+	}
+}
+
+// TestRenameOntoExistingKeyKeepsBothLineages pins the no-steal rule: a rename
+// whose target key already has an identity keeps that identity, and the
+// removed lineage orphans instead of merging.
+func TestRenameOntoExistingKeyKeepsBothLineages(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def f():\n    return 1\ndef g():\n    return 2\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "def g():\n    return 2\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["g"] != before["g"] {
+		t.Fatalf("survivor uid moved %q -> %q", before["g"], after["g"])
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 0 {
+		t.Fatalf("merge recorded %d ambiguities", len(rows))
+	}
+	var live int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM symbols WHERE symbol_uid = ?`, before["f"]).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("removed lineage rows = %d, %v", live, err)
+	}
+}
+
+// TestMintLastAfterFailedMigration is AC-04.5: a rename that also changes the
+// body meets no bar, mints exactly one new uid, and records nothing.
+func TestMintLastAfterFailedMigration(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def f():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "def g():\n    return 100\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["g"] == "" || after["g"] == before["f"] {
+		t.Fatalf("reworked uid = %q, want one fresh uid", after["g"])
+	}
+	if identityCount(t, db) != 2 {
+		t.Fatalf("identities = %d, want old plus one mint", identityCount(t, db))
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 0 {
+		t.Fatalf("mint recorded %d ambiguities", len(rows))
+	}
+	var previous string
+	if err := db.QueryRowContext(t.Context(), `SELECT previous_keys FROM symbol_identities WHERE symbol_uid = ?`, after["g"]).Scan(&previous); err != nil {
+		t.Fatal(err)
+	}
+	if previous != "[]" && previous != "" {
+		t.Fatalf("fresh mint carries lineage %s", previous)
+	}
+}
+
+// TestMalformedHintsRefused pins the fail-closed hint validation.
+func TestMalformedHintsRefused(t *testing.T) {
+	idx, unit, root, _ := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def f():\n    pass\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path,
+		index.RenameHint{OldPath: "relative/a.py", NewPath: path}); err == nil {
+		t.Fatal("relative hint accepted")
+	}
+}
+
+// TestConcurrentProcessesAgreeOnOneUID is AC-04.7 (decision D-109): two OS
+// processes racing first sight agree through SQLite alone, where no Go
+// memory is shared. The worker re-execs this test binary with an env flag.
+func TestConcurrentProcessesAgreeOnOneUID(t *testing.T) {
+	if os.Getenv("MINDRAIL_TEST_ALLOC_WORKER") == "1" {
+		allocWorker(t)
+		return
+	}
+	store, db, path := allocDatabase(t)
+	unit := identityUnit(t, store)
+	_ = db
+	runWorker := func() string {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], "-test.run=TestConcurrentProcessesAgreeOnOneUID", "-test.v")
+		cmd.Env = append(os.Environ(),
+			"MINDRAIL_TEST_ALLOC_WORKER=1",
+			"MINDRAIL_TEST_ALLOC_DB="+path,
+			"MINDRAIL_TEST_ALLOC_UNIT="+unit.ID,
+		)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("worker: %v\n%s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	type result struct{ uid string }
+	results := make(chan result, 2)
+	go func() { results <- result{runWorker()} }()
+	go func() { results <- result{runWorker()} }()
+	first, second := <-results, <-results
+	if first.uid == "" || first.uid != second.uid {
+		t.Fatalf("process uids %q vs %q", first.uid, second.uid)
+	}
+	var rows int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM symbol_identities`).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("identity rows = %d, %v", rows, err)
 	}
 }

@@ -222,3 +222,57 @@ Reader **FAIL** ve Breaker **BLOCKED** kararlarının istediği 4 test + 1 ifade
 düzeltmesi yukarıda uygulandı (M8–M10 kırmızı). Remediasyonun bağımsız
 yeniden-notlandırılması aşağıda; tam `make check` de öyle. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1053**.
+
+## TASK-04 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-04.1 | Karşılandı | `TestRenameMigratesUID`: uid taşınır, `previous_keys == [oldKey]`, identity sayısı 1, ambiguity 0. |
+| AC-04.2 | Karşılandı | `TestMoveWithGitHintMigrates` (hint ile taşınır) + `TestMoveWithoutGitHintMintsAnew` (hintsiz mintler, ambiguity 0 — belgeli sınır). |
+| AC-04.3 | Karşılandı | `TestClassRenameCascades`: 2 identity (mint yok), uid'ler taşınır, method `container_uid` == class uid. |
+| AC-04.4 | Karşılandı | `TestTwinsRecordAmbiguity` (1 satır, removed + 2 heir, heir'lar uid-less, mint yok) + `TestRenameOntoExistingKeyKeepsBothLineages` (çalma yok: survivor sabit, removed rowsuz, ambiguity yok). |
+| AC-04.5 | Karşılandı | `TestMintLastAfterFailedMigration` (1 fresh uid, 2 identity, ambiguity yok, boş lineage). |
+| AC-04.6 | Karşılandı | `TestMalformedHintsRefused` + `git.DiffRenames` fake/failure/real-git testleri (`TestDiffRenames*`, D-101 best-effort). |
+| AC-04.7 | Karşılandı | `TestConcurrentProcessesAgreeOnOneUID` (2 OS süreci, tek uid + 1 satır). |
+
+### D-112 — eşleştirme transaction içinde Store metodudur (D-93 arıtması)
+
+D-93 eşleştirme politikasını service'e yazdı; atomiklik (D-95) transaction
+sınırını geçmeye izin vermez: saf politika (`matchBar`,
+`orderParentsFirst`) ve akış (`resolveIdentitiesTx`, migrate/record/mint)
+`internal/index` içindedir, `symbol.Service` transaction-dışı orkestrasyonu
+sahiplenir (Git getirme — gelecek sürücüler, refresh, standalone tahsis).
+Saf fonksiyonlar doğrudan birim-testlidir; D-93'ün sahiplenme niyeti
+değişmedi, yerleşim transaction'a uydu.
+
+### D-113 — ata kümesi dosya+ihattur, global tarama yok
+
+Eşleştirme ataları iki kaynaktan gelir: bu dosyanın silinme-öncesi satırları
+(aynı-dosya rename) ve `NewPath` bu dosya olan hint'lerin eski-yol satırları
+(taşınma). Global "kaybolmuş anahtar" taraması ve fingerprint kolonları yok:
+aynı birim + aynı dil dışındaki taşınmalar mintler (belgeli sınır), sıralama
+bağımlılığı fail-safe yöndedir (erken indexlenen dosya heir'i bulur, geç
+kalan orphan izler — asla yanlış bağlanmaz), stale satır budama MR-007
+reconcile'undur.
+
+## Reader / Breaker bulguları ve giderim — TASK-04 kapısı
+
+(TASK-04 kapısı aşağıda.)
+
+### TASK-04 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | bar'dan body kontrolü çıkarıldı | mint-last testi FAIL (body değişimi migrate olurdu) |
+| M2 | aynı-dosya kapısı kaldırıldı (hep git gerekir) | rename + cascade testleri FAIL |
+| M3 | pre-pass consumed işaretleme kaldırıldı | twins testi FAIL (bölünür: biri migrate, biri mint) |
+| M4 | previous_keys append kaldırıldı | rename testi FAIL |
+| M5 | cascade remap etkisiz (self-map/overwrite) | cascade testi FAIL. İlk iki M5 derlemeyi bozdu (geçersiz mutantlar), derlenen varyantla tekrarlandı. |
+| M6 | ambiguity INSERT bozuldu | twins testi FAIL (satır yok) |
+| M7 | hint validasyonu atlandı (`[:0]`) | malformed testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-04 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (EXIT=0, doğru ölçüldü). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1067**.
