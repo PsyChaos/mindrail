@@ -507,6 +507,10 @@ func TestRenameMigratesUID(t *testing.T) {
 	if oldUID == "" {
 		t.Fatalf("old has no uid: %+v", before)
 	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO invariant_symbol_bindings
+		(invariant_id, symbol_uid, status, updated_at) VALUES ('INV-0001', ?, 'bound', '2026-09-23T10:00:00Z')`, oldUID); err != nil {
+		t.Fatal(err)
+	}
 	var oldKey string
 	if err := db.QueryRowContext(t.Context(), `SELECT logical_key FROM symbols WHERE path = ? AND name = 'old'`, path).Scan(&oldKey); err != nil {
 		t.Fatal(err)
@@ -535,6 +539,109 @@ func TestRenameMigratesUID(t *testing.T) {
 	}
 	if rows := ambiguityRows(t, db); len(rows) != 0 {
 		t.Fatalf("clean rename recorded %d ambiguities", len(rows))
+	}
+	var boundUID, boundStatus string
+	if err := db.QueryRowContext(t.Context(), `SELECT symbol_uid, status FROM invariant_symbol_bindings WHERE invariant_id = 'INV-0001'`).Scan(&boundUID, &boundStatus); err != nil {
+		t.Fatal(err)
+	}
+	if boundUID != oldUID || boundStatus != "bound" {
+		t.Fatalf("binding = (%s, %s), want the carried uid still bound", boundUID, boundStatus)
+	}
+}
+
+// TestStableTwinsReindexCleanly is the H1 regression: reindexing an
+// unchanged file whose siblings share bodies must not ambiguate stable
+// lineages against themselves. Ancestors exclude staged keys.
+func TestStableTwinsReindexCleanly(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def f1():\n    return 1\ndef f2():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "def f1():\n    return 1\ndef f2():\n    return 1\n\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["f1"] != before["f1"] || after["f2"] != before["f2"] || after["f1"] == "" {
+		t.Fatalf("stable uids moved %+v -> %+v", before, after)
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 0 {
+		t.Fatalf("clean reindex recorded %d ambiguities", len(rows))
+	}
+}
+
+// TestOntoOwnedKeyRecordsAmbiguity pins the no-steal trail: a stable key
+// whose content changes into a disappeared ancestor's shape keeps its uid,
+// and the absorbed lineage is recorded instead of orphaned silently.
+func TestOntoOwnedKeyRecordsAmbiguity(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "def f():\n    return 1\ndef g():\n    return 2\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "def g():\n    return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["g"] != before["g"] {
+		t.Fatalf("survivor uid moved %q -> %q: takeover must not steal", before["g"], after["g"])
+	}
+	rows := ambiguityRows(t, db)
+	if len(rows) != 1 || rows[0].removedUID != before["f"] {
+		t.Fatalf("ambiguity rows = %+v, want the absorbed lineage named", rows)
+	}
+}
+
+// TestCascadeTwinsAmbiguate pins phase-two counting under a renamed parent:
+// two heirs meeting two removed ancestors ambiguate instead of swapping.
+func TestCascadeTwinsAmbiguate(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "class Box:\n    def p(self):\n        return 1\n    def q(self):\n        return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile(t, root, "a.py", "class Crate:\n    def p(self):\n        return 1\n    def q(self):\n        return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["p"] != "" || after["q"] != "" {
+		t.Fatalf("twin heirs got uids %+v; counting must ambiguate", after)
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 2 {
+		t.Fatalf("ambiguity rows = %d, want one per heir", len(rows))
+	}
+}
+
+// TestRemapTwinsMintAnew characterizes the documented residual: twins under
+// a changed parent cannot meet the bar (no remap forms without a migrated
+// parent), so the removed lineage orphans and both heirs mint fresh. Nothing
+// is guessed and nothing is dropped silently.
+func TestRemapTwinsMintAnew(t *testing.T) {
+	idx, unit, root, db := migrationFixture(t)
+	path := sourceFile(t, root, "a.py", "class Box:\n    def f(self):\n        return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	before := uidsByName(t, db, path)
+	sourceFile(t, root, "a.py", "class Crate:\n    def g1(self):\n        return 1\n    def g2(self):\n        return 1\n")
+	if _, err := idx.IndexFile(t.Context(), migrationProject, unit, path); err != nil {
+		t.Fatal(err)
+	}
+	after := uidsByName(t, db, path)
+	if after["g1"] == "" || after["g1"] == before["f"] || after["g2"] == "" || after["g2"] == before["f"] || after["g1"] == after["g2"] {
+		t.Fatalf("heirs = %+v, want two fresh distinct uids", after)
+	}
+	if rows := ambiguityRows(t, db); len(rows) != 0 {
+		t.Fatalf("unmatched twins recorded %d ambiguities", len(rows))
+	}
+	var live int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM symbols WHERE symbol_uid = ?`, before["f"]).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("removed lineage rows = %d, %v", live, err)
 	}
 }
 
@@ -741,7 +848,7 @@ func TestConcurrentProcessesAgreeOnOneUID(t *testing.T) {
 	_ = db
 	runWorker := func() string {
 		t.Helper()
-		cmd := exec.Command(os.Args[0], "-test.run=TestConcurrentProcessesAgreeOnOneUID", "-test.v")
+		cmd := exec.Command(os.Args[0], "-test.run=TestConcurrentProcessesAgreeOnOneUID")
 		cmd.Env = append(os.Environ(),
 			"MINDRAIL_TEST_ALLOC_WORKER=1",
 			"MINDRAIL_TEST_ALLOC_DB="+path,
@@ -751,7 +858,14 @@ func TestConcurrentProcessesAgreeOnOneUID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("worker: %v\n%s", err, out)
 		}
-		return strings.TrimSpace(string(out))
+		// Timing lines vary with load; only the uid line is compared.
+		for _, line := range strings.Split(string(out), "\n") {
+			if uid := strings.TrimSpace(line); strings.HasPrefix(uid, "SYM-") {
+				return uid
+			}
+		}
+		t.Fatalf("worker printed no uid:\n%s", out)
+		return ""
 	}
 	type result struct{ uid string }
 	results := make(chan result, 2)

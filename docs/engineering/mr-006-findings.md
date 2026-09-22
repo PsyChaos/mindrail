@@ -276,3 +276,37 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 ### TASK-04 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0, doğru ölçüldü). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1067**.
+
+## Reader / Breaker bulguları ve giderim — TASK-04 kapısı (birinci tur)
+
+Bağımsız Reader **FAIL**, Breaker **BLOCKED**. Üç gerçek kusur + kapı hijyeni:
+
+- **HIGH/H1 (hayalet ıraksama):** ata kümesi staged anahtarları dışlamıyordu;
+  stabil lineage'lar kendileriyle eşleşip sahte ambiguity üretiyor, satırları
+  NULL'lıyordu. Giderim: disappeared filtresi (`old − staged`) +
+  `TestStableTwinsReindexCleanly` (pre-fix kırmızı doğrulandı).
+- **H2/F3 (onto-owned sessizliği):** sahipli anahtara takeover iz bırakmıyordu.
+  Giderim: içerik-değiştiren stabil anahtar + eşleşen disappeared → ambiguity
+  satırı (satırlar U2'de kalır) + `TestOntoOwnedKeyRecordsAmbiguity`
+  (pre-fix kırmızı doğrulandı).
+- **F2 (swap):** faz-iki sayımı yoktu; ilk-eşleşme-kazanır takas edebilirdi.
+  Giderim: contender sayımı (≥2 → ambiguous) + `TestCascadeTwinsAmbiguate`
+  (pre-fix kırmızı doğrulandı).
+- **F4 (usedAncestors):** kaldırıldı — erişilemez olduğu ispatlandı (migrate
+  eden parent'ın suite'i stabildir, bu da ek üye yasaklar; ek üye parent
+  migration'ını bozar). İspat kod yorumunda + burada kayıtta.
+- **F5 (sıralama):** adversarial anahtarlı test + mutant kırmızı.
+- **F1/M1 (subprocess):** uid-satırı çıkarılıyor, blob karşılaştırma yok;
+  5× temiz koşu.
+- **M2 (binding):** rename testine binding-intact assertion eklendi.
+- **L1/L3:** AC-04.1 provenance ifadesi + D-96 sayım/takeover açıklaması
+  düzeltildi (yukarıda).
+- **L2:** sıralama-bağımlılığı kod yorumunda.
+
+### TASK-04 guard mutasyon defteri — ek (tamamı geri alındı)
+
+Pre-fix kırmızılar (H1/F2/F3): yukarıdaki 4 yeni testin 4'ü de pre-fix
+koddaki karşılıklarında FAIL verdi (stash/pop ile doğrulandı, restore
+md5'li).
+
+### TASK-04 kapı (PENDING — ikinci tur kapı bekleniyor)

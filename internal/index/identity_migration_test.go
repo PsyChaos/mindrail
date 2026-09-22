@@ -40,17 +40,29 @@ func TestMatchBarSeparatesBodyKindContainerAndPath(t *testing.T) {
 
 // TestOrderParentsFirstRootsBeforeChildren pins the cascade order: a class
 // resolves before the methods that name it, deterministically.
+func qkey(local string) string {
+	return `["a.py","` + local + `"]`
+}
+
 func TestOrderParentsFirstRootsBeforeChildren(t *testing.T) {
+	// Adversarial keys: lexical order puts the child (local "m1") before its
+	// container ("p"), so a plain key sort misorders and only depth wins.
+	// Keys are real qualified pairs, exercising localPart on the way.
 	keys := []stagedKey{
-		{Key: "method", ContainerLocal: "class"},
-		{Key: "lone", ContainerLocal: ""},
-		{Key: "class", ContainerLocal: ""},
+		{Key: qkey("m1"), ContainerLocal: "p"},
+		{Key: qkey("z"), ContainerLocal: ""},
+		{Key: qkey("p"), ContainerLocal: ""},
 	}
 	ordered := orderParentsFirst(keys)
-	if ordered[0].Key == "method" {
-		t.Fatalf("order = %v, method must follow its container", ordered)
+	if ordered[2].Key != qkey("m1") || ordered[0].Key != qkey("p") {
+		t.Fatalf("order = %v, container must precede its child", ordered)
 	}
-	if ordered[len(ordered)-1].Key != "method" {
-		t.Fatalf("order = %v, deepest last", ordered)
+	// A cycle degrades to key order instead of looping forever.
+	cyclic := []stagedKey{
+		{Key: "x", ContainerLocal: "y"},
+		{Key: "y", ContainerLocal: "x"},
+	}
+	if got := orderParentsFirst(cyclic); len(got) != 2 {
+		t.Fatalf("cyclic order = %v", got)
 	}
 }

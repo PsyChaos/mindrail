@@ -135,12 +135,14 @@ func hintMovesFor(hints []RenameHint, newPath string) []string {
 
 // resolveIdentitiesTx assigns every staged key its lineage uid inside the
 // completion transaction (decision D-95). Lookup hits keep their uid —
-// identities are never stolen. For the rest it runs the two-phase rule:
-// first every disappeared ancestor counts the added keys meeting the bar
-// (two or more records ambiguity and consumes them), then every unclaimed
-// added key resolves against at most one remaining ancestor or mints.
-// It returns key→uid for claimed keys; ambiguous and minted maps are
-// reported separately for the row writer.
+// identities are never stolen — but a hit does not end the inquiry: a
+// disappeared ancestor meeting the bar names a takeover, which records
+// ambiguity instead of silently orphaning (no-steal with a trail). For the
+// rest it runs the two-phase rule: first every disappeared ancestor counts
+// the added keys meeting the bar (two or more records ambiguity and consumes
+// them), then every unclaimed added key counts its meeting ancestors (two or
+// more records ambiguity; one migrates unless spent, then mints; zero mints).
+// It returns key→uid for claimed keys; ambiguous keys land uid-less.
 func (s *Store) resolveIdentitiesTx(ctx context.Context, tx *sql.Tx, projectID, unitID, language string, staged []stagedKey, ancestors []ancestorRow, hints []RenameHint, now string) (claimed map[string]string, ambiguous map[string]bool, err error) {
 	moved := make(map[string]bool)
 	for _, hint := range hints {
@@ -151,49 +153,23 @@ func (s *Store) resolveIdentitiesTx(ctx context.Context, tx *sql.Tx, projectID, 
 	corroborated := func(ancestorPath, addedPath string) bool {
 		return moved[ancestorPath+"\x00"+addedPath]
 	}
-	// Phase one: per removed ancestor, count meeting added keys.
-	meetingAdded := func(ancestor ancestorRow, remap map[string]string) []string {
-		remapped := ancestor.ContainerLocal
-		if rewritten, ok := remap[remapped]; ok {
-			remapped = rewritten
-		}
-		var meeting []string
-		for _, added := range staged {
-			if matchBar(added, ancestor, remapped, corroborated(ancestor.Path, added.Path)) {
-				meeting = append(meeting, added.Key)
-			}
-		}
-		return meeting
+	// Disappeared means gone from the staged set: a continuing lineage never
+	// meets the bar against itself, so stable twins reindex cleanly (H1).
+	stagedSet := make(map[string]bool, len(staged))
+	for _, added := range staged {
+		stagedSet[added.Key] = true
 	}
-	consumed := make(map[string]bool)
-	remap := make(map[string]string)
+	var disappeared []ancestorRow
 	for _, ancestor := range ancestors {
-		meeting := meetingAdded(ancestor, nil)
-		if len(meeting) < 2 {
-			continue
-		}
-		for _, key := range meeting {
-			consumed[key] = true
-		}
-		if err := s.recordAmbiguityTx(ctx, tx, unitID, ancestor.UID, ancestor.Key, meeting, now); err != nil {
-			return nil, nil, err
+		if !stagedSet[ancestor.Key] {
+			disappeared = append(disappeared, ancestor)
 		}
 	}
-	// Phase two: parents-first assignment over the unclaimed keys.
+	// Lookup hits first: every staged key keeps an existing lineage, and an
+	// ancestor meeting the bar against an owned key names a takeover —
+	// recorded, never stolen.
 	claimed = make(map[string]string)
-	ambiguous = make(map[string]bool)
-	usedAncestors := make(map[string]bool)
-	stagedLocals := make(map[string]string, len(staged))
-	for _, key := range staged {
-		if local, err := localPart(key.Key); err == nil {
-			stagedLocals[key.Key] = local
-		}
-	}
-	for _, added := range orderParentsFirst(staged) {
-		if consumed[added.Key] {
-			ambiguous[added.Key] = true
-			continue
-		}
+	for _, added := range staged {
 		var uid string
 		err := tx.QueryRowContext(ctx, `SELECT symbol_uid FROM symbol_identities
 			WHERE project_id = ? AND unit_id = ? AND language = ? AND logical_key = ?`,
@@ -205,37 +181,151 @@ func (s *Store) resolveIdentitiesTx(ctx context.Context, tx *sql.Tx, projectID, 
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, err
 		}
-		var match *ancestorRow
-		for i := range ancestors {
-			ancestor := ancestors[i]
-			if usedAncestors[ancestor.Key] {
+	}
+	for _, added := range staged {
+		if _, ok := claimed[added.Key]; !ok {
+			continue
+		}
+		// A takeover suspect is a stable key whose content changed while a
+		// disappeared ancestor meets the bar against its new shape: the rows
+		// keep their uid (never stolen), but the absorbed lineage is named
+		// instead of orphaned silently. Unchanged stable keys skip this —
+		// their twins' deaths are orphans, not takeovers.
+		var oldBody string
+		var hadOld bool
+		for _, ancestor := range ancestors {
+			if ancestor.Key == added.Key {
+				oldBody, hadOld = ancestor.BodyHash, true
+				break
+			}
+		}
+		if hadOld && oldBody == added.BodyHash {
+			continue
+		}
+		for _, ancestor := range disappeared {
+			if matchBar(added, ancestor, ancestor.ContainerLocal, corroborated(ancestor.Path, added.Path)) {
+				removed, err := s.ensureAncestorTx(ctx, tx, projectID, unitID, language, ancestor, now)
+				if err != nil {
+					return nil, nil, err
+				}
+				if err := s.recordAmbiguityTx(ctx, tx, unitID, removed, ancestor.Key, []string{added.Key}, now); err != nil {
+					return nil, nil, err
+				}
+				break
+			}
+		}
+	}
+	// Phase one: per removed ancestor, count meeting unclaimed added keys.
+	meetingAdded := func(ancestor ancestorRow, remap map[string]string) []string {
+		remapped := ancestor.ContainerLocal
+		if rewritten, ok := remap[remapped]; ok {
+			remapped = rewritten
+		}
+		var meeting []string
+		for _, added := range staged {
+			if _, ok := claimed[added.Key]; ok {
 				continue
 			}
+			if matchBar(added, ancestor, remapped, corroborated(ancestor.Path, added.Path)) {
+				meeting = append(meeting, added.Key)
+			}
+		}
+		return meeting
+	}
+	consumed := make(map[string]bool)
+	remap := make(map[string]string)
+	for _, ancestor := range disappeared {
+		meeting := meetingAdded(ancestor, nil)
+		if len(meeting) < 2 {
+			continue
+		}
+		for _, key := range meeting {
+			consumed[key] = true
+		}
+		removed, err := s.ensureAncestorTx(ctx, tx, projectID, unitID, language, ancestor, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := s.recordAmbiguityTx(ctx, tx, unitID, removed, ancestor.Key, meeting, now); err != nil {
+			return nil, nil, err
+		}
+	}
+	// Phase two: parents-first assignment over the unclaimed keys. A key
+	// meeting two or more ancestors ambiguates (no migration, no mint); a
+	// single meeting migrates; none mints. There is deliberately no
+	// used-ancestor set: a second meeting with an already-migrated ancestor
+	// cannot arise — same-file twins are consumed by phase one, and
+	// remap-dependent twins ambiguate through the count above — because a
+	// migrated parent's suite bytes are stable, which forbids added members,
+	// and added members forbid the parent's migration. The count rule alone
+	// is total.
+	ambiguous = make(map[string]bool)
+	stagedLocals := make(map[string]string, len(staged))
+	for _, key := range staged {
+		if local, err := localPart(key.Key); err == nil {
+			stagedLocals[key.Key] = local
+		}
+	}
+	for _, added := range orderParentsFirst(staged) {
+		if consumed[added.Key] {
+			ambiguous[added.Key] = true
+			continue
+		}
+		if _, ok := claimed[added.Key]; ok {
+			continue
+		}
+		var contenders []ancestorRow
+		for _, ancestor := range disappeared {
 			remapped := ancestor.ContainerLocal
 			if rewritten, ok := remap[remapped]; ok {
 				remapped = rewritten
 			}
 			if matchBar(added, ancestor, remapped, corroborated(ancestor.Path, added.Path)) {
-				match = &ancestors[i]
-				break
+				contenders = append(contenders, ancestor)
 			}
 		}
-		if match == nil {
-			uid, err := s.mintIdentityTx(ctx, tx, projectID, unitID, language, added.Key, now)
+		if len(contenders) >= 2 {
+			first := contenders[0]
+			for _, contender := range contenders[1:] {
+				if contender.Key < first.Key {
+					first = contender
+				}
+			}
+			removed, err := s.ensureAncestorTx(ctx, tx, projectID, unitID, language, first, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := s.recordAmbiguityTx(ctx, tx, unitID, removed, first.Key, []string{added.Key}, now); err != nil {
+				return nil, nil, err
+			}
+			ambiguous[added.Key] = true
+			continue
+		}
+		if len(contenders) == 1 {
+			uid, err := s.migrateIdentityTx(ctx, tx, projectID, unitID, language, added, contenders[0], remap, stagedLocals, claimed, now)
 			if err != nil {
 				return nil, nil, err
 			}
 			claimed[added.Key] = uid
 			continue
 		}
-		usedAncestors[match.Key] = true
-		uid, err = s.migrateIdentityTx(ctx, tx, projectID, unitID, language, added, *match, remap, stagedLocals, claimed, now)
+		uid, err := s.mintIdentityTx(ctx, tx, projectID, unitID, language, added.Key, now)
 		if err != nil {
 			return nil, nil, err
 		}
 		claimed[added.Key] = uid
 	}
 	return claimed, ambiguous, nil
+}
+
+// ensureAncestorTx returns a disappeared ancestor's uid, minting it first
+// when the row predates allocation: a lineage must exist to be rewritten or
+// named in an ambiguity record.
+func (s *Store) ensureAncestorTx(ctx context.Context, tx *sql.Tx, projectID, unitID, language string, ancestor ancestorRow, now string) (string, error) {
+	if ancestor.UID != "" {
+		return ancestor.UID, nil
+	}
+	return s.mintIdentityTx(ctx, tx, projectID, unitID, language, ancestor.Key, now)
 }
 
 // migrateIdentityTx rewrites one identity onto its heir: the key moves, the
@@ -339,7 +429,10 @@ func (s *Store) mintIdentityTx(ctx context.Context, tx *sql.Tx, projectID, unitI
 // migration ancestors. Same unit and same language only: cross-unit and
 // cross-language moves mint anew in 0.1 (documented limitation), because the
 // allocation key scopes both dimensions and guessing across them would forge
-// lineage.
+// lineage. Matching is order-dependent in one fail-safe direction: an heir
+// indexed before its ancestor's file is reindexed mints anew while the
+// ancestor later orphans — never wrongly attached, at worst explicitly
+// unresolved.
 func (s *Store) snapshotFileAncestorsTx(ctx context.Context, tx *sql.Tx, unitID, language, path string, hints []RenameHint) ([]ancestorRow, error) {
 	paths := []string{path}
 	for _, hint := range hints {

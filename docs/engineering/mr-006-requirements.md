@@ -114,8 +114,11 @@ a renamed class orphans every method inside it. Every migration appends the
 abandoned key to the identity's `previous_keys` lineage memory, so a later
 refresh can resolve a stale target text to the migrated uid instead of
 orphaning it. A migration whose added key is already owned by another uid is
-ambiguous, never a steal. The bar, the threshold (one confident candidate)
+ambiguous, never a steal. The bar, the counting
 and the remap are asserted per case by fixture, not by prose.
+
+(Amended at the TASK-04 gate: disappeared-filter, per-added counting and
+takeover-trail made explicit; verdicts unchanged.)
 
 ### D-97 — target resolution walks live rows, stores no names
 
@@ -317,8 +320,9 @@ Owns REQ-03 and REQ-09.
 Owns REQ-04 and REQ-08 (remainder).
 
 - **AC-04.1** same-file function rename migrates the uid (body/kind/
-  container/path bar); the binding still points at the uid; exactly one
-  `SYMBOL_IDENTITY_MIGRATED` provenance row.
+  container/path bar); the binding still points at the uid; the abandoned key
+  joins the lineage memory (the provenance record — no separate event table
+  exists by design §5).
 - **AC-04.2** cross-file move with a Git R-entry migrates (structure + Git
   corroboration); without Git signal and with a changed path it mints anew
   (documented limitation, test-pinned).
