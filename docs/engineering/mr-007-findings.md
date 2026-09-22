@@ -109,3 +109,40 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 ### TASK-02 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1090**.
+
+## Reader / Breaker bulguları ve giderim — TASK-02 kapısı
+
+Bağımsız Reader **PASS** (AC-02.1…02.4 MET), Breaker **VERIFIED**
+(5 öz mutant: 4 kırmızı + 1 benign-perf; 32×3 yarış temiz).
+
+- **Reader F1 + Breaker bulgu 1 (LOW→düzeltildi):** op log ayrı transaction'da
+  commitleniyordu (crash penceresi + yarışta ham constraint hatası).
+  Giderim: log yazıyla AYNI transaction'da (`recordOperationTx`);
+  commit-yarışını kaybeden log'u yeniden okur (aynı hash → replay, diğer →
+  conflict). `TestConcurrentSameOperationConverges` (16 yarışçı, race
+  dedektörlü) pinler; N2 mutantı (ayrı-tx'e dönüş) FAIL.
+- **Breaker bulgu 2 (LOW→düzeltildi):** yetim baseline satırları (task FK'siz).
+  Giderim: `CaptureBaseline` task varlığını denetler
+  + `TestCaptureBaselineRefusesUnknownTask`; N1 mutantı FAIL.
+- **Breaker bulgu 3 (gözlem):** clear-sonrası replay eski özeti döner —
+  idempotency semantiği gereği doğru (log clear'dan etkilenmez); kayıtta,
+  işlem yok.
+- **Reader F2 (doküman):** op-id kapsamı notu eklendi — tasked Ensure'da
+  mevcut satır kısa-devre yapar, op log'a değmez (AC-02.2 testiyle kutsanmış
+  davranış).
+- **Reader F3 (test gücü):** replay testine op-satır-sayısı + `captured_at`
+  stabilitesi eklendi.
+- **Reader F4 (ifade):** M2-benign cümlesi düzeltildi — lookup'suz varyant
+  op-satırı da yazardı; sınıflandırma (perf-only) aynen durur.
+
+### TASK-02 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| N1 | task varlık denetimi kaldırıldı | unknown-task testi FAIL |
+| N2 | log ayrı transaction'a alındı | race testi FAIL (ham constraint) |
+
+### TASK-02 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
+
+Giderim sonrası focused + race süitleri yeşil; tam `make check` aşağıda.
+Test sayısı `go test -list '.*' ./... | grep -c '^Test'` ile **1092**.

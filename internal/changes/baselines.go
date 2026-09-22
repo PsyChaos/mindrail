@@ -58,6 +58,9 @@ func (s *Store) CaptureBaseline(ctx context.Context, taskID string, paths []stri
 	if operationID != "" && !coordination.ValidOperationID(operationID) {
 		return BaselineSummary{}, invalidInput("operation id is not representable")
 	}
+	if err := s.requireTask(ctx, taskID); err != nil {
+		return BaselineSummary{}, err
+	}
 	hashes := make(map[string]string, len(paths))
 	for _, path := range paths {
 		hash, err := contentHash(path)
@@ -86,6 +89,24 @@ func (s *Store) CaptureBaseline(ctx context.Context, taskID string, paths []stri
 		return BaselineSummary{}, err
 	}
 	return summary, nil
+}
+
+// requireTask refuses baselines for tasks that do not exist: orphan rows
+// would accumulate and ReadBaseline would serve them as declared truth.
+// It is a read-only probe, not a join — the changes package never writes
+// coordination tables.
+func (s *Store) requireTask(ctx context.Context, taskID string) error {
+	if err := s.requireSchema(ctx); err != nil {
+		return err
+	}
+	var present int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM tasks WHERE task_id = ?`, taskID).Scan(&present); err != nil {
+		return corruptState(err)
+	}
+	if present == 0 {
+		return invalidInput("baseline capture needs an existing task")
+	}
+	return nil
 }
 
 // BaselineSummary is what a capture recorded: the task and how many scope

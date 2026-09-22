@@ -83,7 +83,8 @@ func shaOf(content string) string {
 // TestCaptureBaselineReplacesWithoutStacking is AC-02.1: the latest capture
 // is the whole truth — replaced, never stacked.
 func TestCaptureBaselineReplacesWithoutStacking(t *testing.T) {
-	store := changesFixture(t)
+	store, db, _ := changesFixtureDB(t)
+	seedTaskChain(t, db, "TSK-1")
 	dir := t.TempDir()
 	a := writeScopeFile(t, dir, "a.py", "a = 1\n")
 	b := writeScopeFile(t, dir, "b.py", "b = 2\n")
@@ -111,7 +112,8 @@ func TestCaptureBaselineReplacesWithoutStacking(t *testing.T) {
 // TestCaptureBaselineEmptyHashForMissingAndNonRegular pins the best-effort
 // half of AC-02.1: unhashable scope still records, never fails the capture.
 func TestCaptureBaselineEmptyHashForMissingAndNonRegular(t *testing.T) {
-	store := changesFixture(t)
+	store, db, _ := changesFixtureDB(t)
+	seedTaskChain(t, db, "TSK-1")
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "gone.py")
 	summary, err := store.CaptureBaseline(t.Context(), "TSK-1", []string{missing, dir}, "")
@@ -133,6 +135,18 @@ func TestCaptureBaselineEmptyHashForMissingAndNonRegular(t *testing.T) {
 	}
 	if _, err := store.CaptureBaseline(t.Context(), "TSK-1", []string{missing}, "bad id!"); err == nil {
 		t.Fatal("capture accepted an unrepresentable operation id")
+	}
+}
+
+// TestCaptureBaselineRefusesUnknownTask pins the fail-closed half of the
+// task scope: baselines for tasks that do not exist are refused rather than
+// orphaned.
+func TestCaptureBaselineRefusesUnknownTask(t *testing.T) {
+	store, _, _ := changesFixtureDB(t)
+	dir := t.TempDir()
+	a := writeScopeFile(t, dir, "a.py", "a = 1\n")
+	if _, err := store.CaptureBaseline(t.Context(), "TSK-NOPE", []string{a}, ""); err == nil {
+		t.Fatal("baseline accepted a missing task")
 	}
 }
 
@@ -207,6 +221,21 @@ func TestOperationReplayAndConflict(t *testing.T) {
 	if err != nil || after != before {
 		t.Fatalf("baseline replay = %+v, want %+v", after, before)
 	}
+	var opRows int
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM change_operations WHERE operation_id = 'OP-B'`).Scan(&opRows); err != nil || opRows != 1 {
+		t.Fatalf("op rows = %d, %v — replay must not rewrite the log", opRows, err)
+	}
+	var captured string
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT captured_at FROM change_baselines WHERE task_id = 'TSK-9'`).Scan(&captured); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CaptureBaseline(t.Context(), "TSK-9", []string{a}, "OP-B"); err != nil {
+		t.Fatal(err)
+	}
+	var recaptured string
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT captured_at FROM change_baselines WHERE task_id = 'TSK-9'`).Scan(&recaptured); err != nil || recaptured != captured {
+		t.Fatalf("replay rewrote captured_at %q -> %q", captured, recaptured)
+	}
 	b := writeScopeFile(t, dir, "b.py", "b = 2\n")
 	if _, err := store.CaptureBaseline(t.Context(), "TSK-9", []string{a, b}, "OP-B"); err == nil {
 		t.Fatal("baseline conflict accepted")
@@ -241,6 +270,43 @@ func TestBaselineClearingDiscipline(t *testing.T) {
 	}
 	if _, err := store.CaptureBaseline(t.Context(), "TSK-1", []string{a}, ""); err != nil {
 		t.Fatalf("recapture after clear: %v", err)
+	}
+}
+
+// TestConcurrentSameOperationConverges races one operation id across
+// sixteen goroutines: every racer answers the winner's change id with no
+// raw constraint error, and the log holds exactly one row.
+func TestConcurrentSameOperationConverges(t *testing.T) {
+	store, db, _ := changesFixtureDB(t)
+	seedTaskChain(t, db, "TSK-R")
+	const racers = 16
+	ids := make([]string, racers)
+	errs := make([]error, racers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range racers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			change, err := store.EnsureOpenChange(t.Context(), "TSK-R", "OP-RACE")
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			ids[i] = change.ID
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i := range racers {
+		if errs[i] != nil || ids[i] != ids[0] {
+			t.Fatalf("racer %d = %q, %v", i, ids[i], errs[i])
+		}
+	}
+	var opRows int
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM change_operations WHERE operation_id = 'OP-RACE'`).Scan(&opRows); err != nil || opRows != 1 {
+		t.Fatalf("op rows = %d, %v", opRows, err)
 	}
 }
 
