@@ -268,7 +268,7 @@ bilinmeyen-proje muhafızı.
 
 ---
 
-### [ ] MR-005 — Python/TypeScript/JavaScript yapısal indeksleme
+### [x] MR-005 — Python/TypeScript/JavaScript yapısal indeksleme
 
 - **Tür:** AFK
 - **Blocked by:** MR-001
@@ -280,11 +280,43 @@ ProjectUnit keşfi, Tree-sitter language registry, content-addressed snapshot/ca
 
 #### Kabul kriterleri
 
-- [ ] Python, TS ve JS için fixture'lar declaration, method/function body, import ve açık call/reference çıkarımını doğrular.
-- [ ] Değişmemiş content hash yeniden parse edilmez.
-- [ ] Kesilen indeksleme tamamlanmış hash'leri tekrar işlemeden devam eder.
-- [ ] Unindexed aktif ProjectUnit, hedefe yönelik istek geldiğinde cold queue önüne alınır.
-- [ ] Büyük inventory sonrasında durum PARTIAL_READY/pending olarak açıkça raporlanabilir.
+- [x] Python, TS ve JS için fixture'lar declaration, method/function body, import ve açık call/reference çıkarımını doğrular.
+- [x] Değişmemiş content hash yeniden parse edilmez.
+- [x] Kesilen indeksleme tamamlanmış hash'leri tekrar işlemeden devam eder.
+- [x] Unindexed aktif ProjectUnit, hedefe yönelik istek geldiğinde cold queue önüne alınır.
+- [x] Büyük inventory sonrasında durum PARTIAL_READY/pending olarak açıkça raporlanabilir.
+
+#### Durum
+
+**Tamamlandı.** Yedi görev (TASK-01…07) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-05 kapısı 1 MEDIUM buldu (parent-dir
+symlink guard'ının kırmızı kanıtı yoktu — test eklendi); TASK-06 kapıları
+temizdi (2 LOW remediasyon: nil-registry testi, clean-absolute kuralı);
+TASK-07 kapıları 2 MEDIUM buldu (kanıtta sembol-satır denetimi ve 60s
+sınırının zayıflığı — ikisi de assertion ile kapatıldı) ve kanıt koşusu
+**gerçek bir bug** yakaladı: `Prioritize` eviction'ı `queued` map'inde bayat
+girdi bırakıyor, tahliye edilen dosyalar refill'de coalesce ile sessizce
+atlanıyordu (soğuk index hiç bitmeyecekti). Düzeltme + pin testi
+`TestEvictedPathsRefillAfterPrioritize` ile kayıtta.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-005-requirements.md](mr-005-requirements.md), `40c42d0`), tasarım
+[mr-005-design.md](mr-005-design.md); dördüncü göç
+`migrations/000004_index.sql`, tablo sürümü 4. Kararlar D-80…D-92:
+D-90 dosya-kapsamlı çözümlemeyi dondurur (MR-009 ya anahtarı genişletir ya
+graph'ı bu kısıtla tasarlar), D-91 scheduler-sürücüsüz readiness'i
+(TASK-07 kanıtı sürer), D-92 süreç-ölçeği kanıtını yeniden-açılan
+handle'larla tanımlar.
+
+Kanıt sayıları (`TestLargeInventoryColdIndexProof`): 2700 dosya, init
+~16ms (satırsız, beklemez), PARTIAL_READY + pending=2700, window 1024,
+900 TS öne, drain 2700/2700 + `max(attempts)=1` + `symbols=2700`, final
+READY, status worst-of-20 ~25–200µs (150ms bütçe).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1028
+test (TASK-05 başında 946 idi — MR-004 kapanışında 872). Kapıların MR-006'ya
+bıraktıkları: D-90 anahtar-genişletme kararı ve unsupported-only census
+faz notu (ikisi de `mr-005-findings.md` §TASK-06/07'de).
 
 ---
 
