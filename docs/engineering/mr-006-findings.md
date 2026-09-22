@@ -140,3 +140,39 @@ Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test say�
 
 Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1032**.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | `TestResolveTargetScopeForms` (FILE/fonksiyon/metot/çift-tür-çiftliği/bilinmeyen/kapsayıcısız/çıplak-metot/dosya-fanout/birim-dışı), `TestResolveContainerCollisionIsAmbiguous`, `TestRefreshBindsPrefixScopes` (PACKAGE/MODULE + `pkg2` ayraç guard'ı). |
+| AC-03.2 | Karşılandı | `TestRefreshBindingsWritesBoundRows` (bound + idempotent re-refresh) ve `TestStickyBindingSurvivesStaleTargetText` (D-110: canlı lineage bayat metne rağmen bound kalır). |
+| AC-03.3 | Karşılandı | `TestRefreshDefersColdFiles`: satır yok, bulgu yok, blok yok. |
+| AC-03.4 | Karşılandı | `TestOrphanBlocksOnCritical` (CRITICAL bloklar, LOW bloklamaz, kod `ORPHANED_PROTECTED_SYMBOL`) ve `TestOutsideUnitTargetIsOrphaned` (D-110: birimsiz yol orphan izler, satırsız). |
+| AC-03.5 | Karşılandı | `TestRefreshTouchesNoKnowledgeFiles` (kaynak taraması: yazma çağrısı yok) + bellek-içi invariant girdiler (FS bağımlılığı yok). |
+
+Ara kararlar: FILE fan-out sessizce bağlar (kapsam tüm dosyayı ister);
+SYMBOL ıraksaması her zaman bloklar; orphan satırı yalnız ölen lineage
+üzerine yazılır, hiç-bağlanmamış orphan bulgu-düzeyindedir (D-111).
+
+## Reader / Breaker bulguları ve giderim — TASK-03 kapısı
+
+(TASK-03 kapısı aşağıda.)
+
+### TASK-03 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | container-ıraksama kontrolü kaldırıldı (ilk eşleşme kazanır) | İlk deneme SURVIVED — final-seviye çift test container seviyesini pinlemiyordu. `TestResolveContainerCollisionIsAmbiguous` (sınıf+fonksiyon ad çakışması) eklendi; mutant FAIL. |
+| M2 | sticky kuralı kaldırıldı (her zaman orphan) | sticky testi FAIL. İlk M2 derlemeyi bozdu (geçersiz mutant), koşul-varyantıyla tekrarlandı. |
+| M3 | FILE fan-out kaldırıldı (her ıraksama bloklar) | bound-rows testi FAIL (INV-0002 sessiz bound bekler). |
+| M4 | pending erteleme kaldırıldı | deferral testi FAIL. |
+| M5 | `blocks` her zaman true | orphan testi FAIL (LOW blokladı). İlk M5 kapanış ayracını yuttu (geçersiz mutant), düzeltildi. |
+| M6 | prefix ayraç guard'ı kaldırıldı | prefix testi FAIL (`pkg2` satırı bağlandı). |
+| M7 | bilinmeyen seviye sessizce bağlanır | malformed testi FAIL. |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-03 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (exit 0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1051**.

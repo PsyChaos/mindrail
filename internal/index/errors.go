@@ -47,6 +47,16 @@ func AmbiguousIdentity(removedKey string, candidateKeys []string) error {
 		"Name the surviving symbol explicitly: "+strings.Join(candidateKeys, ", ")+".")
 }
 
+// AmbiguousTarget names a target several live lineages answer to. Like
+// AmbiguousIdentity it mints and steals nothing; unlike it, there is no
+// removed identity here, only a reference that stopped naming one thing.
+func AmbiguousTarget(target string, uids []string) error {
+	return app.NewError(app.CodeSymbolIdentityAmbiguous, app.KindFailed,
+		fmt.Sprintf("target %s names %d live lineages and binds none", target, len(uids)),
+		"Binding one of them by guess would protect the wrong lineage.",
+		"Narrow the target until it names one declaration: "+strings.Join(uids, ", ")+".")
+}
+
 // OrphanedProtectedSymbol keeps an active invariant blocking when its symbol
 // is gone with no confident heir. The invariant stays active and loud rather
 // than going silent.

@@ -54,7 +54,8 @@ type FileIndexState struct {
 }
 
 // Symbol contains one declaration's three fingerprints and source span. ID is
-// a SQLite row ID, not the durable symbol_uid that MR-006 will allocate.
+// a SQLite row ID, not the durable symbol_uid that MR-006 allocates. UID is
+// that allocation once stamped, or empty while the identity question is open.
 type Symbol struct {
 	ID            int64
 	LogicalKey    string
@@ -68,6 +69,7 @@ type Symbol struct {
 	SignatureHash string
 	BodyHash      string
 	StructureHash string
+	UID           string
 }
 
 type Import struct {
