@@ -116,6 +116,12 @@ var exitForCode = map[app.Code]int{
 	app.CodeSyntaxLanguageUnsupported: app.ExitFailed,
 	app.CodeSyntaxParseFailed:         app.ExitFailed,
 	app.CodeIndexStateCorrupt:         app.ExitFailed,
+
+	// MR-006's two identity findings: same class — the request was well
+	// formed and the refusal depends on rows (which candidates a removed
+	// symbol meets, whether a protected symbol still resolves).
+	app.CodeSymbolIdentityAmbiguous: app.ExitFailed,
+	app.CodeOrphanedProtectedSymbol: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

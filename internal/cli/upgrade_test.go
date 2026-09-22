@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/coordination"
+	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
 // TestAWorktreeRegisteredByAnOlderBinaryIsStillRegistered is finding F01.
@@ -216,8 +219,8 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 4 {
-		t.Errorf("schema_version = %d after init re-applied migration 000004, want 4", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 5 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000004 and 000005, want 5", data.Runtime.SchemaVersion)
 	}
 
 	listed := run(t, repo, "task", "list", "--json")
@@ -227,12 +230,91 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 	}
 }
 
-// downgradeToSchemaThree removes what MR-005's migration created, ledger row
-// included: the database a repository initialised by the MR-004 binary holds.
+// TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols is MR-006
+// AC-01.2. Migration 000005 adds three tables and one nullable column and
+// touches nothing else: the fixture is a schema-4 database with indexed
+// symbol rows, and init must bring it to 5 with those rows intact and the
+// new column present but empty.
+func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T) {
+	repo := newInitializedRepo(t)
+	run(t, repo, "session", "open", "--json")
+	pkg := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "pyproject.toml"), []byte("[project]\nname = 'pkg'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execOnRuntimeDB(t, repo,
+		`INSERT INTO project_units (id, path, kind, discovered_at) VALUES ('UNT-1', '`+repo+`/pkg', 'python', '2026-09-18T10:00:00Z')`,
+		`INSERT INTO file_index_state (path, unit_id, language, state) VALUES ('`+repo+`/pkg/a.py', 'UNT-1', 'python', 'indexed')`,
+		`INSERT INTO symbols (unit_id, path, logical_key, kind, name, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash)
+			VALUES ('UNT-1', '`+repo+`/pkg/a.py', 'k', 'function', 'f', 1, 0, 2, 0, 's', 'b', 't')`)
+	downgradeToSchemaFour(t, repo)
+
+	applied := run(t, repo, "init", "--json")
+	if applied.code != app.ExitSuccess {
+		t.Fatalf("init exited %d over a schema-4 database: %s", applied.code, applied.stdout)
+	}
+
+	got := run(t, repo, "status", "--json")
+	got.requireExit(t, app.ExitSuccess)
+	var data struct {
+		Runtime struct {
+			SchemaVersion int64 `json:"schema_version"`
+		} `json:"runtime"`
+	}
+	decodeData(t, got.stdout, &data)
+	if data.Runtime.SchemaVersion != 5 {
+		t.Errorf("schema_version = %d after init re-applied migration 000005, want 5", data.Runtime.SchemaVersion)
+	}
+
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var symbols, uidNulls int
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM symbols`).Scan(&symbols); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM symbols WHERE symbol_uid IS NULL`).Scan(&uidNulls); err != nil {
+		t.Fatal(err)
+	}
+	if symbols != 1 || uidNulls != 1 {
+		t.Errorf("symbols carried %d rows (%d uid-less), want the MR-005 row intact and uid-less", symbols, uidNulls)
+	}
+}
+
+// downgradeToSchemaFour removes what MR-006's migration created, ledger row
+// included: the database a repository initialised by the MR-005 binary holds.
+func downgradeToSchemaFour(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_identity_alloc`,
+		`DROP INDEX IF EXISTS idx_identity_unit_key`,
+		`DROP INDEX IF EXISTS idx_binding_pair`,
+		`DROP TABLE IF EXISTS symbol_identity_ambiguities`,
+		`DROP TABLE IF EXISTS invariant_symbol_bindings`,
+		`DROP TABLE IF EXISTS symbol_identities`,
+		`ALTER TABLE symbols DROP COLUMN symbol_uid`,
+		`DELETE FROM schema_migrations WHERE version = 5`)
+}
+
+// downgradeToSchemaThree removes what MR-005's and MR-006's migrations
+// created, ledger rows included: the database a repository initialised by the
+// MR-004 binary holds, which never saw migration 4 or 5.
 func downgradeToSchemaThree(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_identity_alloc`,
+		`DROP INDEX IF EXISTS idx_identity_unit_key`,
+		`DROP INDEX IF EXISTS idx_binding_pair`,
+		`DROP TABLE IF EXISTS symbol_identity_ambiguities`,
+		`DROP TABLE IF EXISTS invariant_symbol_bindings`,
+		`DROP TABLE IF EXISTS symbol_identities`,
 		`DROP INDEX IF EXISTS idx_refs_resolved`,
 		`DROP INDEX IF EXISTS idx_refs_path`,
 		`DROP INDEX IF EXISTS idx_imports_path`,
@@ -244,6 +326,7 @@ func downgradeToSchemaThree(t *testing.T, repo string) {
 		`DROP TABLE IF EXISTS symbols`,
 		`DROP TABLE IF EXISTS file_index_state`,
 		`DROP TABLE IF EXISTS project_units`,
+		`DELETE FROM schema_migrations WHERE version = 5`,
 		`DELETE FROM schema_migrations WHERE version = 4`)
 }
 

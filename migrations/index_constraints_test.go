@@ -47,6 +47,48 @@ func seedIndexConstraintRows(t *testing.T, db *sql.DB) {
 		VALUES (30, 'UNT-1', '/repo/unit/a.py', 'f', 0.5, 10)`)
 }
 
+func TestIdentityAllocationKeyIsUniquePerProjectUnitLanguageKey(t *testing.T) {
+	db := migratedIndexSchema(t)
+	mustIndexSQL(t, db, `INSERT INTO project_units (id, path, kind, discovered_at) VALUES ('UNT-1', '/repo/unit', 'python', '2026-09-18T10:00:00Z')`)
+	mustIndexSQL(t, db, `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, created_at)
+		VALUES ('SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'PRJ-1', 'UNT-1', 'python', 'k', '2026-09-18T10:00:00Z')`)
+	// The allocation key is the arbiter: a second insert for the same key
+	// fails, and the loser reads back the winner (spec §24, D-94).
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, created_at)
+		VALUES ('SYM-BBBBBBBBBBBBBBBBBBBBBBBBBB', 'PRJ-1', 'UNT-1', 'python', 'k', '2026-09-18T10:00:00Z')`); err == nil {
+		t.Fatal("duplicate allocation key accepted a second uid")
+	}
+	// A different project may hold the same key: identity is per project.
+	mustIndexSQL(t, db, `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, created_at)
+		VALUES ('SYM-BBBBBBBBBBBBBBBBBBBBBBBBBB', 'PRJ-2', 'UNT-1', 'python', 'k', '2026-09-18T10:00:00Z')`)
+}
+
+func TestIdentityBindingStatusAndSymbolUidAreConstrained(t *testing.T) {
+	db := migratedIndexSchema(t)
+	mustIndexSQL(t, db, `INSERT INTO project_units (id, path, kind, discovered_at) VALUES ('UNT-1', '/repo/unit', 'python', '2026-09-18T10:00:00Z')`)
+	mustIndexSQL(t, db, `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, created_at)
+		VALUES ('SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'PRJ-1', 'UNT-1', 'python', 'k', '2026-09-18T10:00:00Z')`)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO invariant_symbol_bindings (invariant_id, symbol_uid, status, updated_at)
+		VALUES ('INV-0001', 'SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'maybe', '2026-09-18T10:00:00Z')`); err == nil {
+		t.Fatal("binding accepted a status outside bound/ambiguous/orphaned")
+	}
+	mustIndexSQL(t, db, `INSERT INTO invariant_symbol_bindings (invariant_id, symbol_uid, status, updated_at)
+		VALUES ('INV-0001', 'SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'bound', '2026-09-18T10:00:00Z')`)
+	// The pair is the grain: the same invariant may bind another uid, but not
+	// the same uid twice.
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO invariant_symbol_bindings (invariant_id, symbol_uid, status, updated_at)
+		VALUES ('INV-0001', 'SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'bound', '2026-09-18T10:00:00Z')`); err == nil {
+		t.Fatal("duplicate invariant/uid binding accepted")
+	}
+	// symbol_uid stays nullable for pre-MR-006 rows and points at identities.
+	mustIndexSQL(t, db, `INSERT INTO symbols (unit_id, path, logical_key, kind, name, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash, symbol_uid)
+		VALUES ('UNT-1', '/repo/unit/a.py', 'k', 'function', 'f', 1, 0, 2, 0, 's', 'b', 't', 'SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA')`)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO symbols (unit_id, path, logical_key, kind, name, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash, symbol_uid)
+		VALUES ('UNT-1', '/repo/unit/a.py', 'k', 'function', 'g', 3, 0, 4, 0, 's', 'b', 't', 'SYM-NOOOOOOOOOOOOOOOOOOOOOOOOO')`); err == nil {
+		t.Fatal("symbol_uid pointing at no identity accepted")
+	}
+}
+
 func TestIndexStateCheckRejectsUnknownValue(t *testing.T) {
 	db := migratedIndexSchema(t)
 	seedIndexConstraintRows(t, db)

@@ -211,6 +211,20 @@ const (
 	// thing that is wrong, and the remedy is to rebuild that half rather than
 	// to parse anything.
 	CodeIndexStateCorrupt Code = "INDEX_STATE_CORRUPT"
+
+	// CodeSymbolIdentityAmbiguous marks a removed symbol that meets the
+	// migration bar for two or more added symbols (decision D-96). It is its
+	// own code because the condition is a blocked decision, not a broken
+	// installation: nothing is corrupt, but no guess is taken, and the remedy
+	// names the candidates rather than the database.
+	CodeSymbolIdentityAmbiguous Code = "SYMBOL_IDENTITY_AMBIGUOUS"
+
+	// CodeOrphanedProtectedSymbol marks a tracked invariant whose symbol is
+	// gone with no confident heir (decision D-99). It is its own code because
+	// the invariant is still active and still means something: the remedy is
+	// to migrate, supersede or retire it explicitly, never to let it go
+	// silent.
+	CodeOrphanedProtectedSymbol Code = "ORPHANED_PROTECTED_SYMBOL"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -254,6 +268,8 @@ var allCodes = sortedCodes([]Code{
 	CodeSyntaxLanguageUnsupported,
 	CodeSyntaxParseFailed,
 	CodeIndexStateCorrupt,
+	CodeSymbolIdentityAmbiguous,
+	CodeOrphanedProtectedSymbol,
 })
 
 var codeSet = indexCodes(allCodes)

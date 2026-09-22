@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 )
@@ -34,6 +35,26 @@ func IndexStateCorrupt(cause error) error {
 		"the persisted structural index could not be read consistently",
 		"Index readiness and structural answers cannot be trusted until the state is repaired.",
 		"Preserve the runtime database and restore its index state from a known-good backup before retrying.").WithCause(cause)
+}
+
+// AmbiguousIdentity keeps a removed symbol unmigrated when two or more added
+// symbols meet the migration bar. It mints nothing and steals nothing: the
+// candidates are named so a human or a later pass can decide.
+func AmbiguousIdentity(removedKey string, candidateKeys []string) error {
+	return app.NewError(app.CodeSymbolIdentityAmbiguous, app.KindFailed,
+		fmt.Sprintf("the removed symbol %s matches %d candidates and was not migrated", removedKey, len(candidateKeys)),
+		"Guessing would attach the symbol's invariant relations to the wrong lineage.",
+		"Name the surviving symbol explicitly: "+strings.Join(candidateKeys, ", ")+".")
+}
+
+// OrphanedProtectedSymbol keeps an active invariant blocking when its symbol
+// is gone with no confident heir. The invariant stays active and loud rather
+// than going silent.
+func OrphanedProtectedSymbol(invariantID, target string) error {
+	return app.NewError(app.CodeOrphanedProtectedSymbol, app.KindFailed,
+		fmt.Sprintf("invariant %s protects %s, which no longer resolves", invariantID, target),
+		"The protected symbol is gone and its invariant relations have nowhere to attach.",
+		"Migrate the identity, or supersede the invariant "+invariantID+" explicitly.")
 }
 
 func corruptState(err error) error {

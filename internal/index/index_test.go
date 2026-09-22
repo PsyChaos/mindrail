@@ -26,8 +26,8 @@ func TestIndexSchemaVersionNamesItsCreatingMigration(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	migrator := migration.New(db.DB, set, app.FixedClock{})
-	if len(set) < 4 || set[3].Version != index.TableSchemaVersion || set[3].Name != "index" {
-		t.Fatalf("index schema gate %d does not name migration 000004_index in the embedded set", index.TableSchemaVersion)
+	if len(set) < 5 || set[4].Version != index.TableSchemaVersion || set[4].Name != "symbol_identity" {
+		t.Fatalf("index schema gate %d does not name migration 000005_symbol_identity in the embedded set", index.TableSchemaVersion)
 	}
 	if _, err := migrator.Up(t.Context()); err != nil {
 		t.Fatalf("applying the migration set: %v", err)

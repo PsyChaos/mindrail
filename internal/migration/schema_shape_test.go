@@ -41,6 +41,11 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		},
 		"symbol_imports":    {"id", "unit_id", "path", "importer_key", "module", "names", "alias", "is_relative"},
 		"symbol_references": {"id", "unit_id", "path", "referrer_key", "target_text", "scope_text", "label", "confidence", "resolved_symbol_id"},
+		"symbol_identities": {"symbol_uid", "project_id", "unit_id", "language", "logical_key", "container_uid", "previous_keys", "created_at"},
+		"invariant_symbol_bindings": {
+			"invariant_id", "symbol_uid", "status", "reason", "updated_at",
+		},
+		"symbol_identity_ambiguities": {"id", "unit_id", "removed_uid", "removed_key", "candidate_keys", "created_at"},
 	}
 
 	got := map[string][]string{}
@@ -63,13 +68,13 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		}
 	}
 
-	// The one ALTER TABLE ... ADD COLUMN the embedded set carries (000003,
-	// decision D-73) is read as an addition to tasks and as nothing else: a
-	// parser that read it as a forgotten table would silently drop tasks from
-	// the shape check, and one that invented a second column would fail every
-	// healthy repository.
-	if strings.Join(added["tasks"], ",") != "revision" || len(added) != 1 {
-		t.Errorf("Added = %v, want exactly {tasks: [revision]}", added)
+	// The two ALTER TABLE ... ADD COLUMN forms the embedded set carries (000003
+	// on tasks, decision D-73; 000005 on symbols, decision D-103) are read as
+	// additions and as nothing else: a parser that read either as a forgotten
+	// table would silently drop that table from the shape check, and one that
+	// invented a third column would fail every healthy repository.
+	if strings.Join(added["tasks"], ",") != "revision" || strings.Join(added["symbols"], ",") != "symbol_uid" || len(added) != 2 {
+		t.Errorf("Added = %v, want exactly {tasks: [revision], symbols: [symbol_uid]}", added)
 	}
 	for _, m := range embeddedSet(t) {
 		if len(m.Altered) != 0 {
