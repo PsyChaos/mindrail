@@ -476,11 +476,34 @@ Direct structural reference, bounded reverse traversal, file/module fallback ve 
 
 #### Kabul kriterleri
 
-- [ ] Her impact sonucu kaynak edge, confidence, traversal depth ve fallback nedenini açıklar.
-- [ ] `depth > 1` yalnızca explicit istekte çalışır.
-- [ ] Salt structural edge validation breadth'i MODULE üstüne çıkaramaz.
-- [ ] Path policy, public API kuralı veya explicit invariant scope daha geniş breadth'i gerekçelendirebilir.
-- [ ] Aynı isimli declaration'lar için belirsizlik kaybolmadan raporlanır.
+- [x] Her impact sonucu kaynak edge, confidence, traversal depth ve fallback nedenini açıklar.
+- [x] `depth > 1` yalnızca explicit istekte çalışır.
+- [x] Salt structural edge validation breadth'i MODULE üstüne çıkaramaz.
+- [x] Path policy, public API kuralı veya explicit invariant scope daha geniş breadth'i gerekçelendirebilir.
+- [x] Aynı isimli declaration'lar için belirsizlik kaybolmadan raporlanır.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de justification'sız override
+deliği kapıda kapatıldı (M5). TASK-02'de unit-blind `seen` bug'ı (B-2) +
+override-clobber kapatıldı (M11, M12). TASK-03'te E2E, AC-02.1 boşluğunu
+açığa çıkardı (çözümsüz çağıranlar görünmüyordu) — `UnresolvedReferringTo`
+katmanı eklendi (M13), TASK-02 kapısının AC-02.1 onayı bu kayıtla
+nitelendi.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-009-requirements.md](mr-009-requirements.md),
+[mr-009-design.md](mr-009-design.md), `1694d59`), kararlar D-146…D-154:
+D-146 D-90-kısıtlı-graph, D-147 saf-hesap, D-148 yeni-paket, D-149
+breadth-cap + justification, D-150 depth-1-varsayılan. Göç yok, kod 43,
+knowledge v1. Yeni paket `internal/impact`; index'e 7 nötr okuma metodu.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1154
+test (MR-009 başında 1138 idi). 13 guard mutasyonu kırmızı koşuldu
+(M1…M13). Kapıların MR-010'a bıraktıkları: entry + breadth (runner girdisi),
+invariant listeleri (invalidation girdisi), justification slotu (politika
+girdisi).
 
 ---
 

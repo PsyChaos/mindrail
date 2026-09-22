@@ -124,4 +124,24 @@ seen-dedupe'li); bildirim katmanının gerekçe dili düzeltildi
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1154**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: AC-03.1/03.2 CONFIRMED, AC-03.3 ledger-CONFIRMED/Durum-NOT-YET; Breaker: 5/5 REFUTED
+
+**Reader:** E2E + non-goal + M13 (yeniden kırmızı doğrulandı) CONFIRMED;
+Durum bloğu süreç gereği kapı-sonrası — failure değil. AC-02.1 gap-fix'i
+meşru, minimal, dürüst kayıtlı; TASK-02'nin AC-02.1 onayı bu kayıtla
+nitelendi.
+
+**Breaker:** E2E caller-katmanına gerçekten bağımlı (mutantla FAIL
+doğrulandı, restore edildi); caller+declaration çakışması dedupe'li;
+self-skip; 5/5 stabil; depth muhasebesi temiz.
+
+**Karar:** TASK-03 KAPANDI.
+
+---
+
+## MR-009 kapanış
+
+Üç görev kapandı (TASK-01…03), 13 mutant kırmızı, `make verify` +
+`make tidy-check` yeşil, 1154 test. MR-010'a devir (Durum bloğundaki gibi):
+entry + breadth → runner; invariant listeleri → invalidation;
+justification slotu → politika.
