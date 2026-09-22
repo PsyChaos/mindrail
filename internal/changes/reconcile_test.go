@@ -23,16 +23,6 @@ func reconcileRunner(t *testing.T, stdout string) *git.FakeRunner {
 	}
 }
 
-func contentKey(rows []changes.SymbolChange) map[string]changes.SymbolChange {
-	out := map[string]changes.SymbolChange{}
-	for _, row := range rows {
-		redacted := row
-		redacted.Via = ""
-		out[row.Key] = redacted
-	}
-	return out
-}
-
 // TestReconcileConvergesWithBaselinePath is AC-05.1: one edit, two paths,
 // same discovery content. The flows run on identical twin fixtures because
 // discovery consumes: whoever indexes first leaves nothing for the second
@@ -165,7 +155,7 @@ func TestReconcileDivergenceListsOutOfScopeEdits(t *testing.T) {
 func TestReconcileWithoutTaskCreatesRetroactiveChange(t *testing.T) {
 	f := newServiceFixture(t)
 	a := filepath.Join(f.root, "py", "a.py")
-	if err := os.WriteFile(a, []byte("a = 2\n"), 0o644); err != nil {
+	if err := os.WriteFile(a, []byte("def f():\n    return 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	result, err := f.service.Reconcile(t.Context(), changeProject, f.root, "", "", reconcileRunner(t, " M py/a.py\x00"))
@@ -178,6 +168,10 @@ func TestReconcileWithoutTaskCreatesRetroactiveChange(t *testing.T) {
 	files, err := f.store.ReadChangeFiles(t.Context(), result.Change.ID)
 	if err != nil || len(files) != 1 {
 		t.Fatalf("files = %+v, %v", files, err)
+	}
+	symbols, err := f.store.ReadChangeSymbols(t.Context(), result.Change.ID)
+	if err != nil || len(symbols) != 1 || symbols[0].Kind != changes.SymbolAdded || symbols[0].UID == "" {
+		t.Fatalf("symbols = %+v, %v", symbols, err)
 	}
 	if len(result.Divergence) != 0 {
 		t.Fatalf("divergence = %+v, want none without a baseline", result.Divergence)
@@ -339,6 +333,84 @@ func TestWarmPathBudgetsReading(t *testing.T) {
 
 func itoa(i int) string {
 	return strconv.Itoa(i)
+}
+
+// TestReconcileHintsPartitionByTarget pins fileHintsFor: two simultaneous
+// staged renames corroborate only their own heir — a leaked hint would
+// migrate the wrong lineage silently.
+func TestReconcileHintsPartitionByTarget(t *testing.T) {
+	f := newServiceFixture(t)
+	repo := realGitRepo(t, map[string]string{
+		"pkg/pyproject.toml": "[project]\nname = 'pkg'\n",
+		"pkg/a.py":           "def f():\n    return 1\n",
+		"pkg/c.py":           "def g():\n    return 2\n",
+	})
+	pkg := filepath.Join(repo, "pkg")
+	unit, err := f.indexes.UpsertUnit(t.Context(), pkg, index.UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTasks(t, f.db, "TSK-P")
+	gitRun := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	uidNamed := func(path, name string) string {
+		t.Helper()
+		symbols, err := f.indexes.ListSymbolsInFile(t.Context(), unit.ID, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range symbols {
+			if row.Name == name {
+				return row.UID
+			}
+		}
+		t.Fatalf("no %s in %s", name, path)
+		return ""
+	}
+	// Establish both old uids through content edits discovered first.
+	if err := os.WriteFile(filepath.Join(pkg, "a.py"), []byte("def f():\n    return 10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "c.py"), []byte("def g():\n    return 20\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.Reconcile(t.Context(), changeProject, repo, "TSK-P", "", &git.ExecRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	oldF, oldG := uidNamed(filepath.Join(pkg, "a.py"), "f"), uidNamed(filepath.Join(pkg, "c.py"), "g")
+	if oldF == "" || oldG == "" || oldF == oldG {
+		t.Fatalf("old uids = %q %q", oldF, oldG)
+	}
+	gitRun("add", "-A")
+	gitRun("commit", "-qm", "edit")
+	gitRun("mv", "pkg/a.py", "pkg/b.py")
+	gitRun("mv", "pkg/c.py", "pkg/d.py")
+	if _, err := f.service.Reconcile(t.Context(), changeProject, repo, "TSK-P", "", &git.ExecRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	// The change accumulates across runs by design; assert per moved file
+	// against the index store: each heir file carries exactly its own old
+	// uid, proving hints did not leak across targets.
+	for path, want := range map[string]string{filepath.Join(pkg, "b.py"): oldF, filepath.Join(pkg, "d.py"): oldG} {
+		rows, err := f.indexes.ListSymbolsInFile(t.Context(), unit.ID, path)
+		if err != nil || len(rows) != 1 || rows[0].UID != want {
+			t.Fatalf("%s rows = %+v, %v: want the single carried %s", path, rows, err, want)
+		}
+	}
+	if got := uidNamed(filepath.Join(pkg, "b.py"), "f"); got != oldF {
+		t.Fatalf("b.py heir = %q, want carried %q", got, oldF)
+	}
+	if got := uidNamed(filepath.Join(pkg, "d.py"), "g"); got != oldG {
+		t.Fatalf("d.py heir = %q, want carried %q", got, oldG)
+	}
 }
 
 // TestReconcileStagedMoveMigrates proves the hint path end to end: a staged

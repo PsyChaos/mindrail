@@ -37,7 +37,7 @@ outputs waiting for them.
 | Package | Owns | Deliberately not there |
 |---|---|---|
 | `internal/changes` (new) | `Store` (5 tables + version gate), `Service` (baseline, open changes, operations, Git discovery, file delta, symbol delta, after_change, reconcile) | symbol matching, parsing, knowledge writes |
-| `internal/git` (+1 function) | `StatusEntries` porcelain parse (best-effort like `DiffRenames`: failure → empty, never error) | any policy use of entries |
+| `internal/git` (+1 function) | `StatusEntries` porcelain parse (fail-closed: failure → error, never an empty diff; unlike `DiffRenames` best-effort corroboration) | any policy use of entries |
 | `internal/app` | nothing new (D-124) | — |
 
 `changes` imports `coordination` (task existence + operation grammar),
@@ -142,8 +142,8 @@ never captured); for each changed file run the symbol delta (§7); upsert
 rows with `discovered_via = baseline`; divergence = none on this path by
 construction (scope-bounded), reported empty.
 
-**reconcile(task?, operation?)**: parse porcelain (git failure → empty set,
-proceed structurally); filter exclusions; for each entry run the symbol
+**reconcile(task?, operation?)**: parse porcelain (git failure fails the run;
+an empty diff must never certify a dirty tree clean); filter exclusions; for each entry run the symbol
 delta (§7) with rename hints built from R entries; upsert rows with
 `discovered_via = reconcile`; divergence = entries outside the task's
 baseline scope (empty task scope = everything discovered, so a NULL-task

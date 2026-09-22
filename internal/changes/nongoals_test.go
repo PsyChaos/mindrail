@@ -32,6 +32,11 @@ func moduleRoot(t *testing.T) string {
 // may reference anything, production may not.
 func TestNoLaterMilestoneMachinery(t *testing.T) {
 	root := moduleRoot(t)
+	// knowledge/cli deliberately absent: bootstrap, doctor and the root
+	// command legitimately import loader/schema/validate, so a tree-wide ban
+	// would forbid the existing architecture. The discovery path's own
+	// restraint is structural — internal/changes imports neither — and the
+	// command surface is pinned separately.
 	banned := []string{
 		"impact", "evidence", "coverage", "semantic",
 		"/mcp", "mcp/", "net/http",

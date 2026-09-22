@@ -321,3 +321,34 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 ### TASK-05 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1121**.
+
+## Reader / Breaker bulguları ve giderim — TASK-05 kapısı
+
+Bağımsız Reader **PASS** (AC-05.1…05.5 MET), Breaker **VERIFIED** (5 öz
+mutant + problar temiz).
+
+- **MEDIUM-1 (hint partition):** `fileHintsFor` iki eşzamanlı rename ile
+  pinsizdi. Giderim: `TestReconcileHintsPartitionByTarget` (her heir kendi
+  eski uid'sini taşır); P1 mutantı (bölümleme yok) FAIL.
+- **MEDIUM-2 (tasarım erratum):** §6 "git failure → empty set" fail-closed
+  gerçekle çelişiyordu. Giderim: erratum işlendi (failure → error).
+- **LOW-3 (ölü helper):** `contentKey` silindi.
+- **LOW-4 (retroactive sembol):** def'li fixture + added/uid assertion eklendi.
+- **LOW-5 (SLO):** FakeRunner marjı not edildi (~500×; MR-017 gerçek-bütçe
+  işi).
+- **LOW-6 (yasaklı listesi):** knowledge/cli genişletmesi geri alındı —
+  mevcut mimariyi yasaklardı; gerekçesi koda işlendi.
+- Breaker INFO'lar: joinRoot containment yok (git çıktısı güvenilir girdi;
+  işlem yok), diff-hatası sessiz hints (D-101 gereği; sürücü-logu gelecek
+  işi).
+
+### TASK-05 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| P1 | hint bölümleme yok (hepsi her dosyaya) | partition testi FAIL |
+
+### TASK-05 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
+
+Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile COUNT_PLACEHOLDER.
