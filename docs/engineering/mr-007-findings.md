@@ -206,7 +206,10 @@ Bağımsız Reader **FAIL** (dar: 2 MEDIUM test-boşluğu + 3 LOW), Breaker
 | N3 | silinmiş dosya added sayılır | deletion testi FAIL |
 | N4 | upsert via'yı ezer | composition + convergence testleri FAIL |
 
-### TASK-03 kapı (PENDING — ikinci tur kapı bekleniyor)
+### TASK-03 kapı — Reader PASS, Breaker VERIFIED (ikinci tur)
+
+Remediasyon bağımsız ikinci turda notlandırıldı: 5 maddenin 5'i doğrulandı,
+remediasyonun getirdiği yeni sorun yok. `make check` yeşil, 1104 test.
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1104**.
 
