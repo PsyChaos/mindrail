@@ -376,3 +376,25 @@ M-2 ile bloklar kırmızı, pinler duyarlı).
 
 `make check` yeşil (EXIT=0). Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1074**.
+
+## Reader / Breaker bulguları ve giderim — TASK-05 kapısı (ikinci tur)
+
+Bağımsız ikinci tur **FAIL** — 3 darbe eksik, hepsi kapatıldı:
+
+- **Act 3 stored-row assertion:** eklendi (0 satır + boş UIDs, D-111
+  finding-only şekli artık testte pinli).
+- **Yorum duplikasyonu** (`bindings.go:194`): tek satıra indirildi.
+- **İki overclaim düzeltildi:** v3 kırmızı-kanıtı bu turda koşulup
+  kaydedildi (aşağıda); act-3 finding-only iddiası artık testle desteklenir.
+- **v3 kırmızı-kanıtı:** `zz.v3.schema.json` kondu → FAIL, silindi →
+  yeşil (scratch temiz).
+
+### TASK-05 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M-S6 | `zz.v3.schema.json` kondu | schema pin testi FAIL (scratch silindi) |
+
+### TASK-05 kapı (PENDING — üçüncü tur kapı bekleniyor)
+
+Focused süitler yeşil. Test sayısı değişmedi (**1074**).

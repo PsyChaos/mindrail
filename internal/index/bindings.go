@@ -191,7 +191,7 @@ func (s *Store) ListAmbiguitiesForUID(ctx context.Context, uid string) ([]Ambigu
 	return out, nil
 }
 
-// UpsertBinding records one binding outcome.// UpsertBinding records one binding outcome. Re-resolution overwrites the
+// UpsertBinding records one binding outcome. Re-resolution overwrites the
 // previous status for the pair: the table describes the world now, while
 // symbol_identity_ambiguities keeps the audit trail.
 func (s *Store) UpsertBinding(ctx context.Context, invariantID, uid, status, reason string) error {

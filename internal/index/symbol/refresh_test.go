@@ -681,6 +681,13 @@ func TestEndToEndProtectRenameAmbiguousDelete(t *testing.T) {
 	if payload, ok := app.PayloadOf(report.Outcomes[0].Finding); !ok || payload.Code != app.CodeOrphanedProtectedSymbol {
 		t.Fatalf("act three finding = %v", report.Outcomes[0].Finding)
 	}
+	threeRows, err := f.store.ListBindingsForInvariant(t.Context(), "INV-1000")
+	if err != nil || len(threeRows) != 0 {
+		t.Fatalf("act three rows = %+v, %v, want finding-only orphan", threeRows, err)
+	}
+	if len(report.Outcomes[0].UIDs) != 0 {
+		t.Fatalf("act three uids = %+v, want none (finding-only)", report.Outcomes[0].UIDs)
+	}
 }
 
 // TestRefreshTouchesNoKnowledgeFiles is AC-03.5's structural half: the
