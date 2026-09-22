@@ -463,7 +463,7 @@ func TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation(t *testing.T) {
 	for _, tc := range checks {
 		t.Run(tc.name, func(t *testing.T) {
 			payload, ok := app.PayloadOf(tc.call())
-			if !ok || payload.Code != app.CodeMigrationFailed || payload.Metadata["applied_version"] != "3" || payload.Metadata["required_version"] != "4" || len(payload.NextAction) == 0 || payload.NextAction[0] != "Run `mindrail init` to apply the pending migrations, then re-run the command." {
+			if !ok || payload.Code != app.CodeMigrationFailed || payload.Metadata["applied_version"] != "3" || payload.Metadata["required_version"] != "5" || len(payload.NextAction) == 0 || payload.NextAction[0] != "Run `mindrail init` to apply the pending migrations, then re-run the command." {
 				t.Fatalf("v3 schema gate = %+v, ok=%t", payload, ok)
 			}
 		})
@@ -473,19 +473,19 @@ func TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation(t *testing.T) {
 	}
 	unit, err := store.UpsertUnit(t.Context(), root, index.UnitPython)
 	if err != nil {
-		t.Fatalf("v4 upsert unit: %v", err)
+		t.Fatalf("v5 upsert unit: %v", err)
 	}
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: unit.ID, Path: path, Language: "python", State: index.StatePending}); err != nil {
-		t.Fatalf("v4 upsert file: %v", err)
+		t.Fatalf("v5 upsert file: %v", err)
 	}
 	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed}); err != nil {
-		t.Fatalf("v4 replacement: %v", err)
+		t.Fatalf("v5 replacement: %v", err)
 	}
 	if _, err := store.ListPending(t.Context(), ""); err != nil {
-		t.Fatalf("v4 pending: %v", err)
+		t.Fatalf("v5 pending: %v", err)
 	}
 	if _, err := store.CountByState(t.Context(), ""); err != nil {
-		t.Fatalf("v4 counts: %v", err)
+		t.Fatalf("v5 counts: %v", err)
 	}
 	if _, err := db.ExecContext(t.Context(), `DROP TABLE file_index_state`); err != nil {
 		t.Fatal(err)

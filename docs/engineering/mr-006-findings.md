@@ -39,4 +39,32 @@ değerlendirmesi Reader **PASS**, Breaker **VERIFIED** sonucuna ulaştı.
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı;
 shipped pin'i mutant-öncesi baytlardan hesaplandığı için geçerliliğini korur.
 
-### TASK-01 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+## Reader / Breaker bulguları ve giderim — TASK-01 kapısı
+
+Bağımsız Reader **FAIL**, Breaker **BLOCKED** — ikisi de tek HIGH bulguda
+birleşti, ikisi de başka engel bulamadı (Breaker 5 öz mutant + şema-kırma
+probları temiz; non-finding F3: CLI yüzeyi değişmedi).
+
+- **HIGH/F1 (kırmızı süit):** `store_test.go:466` `required_version == "4"`
+  pini `TableSchemaVersion = 5` sonrasında güncellenmemişti;
+  `TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation` 5 alt testte
+  düşüyordu. Giderim: assertion `"5"` + `v4` etiketleri `v5` oldu; focused
+  süit yeşil.
+- **MEDIUM/F2 (guard açığı):** `container_uid` FK'sinin davranış-seviyesi
+  guard'ı yoktu (yalnız byte pin). Giderim:
+  `TestIdentityContainerUidRejectsDanglingParent` eklendi; FK kaldırma
+  mutantı FAIL.
+- **LOW (ifade):** AC-01.1 "composite PK" diyordu, şema UNIQUE index
+  kullanıyor (tasarım §5 yetkili, işlevsel eşdeğer). Gereksinim cümlesi kapı
+  commit'inde düzeltildi; şema değişmedi.
+
+### TASK-01 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M5 | `container_uid` REFERENCES kaldırıldı | `TestIdentityContainerUidRejectsDanglingParent` FAIL |
+
+### TASK-01 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
+
+Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1032**.

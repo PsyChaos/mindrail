@@ -63,6 +63,19 @@ func TestIdentityAllocationKeyIsUniquePerProjectUnitLanguageKey(t *testing.T) {
 		VALUES ('SYM-BBBBBBBBBBBBBBBBBBBBBBBBBB', 'PRJ-2', 'UNT-1', 'python', 'k', '2026-09-18T10:00:00Z')`)
 }
 
+func TestIdentityContainerUidRejectsDanglingParent(t *testing.T) {
+	db := migratedIndexSchema(t)
+	mustIndexSQL(t, db, `INSERT INTO project_units (id, path, kind, discovered_at) VALUES ('UNT-1', '/repo/unit', 'python', '2026-09-18T10:00:00Z')`)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, container_uid, created_at)
+		VALUES ('SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'PRJ-1', 'UNT-1', 'python', 'k', 'SYM-NOOOOOOOOOOOOOOOOOOOOOOOOO', '2026-09-18T10:00:00Z')`); err == nil {
+		t.Fatal("container_uid pointing at no identity accepted")
+	}
+	mustIndexSQL(t, db, `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, created_at)
+		VALUES ('SYM-PAAAAAAAAAAAAAAAAAAAAAAAAA', 'PRJ-1', 'UNT-1', 'python', 'parent', '2026-09-18T10:00:00Z')`)
+	mustIndexSQL(t, db, `INSERT INTO symbol_identities (symbol_uid, project_id, unit_id, language, logical_key, container_uid, created_at)
+		VALUES ('SYM-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'PRJ-1', 'UNT-1', 'python', 'k', 'SYM-PAAAAAAAAAAAAAAAAAAAAAAAAA', '2026-09-18T10:00:00Z')`)
+}
+
 func TestIdentityBindingStatusAndSymbolUidAreConstrained(t *testing.T) {
 	db := migratedIndexSchema(t)
 	mustIndexSQL(t, db, `INSERT INTO project_units (id, path, kind, discovered_at) VALUES ('UNT-1', '/repo/unit', 'python', '2026-09-18T10:00:00Z')`)

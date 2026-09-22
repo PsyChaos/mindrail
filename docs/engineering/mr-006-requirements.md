@@ -237,8 +237,11 @@ Owns REQ-01 and the schema half of REQ-09.
 - **AC-01.1** `migrations/000005_symbol_identity.sql` creates
   `symbol_identities` (uid PK, project/unit/language/key columns, UNIQUE over
   the D-94 key, `previous_keys` lineage memory), `invariant_symbol_bindings`
-  (composite PK, status CHECK), `symbol_identity_ambiguities`, and nothing
-  else; plus `ALTER TABLE symbols ADD COLUMN symbol_uid` (nullable).
+  (pair-grain UNIQUE index, status CHECK), `symbol_identity_ambiguities`, and
+  nothing else; plus `ALTER TABLE symbols ADD COLUMN symbol_uid` (nullable).
+  (Amended at the TASK-01 gate: "composite PK" said more than the schema
+  does — the design §5 UNIQUE index is authoritative and functionally
+  equivalent for the pair grain.)
 - **AC-01.2** `index.TableSchemaVersion = 5` gates the store; the migration
   applies cleanly to a schema-4 database carrying MR-005 rows, and `init`
   reports `schema_version` 5.
