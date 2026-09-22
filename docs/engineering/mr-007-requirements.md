@@ -204,7 +204,8 @@ met, with the reason, in `mr-007-findings.md`.
 Owns REQ-01.
 
 - **AC-01.1** `migrations/000006_changes.sql` creates `changes` (uid PK,
-  nullable task FK, operation id, discovered summary, timestamps),
+  nullable task FK, operation id, timestamps — no summary column per design
+  §5; D-130 erratum records the dropped parenthetical),
   `change_files` (natural PK `(change_id, path)`, kind CHECK, old path,
   hash, per-row `discovered_via` CHECK), `change_symbols` (natural PK
   `(change_id, logical_key)`, uid nullable, kind CHECK, three change flags,
@@ -333,3 +334,11 @@ Serialised: each task is gated before the next is written.
 | Body/signature/structure changes linked to Change records | AC-04.1 (REQ-06) |
 | Baseline divergence visible and explainable | AC-05.2 (REQ-08) |
 | Unstaged, staged and separate-worktree Git fixtures | AC-03.1 + AC-05.1/05.3 fixtures (REQ-04, REQ-08) |
+### D-130 — erratum: no discovered-summary column
+
+AC-01.1 as frozen named a `changes` "discovered summary" that design §5
+never specified and the migration never created. Per the requirements'
+own precedence rule the design governs: provenance rides per-row
+`discovered_via`, and there is deliberately no change-level summary
+(a mixed-flow container must not pretend to one provenance). Recorded at
+the TASK-01 gate; verdicts unchanged.

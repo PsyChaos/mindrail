@@ -46,3 +46,34 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı;
 shipped pin'i mutant-öncesi baytlardan hesaplandığı için geçerliliğini korur.
 
 ### TASK-01 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+## Reader bulguları ve giderim — TASK-01 kapısı (Reader PASS)
+
+Bağımsız Reader **PASS** verdi (tümü doc-seviyesi bulgu):
+
+- **MEDIUM/F1 (ifade):** AC-01.1 "discovered summary" diye varolmayan kolonu
+  anıyordu. Giderim: D-130 erratum + AC cümlesi düzeltildi.
+- **LOW/F2:** upgrade yorumunda "bring it to 5" kalmıştı. Düzeltildi.
+- **LOW/F3:** `downgradeToSchemaFour` v6 bırakıyordu (sadakatsiz fixture).
+  Giderim: Four da v6 düşürür; mesaj "000005 and 000006" oldu.
+- **LOW/F4:** hostilefs yorumu "three indexes" diyordu; ikisi var. Düzeltildi.
+- **LOW/F5:** bulgu prose'u ölçülen-süpürülen ayrımını abartıyordu. Aşağıda
+  yumuşatıldı: wide end marjla seçildi, süpürülmedi.
+
+## Çevrimdışı Breaker (bu tur subagent yok — yazar koştu)
+
+Bulgu kaydı: B1 (PK indirgeme) önce SURVIVED kaldı — tane-test aynı
+`change_id` altında ikinci anahtarı denemiyordu; test güçlendirildi, mutant
+kırmızı. B2/B3/B4 kırmızı. B5 (band 512) kırmızı. FK probları (3 adet) temiz.
+
+### Ek pinler (bu tur)
+
+- `TestChangeSymbolGrainIsPerKey` güçlendirildi (farklı anahtar aynı
+  change altında kabul edilir) + `TestBaselineGrainIsPerTaskPath` +
+  `TestOperationLogColumnsAreMandatory` + `TestNewStoreRefusesNilHandle` +
+  `TestChangeRowsEnforceForeignKeys` (FK duruşu).
+
+### TASK-01 kapı — Reader PASS, Breaker VERIFIED (yazar-koşulu)
+
+Tam `make check` aşağıda. Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1083**.

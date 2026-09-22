@@ -64,6 +64,69 @@ func TestOneOpenChangePerTask(t *testing.T) {
 		VALUES ('CHG-DDDDDDDDDDDDDDDDDDDDDDDDDD', '2026-09-23T10:00:00Z', '2026-09-23T10:00:00Z')`)
 }
 
+// TestChangeRowsEnforceForeignKeys pins the join posture: changes name
+// real tasks, files and symbols name real changes and identities.
+func TestChangeRowsEnforceForeignKeys(t *testing.T) {
+	db := migratedChangesSchema(t)
+	seedTaskChain(t, db)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO changes (change_id, task_id, created_at, updated_at)
+		VALUES ('CHG-X', 'TSK-NOPE', '2026-09-23T10:00:00Z', '2026-09-23T10:00:00Z')`); err == nil {
+		t.Error("change with missing task accepted")
+	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO change_files (change_id, path, kind, discovered_via)
+		VALUES ('CHG-NOPE', '/r/a.py', 'modified', 'reconcile')`); err == nil {
+		t.Error("file row with missing change accepted")
+	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO change_symbols (change_id, logical_key, kind, discovered_via, symbol_uid)
+		VALUES ('CHG-NOPE', 'k', 'added', 'reconcile', 'SYM-NOPE')`); err == nil {
+		t.Error("symbol row with missing change accepted")
+	}
+}
+
+// TestChangeSymbolGrainIsPerKey pins the (change_id, logical_key) natural
+// key: one row per symbol per change, so redelivery converges instead of
+// duplicating.
+func TestChangeSymbolGrainIsPerKey(t *testing.T) {
+	db := migratedChangesSchema(t)
+	seedTaskChain(t, db)
+	mustChangesSQL(t, db, `INSERT INTO changes (change_id, created_at, updated_at)
+		VALUES ('CHG-AAAAAAAAAAAAAAAAAAAAAAAAAA', '2026-09-23T10:00:00Z', '2026-09-23T10:00:00Z')`)
+	mustChangesSQL(t, db, `INSERT INTO change_symbols (change_id, logical_key, kind, discovered_via)
+		VALUES ('CHG-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'k', 'added', 'reconcile')`)
+	// A different key under the same change is a different row: the grain is
+	// per key, not per change.
+	mustChangesSQL(t, db, `INSERT INTO change_symbols (change_id, logical_key, kind, discovered_via)
+		VALUES ('CHG-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'k2', 'added', 'reconcile')`)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO change_symbols (change_id, logical_key, kind, discovered_via)
+		VALUES ('CHG-AAAAAAAAAAAAAAAAAAAAAAAAAA', 'k', 'modified', 'baseline')`); err == nil {
+		t.Fatal("duplicate symbol row for one change accepted")
+	}
+}
+
+// TestBaselineGrainIsPerTaskPath pins the (task_id, path) baseline grain:
+// one hash per scope file, replaced wholesale, never stacked.
+func TestBaselineGrainIsPerTaskPath(t *testing.T) {
+	db := migratedChangesSchema(t)
+	mustChangesSQL(t, db, `INSERT INTO change_baselines (task_id, path, content_hash, captured_at)
+		VALUES ('TSK-1', '/r/a.py', 'h1', '2026-09-23T10:00:00Z')`)
+	mustChangesSQL(t, db, `INSERT INTO change_baselines (task_id, path, content_hash, captured_at)
+		VALUES ('TSK-1', '/r/b.py', 'h2', '2026-09-23T10:00:00Z')`)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO change_baselines (task_id, path, content_hash, captured_at)
+		VALUES ('TSK-1', '/r/a.py', 'h3', '2026-09-23T10:00:00Z')`); err == nil {
+		t.Fatal("duplicate baseline row for one task path accepted")
+	}
+}
+
+// TestOperationLogColumnsAreMandatory pins the replay contract columns:
+// no anonymous or hash-less operation rows.
+func TestOperationLogColumnsAreMandatory(t *testing.T) {
+	db := migratedChangesSchema(t)
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO change_operations (operation_id, task_id, result, recorded_at)
+		VALUES ('OP-1', 'TSK-1', '{}', '2026-09-23T10:00:00Z')`); err == nil {
+		t.Fatal("operation row without request hash accepted")
+	}
+}
+
 // TestChangeRowVocabularies pins the kind and via CHECKs: file kinds,
 // symbol kinds and discovered_via accept only their documented values.
 func TestChangeRowVocabularies(t *testing.T) {

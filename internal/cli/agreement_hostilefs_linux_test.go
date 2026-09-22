@@ -171,7 +171,7 @@ const readyBandMountEnv = "MINDRAIL_TEST_CLI_READY_BAND_MOUNT"
 // COLUMN) it fits at 288 KiB and not at 272. The wide end was a quarter of a
 // megabyte until the third migration crossed it (MR-004, TASK-02), then half
 // a megabyte until the sixth migration crossed it (MR-007, TASK-01: five
-// tables, three indexes); the edge now lies past 512 KiB, so the wide end
+// tables, two indexes); the edge now lies past 512 KiB, so the wide end
 // moves to a megabyte with margin rather than to a freshly swept edge.
 func TestInitNeverCallsARepositoryReadyTheNextCommandRefuses(t *testing.T) {
 	if mount := os.Getenv(readyBandMountEnv); mount != "" {

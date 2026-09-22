@@ -231,10 +231,9 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 }
 
 // TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols is MR-006
-// AC-01.2. Migration 000005 adds three tables and one nullable column and
-// touches nothing else: the fixture is a schema-4 database with indexed
-// symbol rows, and init must bring it to 5 with those rows intact and the
-// new column present but empty.
+// AC-01.2, still proving the 4→5 step under newer binaries: the fixture is
+// a schema-4 database with indexed symbol rows, and init must bring it past
+// 5 (now to 6) with those rows intact and the new column present but empty.
 func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T) {
 	repo := newInitializedRepo(t)
 	run(t, repo, "session", "open", "--json")
@@ -266,7 +265,7 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 	}
 	decodeData(t, got.stdout, &data)
 	if data.Runtime.SchemaVersion != 6 {
-		t.Errorf("schema_version = %d after init re-applied migration 000006, want 6", data.Runtime.SchemaVersion)
+		t.Errorf("schema_version = %d after init re-applied migrations 000005 and 000006, want 6", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -286,12 +285,21 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 	}
 }
 
-// downgradeToSchemaFour removes what MR-006's migration created, ledger row
-// included: the database a repository initialised by the MR-005 binary holds.
+// downgradeToSchemaFour removes what MR-006's and MR-007's migrations
+// created, ledger rows included: the database a repository initialised by the
+// MR-005 binary holds, which never saw migration 5 or 6.
 func downgradeToSchemaFour(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_changes_task_unique`,
+		`DROP INDEX IF EXISTS idx_changes_operation`,
+		`DROP TABLE IF EXISTS change_operations`,
+		`DROP TABLE IF EXISTS change_baselines`,
+		`DROP TABLE IF EXISTS change_symbols`,
+		`DROP TABLE IF EXISTS change_files`,
+		`DROP TABLE IF EXISTS changes`,
+		`DELETE FROM schema_migrations WHERE version = 6`,
 		`DROP INDEX IF EXISTS idx_identity_alloc`,
 		`DROP INDEX IF EXISTS idx_identity_unit_key`,
 		`DROP INDEX IF EXISTS idx_binding_pair`,

@@ -10,6 +10,13 @@ import (
 	"github.com/PsyChaos/mindrail/migrations"
 )
 
+// TestNewStoreRefusesNilHandle pins the constructor guard.
+func TestNewStoreRefusesNilHandle(t *testing.T) {
+	if _, err := changes.NewStore(nil, app.FixedClock{}); err == nil {
+		t.Fatal("nil database handle accepted")
+	}
+}
+
 // TestChangesSchemaVersionNamesItsCreatingMigration pins the store gate to
 // the migration that first creates these tables.
 func TestChangesSchemaVersionNamesItsCreatingMigration(t *testing.T) {
