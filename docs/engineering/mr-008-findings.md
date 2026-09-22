@@ -150,3 +150,21 @@ hedef change'i adaylığa karşı doğrulanmıyor — D-137 gereği niyetli, o d
 anlamda fail-open.
 
 **Karar:** TASK-03 KAPANDI. Breaker B-1 KAPANDI (AC-03.2).
+
+## TASK-04 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-04.1 | Karşılandı | `TestOverlappingBaselinesResolveEndToEnd`: TSK-A gerçek `AfterChange` yoluyla, TSK-B aynı lineage ile — paylaşılan semboller iki change'i adlandırıp blokluyor; override biri çözerken diğeri bloklu kalıyor; üçüncü dosya drift + unregistered blokluyor; üç çözüm yolu (override × 2, baseline-genişletme) değerlendirmeyi boşaltıyor. |
+| AC-04.2 | Karşılandı | Grep kanıtı: yeni kodda `impact/evidence/coverage` yok; yeni kod yalnızca REQ-01'in 3 kodu (`SCOPE_DRIFT`, `UNREGISTERED_CHANGE`, `RECONCILE_AMBIGUOUS`); CLI diff'i golden-sayı + test; knowledge `schema.WriteVersion = 1` (`internal/knowledge/schema/registry.go:38`, test-pinli). |
+| AC-04.3 | Karşılandı | M1…M15 defterde, tamamı kırmızı koşuldu. TASK-04 yeni guard eklemiyor (yalnız E2E kanıt testi) — mutasyon borcu yok. |
+
+E2E dürüstlük notu: TSK-B ayağı satır-seviyesi (aynı içerik → aynı lineage,
+gerçek bağımsız discovery'nin üreteceği satırlar); c.py ayağı ham-SQL
+(untracked dosya keşfi MR-007'nin git/reconcile alanı, bu E2E'nin konusu
+değil). Değerlendirilen (`EvaluateTask`) yolun tamamı gerçek.
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1138**.
+
+### TASK-04 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
