@@ -45,8 +45,6 @@ korur; gereksinim veya tasarımın yerine geçmez.
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı;
 shipped pin'i mutant-öncesi baytlardan hesaplandığı için geçerliliğini korur.
 
-### TASK-01 kapı (PENDING — bağımsız değerlendirme bekleniyor)
-
 ## Reader bulguları ve giderim — TASK-01 kapısı (Reader PASS)
 
 Bağımsız Reader **PASS** verdi (tümü doc-seviyesi bulgu):
@@ -105,8 +103,6 @@ Ek: `TestConcurrentEnsureAgreesOnOneRow` (8 yarışçı, partial UNIQUE hakem) +
 | M6 | open-change ON CONFLICT kaldırıldı | concurrent + stable testleri FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
-
-### TASK-02 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1090**.
 
@@ -175,8 +171,6 @@ Test sayısı `go test -list '.*' ./... | grep -c '^Test'` ile **1092**.
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
-### TASK-03 kapı (PENDING — bağımsız değerlendirme bekleniyor)
-
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1101**.
 
 ## Reader / Breaker bulguları ve giderim — TASK-03 kapısı
@@ -244,8 +238,6 @@ porcelain-sıra tuzağı belgelendi (`status` new-first, `diff` old-first).
 | M7 | birimsiz dosya hata verir | out-of-unit testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
-
-### TASK-04 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1112**.
 
@@ -318,8 +310,6 @@ Porcelain-sıra notu (status=new-first, diff=old-first): `rename.go`
 yorumunda belgeli; gerçek-git unicode testi `-z` davranışını kanıtlar.
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
-### TASK-05 kapı (PENDING — bağımsız değerlendirme bekleniyor)
-
 `make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1121**.
 
 ## Reader / Breaker bulguları ve giderim — TASK-05 kapısı
@@ -348,7 +338,10 @@ mutant + problar temiz).
 |---|---|---|
 | P1 | hint bölümleme yok (hepsi her dosyaya) | partition testi FAIL |
 
-### TASK-05 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
+### TASK-05 kapı — Reader PASS, Breaker VERIFIED (ikinci tur)
+
+Remediasyon bağımsız ikinci turda notlandırıldı: 6 maddenin 6'sı doğrulandı,
+yeni sorun yok. `make check` yeşil, 1122 test.
 
 Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1122**.

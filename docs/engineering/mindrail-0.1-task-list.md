@@ -375,7 +375,7 @@ stale-satır budama ihtiyacı (reconcile alanı).
 
 ---
 
-### [ ] MR-007 — Reconcile-first gerçek değişiklik keşfi
+### [x] MR-007 — Reconcile-first gerçek değişiklik keşfi
 
 - **Tür:** AFK
 - **Blocked by:** MR-003, MR-005, MR-006
@@ -387,12 +387,38 @@ stale-satır budama ihtiyacı (reconcile alanı).
 
 #### Kabul kriterleri
 
-- [ ] `before_change` çağrılmış ve çağrılmamış düzenlemeler aynı gerçek diff'e uzlaşır.
-- [ ] Function/method body, signature ve structure değişiklikleri Change kaydına bağlanır.
-- [ ] Baseline divergence görünür ve açıklanabilir sonuç üretir.
-- [ ] Git fixture testleri unstaged, staged ve ayrı worktree senaryolarını kapsar.
+- [x] `before_change` çağrılmış ve çağrılmamış düzenlemeler aynı gerçek diff'e uzlaşır.
+- [x] Function/method body, signature ve structure değişiklikleri Change kaydına bağlanır.
+- [x] Baseline divergence görünür ve açıklanabilir sonuç üretir.
+- [x] Git fixture testleri unstaged, staged ve ayrı worktree senaryolarını kapsar.
 
 ---
+
+#### Durum
+
+**Tamamlandı.** Beş görev (TASK-01…05) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de check'i düşüren 2 gerçek vaka
+(ledger kirliliği, disk bandı) + kapıda 5 doc-bulgusu kapatıldı. TASK-02
+kapıları temizdi (same-txn log + task-varlığı remediasyonları). TASK-03 ilk
+turda FAIL verdi (4 test-boşluğu) — ikinci tur PASS. TASK-04 kapıları
+temizdi (7 mutant + 2 ek pin). TASK-05 ilk turda PASS + INFO'larla kapandı;
+hint-partition ve tasarım erratum'u aynı turda eklendi.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-007-requirements.md](mr-007-requirements.md), `cb65502`), tasarım
+[mr-007-design.md](mr-007-design.md); altıncı göç
+`migrations/000006_changes.sql`, tablo sürümü 6. Kararlar D-114…D-131:
+D-115 tek-açık-change, D-116 wholesale baseline, D-118 reconcile-indexler,
+D-121 op-id replay, D-122 divergence-raporlanır, D-124 yeni-kod-yok, D-130
+erratum, D-131 bağımsız-keşif-yakınsaması.
+
+Kanıt sayıları: after_change 10 dosya ~9ms (bütçe 1.5s), reconcile ~3ms
+(bütçe 2s); init ~16ms (MR-005 kanıtı korunur).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1122
+test (MR-007 başında 1074 idi). Kapıların MR-008'e bıraktıkları: divergence
+listesi şekli, unattributed delta listesi, `symbol.Service` + uid'li Change
+satırları.
 
 ### [ ] MR-008 — Scope drift ve unregistered change ambiguity
 
