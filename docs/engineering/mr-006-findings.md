@@ -315,3 +315,27 @@ Remediasyon bağımsız ikinci turda notlandırıldı: 9 maddenin 9'u doğruland
 remediasyonun getirdiği yeni sorun yok. Kapanış polish'i (üretim, 2 satır):
 contender determinizmi (snapshot-sıra yerine anahtar-sırası) + takeover
 tek-kayıt yorumu; focused süit yeşil. `make check` yeşil, 1071 test.
+
+## TASK-05 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-05.1 | Karşılandı | `TestEndToEndProtectRenameAmbiguousDelete` (`internal/index/symbol/refresh_test.go`): perde 1'de CRITICAL binding taşınır (uid + satır intact), perde 2'de ambiguity satırı (removed=carried, 2 heir) + blocking bulgu, perde 3'te orphaned blocking (`ORPHANED_PROTECTED_SYMBOL`). |
+| AC-05.2 | Karşılandı | `TestCommandSurfaceUnchangedIn01` (8 komut pinli), `TestKnowledgeSchemaStaysV1` (v2 yok, `const 1`), mevcut `TestNonGoalsHold` + `TestRegistryShipsFourLanguagesOnly` yeşil; yeni komut/şema yok. |
+| AC-05.3 | Karşılandı | M-S1 (komut ekleme) + M-S2 (v2 şema) kırmızı; E2E'nin dayandığı guard'lar TASK-02…04 defterlerinde pinli; yeni zamanlama yok (REQ-10). |
+| AC-05.4 | Kapıdan sonra: task list MR-006 Durum bloğu. | — |
+
+## Reader / Breaker bulguları ve giderim — TASK-05 kapısı
+
+(TASK-05 kapısı aşağıda.)
+
+### TASK-05 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M-S1 | köke `scratch` komutu eklendi | surface testi FAIL |
+| M-S2 | `schemas/knowledge` altına v2 dosyası kondu | schema pin testi FAIL (scratch silindi) |
+
+### TASK-05 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make verify` yeşil (EXIT=0: check + race + smoke). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1074**.

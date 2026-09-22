@@ -84,6 +84,31 @@ func TestNonGoalsHold(t *testing.T) {
 	}
 }
 
+// TestKnowledgeSchemaStaysV1 pins the frozen knowledge contract: no v2
+// schema file may appear, and every shipped schema still writes version 1.
+func TestKnowledgeSchemaStaysV1(t *testing.T) {
+	schemas := filepath.Join(moduleRoot(t), "schemas", "knowledge")
+	entries, err := os.ReadDir(schemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no knowledge schemas")
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "v2") {
+			t.Errorf("schema %s: v2 is out of 0.1 scope", entry.Name())
+		}
+		body, err := os.ReadFile(filepath.Join(schemas, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"const": 1`) {
+			t.Errorf("schema %s no longer pins schema_version 1", entry.Name())
+		}
+	}
+}
+
 // TestRegistryShipsFourLanguagesOnly pins the 0.1 language surface: Python,
 // JavaScript, TypeScript and TSX. A fourth grammar module is unsupported, not
 // a roadmap item.

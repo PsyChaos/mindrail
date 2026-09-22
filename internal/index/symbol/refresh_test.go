@@ -1,6 +1,7 @@
 package symbol_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -582,6 +583,90 @@ func TestResolvedRefreshPrunesStaleBindings(t *testing.T) {
 	kept, err := f.store.ListBindingsForInvariant(t.Context(), "INV-0042")
 	if err != nil || len(kept) != 1 || kept[0].UID == toolUID {
 		t.Fatalf("rows = %+v, want exactly the run uid", kept)
+	}
+}
+
+// TestEndToEndProtectRenameAmbiguousDelete is AC-05.1 in three acts on
+// stored rows: a CRITICAL invariant protects Box.run; a rename carries the
+// binding on the same uid; twin heirs record ambiguity and block; deleting
+// the symbols orphans and blocks. Both blocking codes appear end to end.
+func TestEndToEndProtectRenameAmbiguousDelete(t *testing.T) {
+	f := newRefreshFixture(t)
+	path := f.indexFile(t, "a.py", "class Box:\n    def run(self):\n        return 1\n")
+	inv := activeInvariant("INV-1000", record.SeverityCritical, record.ScopeSymbol, "pkg/a.py:Box.run")
+
+	// Act one: protect, then rename run into drive.
+	report, err := f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit}, []record.Invariant{inv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outcomes) != 1 || report.Outcomes[0].Status != index.BindingBound {
+		t.Fatalf("act one bind = %+v", report.Outcomes)
+	}
+	carried := report.Outcomes[0].UIDs[0]
+	if err := os.WriteFile(path, []byte("class Box:\n    def drive(self):\n        return 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.indexer.IndexFile(t.Context(), refreshProject, f.unit, path); err != nil {
+		t.Fatal(err)
+	}
+	report, err = f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit}, []record.Invariant{inv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outcomes) != 1 || report.Outcomes[0].Status != index.BindingBound || len(report.Outcomes[0].UIDs) != 1 || report.Outcomes[0].UIDs[0] != carried {
+		t.Fatalf("act one carried = %+v, want migrated-not-orphaned %s", report.Outcomes, carried)
+	}
+	rows, err := f.store.ListBindingsForInvariant(t.Context(), "INV-1000")
+	if err != nil || len(rows) != 1 || rows[0].UID != carried || rows[0].Status != index.BindingBound {
+		t.Fatalf("act one rows = %+v, %v", rows, err)
+	}
+
+	// Act two: the drive body twins into alpha and beta. The store records
+	// ambiguity; the stale target orphans — both findings block.
+	if err := os.WriteFile(path, []byte("class Box:\n    def alpha(self):\n        return 1\n    def beta(self):\n        return 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.indexer.IndexFile(t.Context(), refreshProject, f.unit, path); err != nil {
+		t.Fatal(err)
+	}
+	var ambiguities int
+	if err := f.db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM symbol_identity_ambiguities`).Scan(&ambiguities); err != nil || ambiguities != 1 {
+		t.Fatalf("act two ambiguities = %d, %v", ambiguities, err)
+	}
+	var removedUID, candidateKeys string
+	if err := f.db.DB.QueryRowContext(t.Context(), `SELECT removed_uid, candidate_keys FROM symbol_identity_ambiguities`).Scan(&removedUID, &candidateKeys); err != nil {
+		t.Fatal(err)
+	}
+	var candidates []string
+	// Keys are opaque hashes; the row names both heirs by count and identity.
+	if err := json.Unmarshal([]byte(candidateKeys), &candidates); err != nil || len(candidates) != 2 || removedUID != carried {
+		t.Fatalf("ambiguity = (%s, %s), want carried uid with two heir keys", removedUID, candidateKeys)
+	}
+	report, err = f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit}, []record.Invariant{inv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outcomes) != 1 || !report.Outcomes[0].Blocking || report.Outcomes[0].Finding == nil {
+		t.Fatalf("act two outcome = %+v, want blocking", report.Outcomes)
+	}
+
+	// Act three: the symbols leave the file; the orphan blocks.
+	if err := os.WriteFile(path, []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.indexer.IndexFile(t.Context(), refreshProject, f.unit, path); err != nil {
+		t.Fatal(err)
+	}
+	report, err = f.service.RefreshBindings(t.Context(), refreshProject, f.root, []index.ProjectUnit{f.unit}, []record.Invariant{inv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outcomes) != 1 || report.Outcomes[0].Status != index.BindingOrphaned || !report.Outcomes[0].Blocking {
+		t.Fatalf("act three outcome = %+v, want orphaned blocking", report.Outcomes)
+	}
+	if payload, ok := app.PayloadOf(report.Outcomes[0].Finding); !ok || payload.Code != app.CodeOrphanedProtectedSymbol {
+		t.Fatalf("act three finding = %v", report.Outcomes[0].Finding)
 	}
 }
 
