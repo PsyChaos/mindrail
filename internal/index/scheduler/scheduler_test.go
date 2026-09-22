@@ -134,6 +134,74 @@ func TestEnqueueP0PromotesQueuedPath(t *testing.T) {
 	}
 }
 
+// TestEvictedPathsRefillAfterPrioritize is the TASK-07 proof's catch: paths
+// evicted from the window by Prioritize must refill from the durable resume
+// set. A coalescing map that only ever adds entries treats an evicted path as
+// still queued and silently drops its re-enqueue — the cold index would never
+// complete.
+func TestEvictedPathsRefillAfterPrioritize(t *testing.T) {
+	f := newFixture(t, 2)
+	a := mkunit(t, f, "a", index.UnitPython)
+	b := mkunit(t, f, "b", index.UnitPython)
+	seedPending(t, f, a, "a1.py", "a2.py")
+	seedPending(t, f, b, "b1.py", "b2.py")
+	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.sched.Prioritize(t.Context(), []index.ProjectUnit{a, b}, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	// The window holds b's files plus evicted-room refills; every pending
+	// file is either queued or still durable — none coalesced away.
+	queued := map[string]bool{}
+	for _, path := range f.sched.Paths() {
+		queued[path] = true
+	}
+	pending, err := f.store.ListPending(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	durable := map[string]bool{}
+	for _, row := range pending {
+		durable[row.Path] = true
+	}
+	if len(queued) != 2 || len(durable) != 4 {
+		t.Fatalf("queued %d durable %d, want the window bounded and the set whole", len(queued), len(durable))
+	}
+	for path := range queued {
+		if !durable[path] {
+			t.Fatalf("queued %s names no durable pending row", path)
+		}
+	}
+	// Drain everything through refills: the evicted files must come back.
+	completed := 0
+	for {
+		n, more, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 && !more {
+			break
+		}
+		// The evicted a-files have no source on disk in this fixture; write
+		// them now so the drain can complete through the real indexer.
+		for _, path := range f.sched.Paths() {
+			writeSource(t, path, "def f():\n    pass\n")
+		}
+		done, err := f.sched.Run(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		completed += done
+	}
+	if completed != 4 {
+		t.Fatalf("drained %d files, want all 4 including the evicted ones", completed)
+	}
+}
+
 func TestEnqueueRejectsRelativeAndUncleanPaths(t *testing.T) {
 	f := newFixture(t, 0)
 	unit := mkunit(t, f, "pkg", index.UnitPython)

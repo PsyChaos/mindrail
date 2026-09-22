@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,8 +21,13 @@ import (
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/doctor"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/index"
+	"github.com/PsyChaos/mindrail/internal/index/inventory"
+	"github.com/PsyChaos/mindrail/internal/index/parser"
+	"github.com/PsyChaos/mindrail/internal/index/scheduler"
+	"github.com/PsyChaos/mindrail/internal/index/snapshot"
 	"github.com/PsyChaos/mindrail/internal/status"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
@@ -897,4 +903,230 @@ func TestFlushIsQuietWhenThereIsNothingToWrite(t *testing.T) {
 			t.Errorf("Flush on a cancelled context = %v, want no error; nothing was found wrong", err)
 		}
 	})
+}
+
+// TestLargeInventoryColdIndexProof is AC-07.1 end to end: a synthetic
+// repository of thousands of files across the three languages shows
+// PARTIAL_READY with an explicit pending count while the cold index runs,
+// init returning without waiting for it, the pending count draining to READY,
+// a targeted unit moving ahead of the remainder, and every completed hash
+// processed exactly once. Durations are logged for the record and asserted
+// against the kernel-scope §5 STRUCTURAL budgets where the proof can afford
+// the wall clock.
+func TestLargeInventoryColdIndexProof(t *testing.T) {
+	const filesPerUnit = 900
+	repo := newGitRepo(t)
+	units := map[string]struct {
+		markers map[string]string
+		ext     string
+		body    func(i int) string
+	}{
+		"py": {
+			markers: map[string]string{"pyproject.toml": "[project]\nname = 'pkg'\n"},
+			ext:     ".py",
+			body:    func(i int) string { return "def f" + itoa(i) + "():\n    return " + itoa(i) + "\n" },
+		},
+		"ts": {
+			markers: map[string]string{"package.json": "{}\n", "tsconfig.json": "{}\n"},
+			ext:     ".ts",
+			body: func(i int) string {
+				return "function f" + itoa(i) + "(x: number): number { return x + " + itoa(i) + "; }\n"
+			},
+		},
+		"js": {
+			markers: map[string]string{"package.json": "{}\n"},
+			ext:     ".js",
+			body:    func(i int) string { return "function f" + itoa(i) + "(x) { return x + " + itoa(i) + "; }\n" },
+		},
+	}
+	for dir, unit := range units {
+		pkg := filepath.Join(repo, dir)
+		if err := os.MkdirAll(pkg, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, content := range unit.markers {
+			if err := os.WriteFile(filepath.Join(pkg, name), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := range filesPerUnit {
+			name := "f" + itoa(i) + unit.ext
+			if err := os.WriteFile(filepath.Join(pkg, name), []byte(unit.body(i)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const total = 3 * filesPerUnit
+
+	// Init must return without waiting for the cold index: thousands of
+	// files are pending afterwards and none is indexed.
+	initialized := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	started := time.Now()
+	if err := initialized.Start(t.Context()); err != nil {
+		t.Fatalf("init startup: %v", err)
+	}
+	initElapsed := time.Since(started)
+	discovered := initialized.Subject().Inventory
+	if len(discovered) != 3 {
+		t.Fatalf("discovered %d units, want 3", len(discovered))
+	}
+	if err := initialized.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close init database: %v", err)
+	}
+	t.Logf("init over %d files: %v", total, initElapsed)
+	if initElapsed > 60*time.Second {
+		t.Fatalf("init took %v over %d unindexed files; it must not wait for the cold index", initElapsed, total)
+	}
+
+	// PARTIAL_READY with the explicit pending count while the cold runs.
+	// Registration below is scheduler work, so seed it here through the
+	// write-mode database before the read-only status.
+	driver := bootstrap.New(options(t, repo, bootstrap.ModeWrite, nil))
+	t.Cleanup(func() { _ = driver.Shutdown(context.Background()) })
+	if err := driver.Start(t.Context()); err != nil {
+		t.Fatalf("driver startup: %v", err)
+	}
+	store := index.NewStore(driver.DB(), app.SystemClock{})
+	registry, err := parser.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(registry.Close)
+	sched, err := scheduler.New(store, index.NewIndexer(store, registry, snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache")})), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	walked, err := inventory.Files(t.Context(), repo, discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, unsupported, err := sched.Register(t.Context(), registry, walked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registered != total || unsupported != 0 || len(walked) != total {
+		t.Fatalf("walked %d registered %d unsupported %d, want %d/0", len(walked), registered, unsupported, total)
+	}
+	if err := driver.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read-only startup: %v", err)
+	}
+	subject := reader.Subject()
+	if !subject.IndexObserved || subject.IndexCounts[index.StatePending] != total {
+		t.Fatalf("census = %+v, want %d pending", subject.IndexCounts, total)
+	}
+	report := status.Build(subject, time.Millisecond)
+	if report.Readiness != status.ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want PARTIAL_READY with %d files pending", report.Readiness, total)
+	}
+	if got := report.Components[status.ComponentSyntax].Pending; got == nil || *got != total {
+		t.Fatalf("syntax pending = %v, want %d", got, total)
+	}
+
+	// Preemption moves the targeted unit ahead of the cold remainder.
+	worker := bootstrap.New(options(t, repo, bootstrap.ModeWrite, nil))
+	t.Cleanup(func() { _ = worker.Shutdown(context.Background()) })
+	if err := worker.Start(t.Context()); err != nil {
+		t.Fatalf("worker startup: %v", err)
+	}
+	wstore := index.NewStore(worker.DB(), app.SystemClock{})
+	wsched, err := scheduler.New(wstore, index.NewIndexer(wstore, registry, snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache2")})), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueued, more, err := wsched.FillCold(t.Context(), discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enqueued != scheduler.MaxQueueJobs || !more {
+		t.Fatalf("cold fill = %d/%t, want %d/true", enqueued, more, scheduler.MaxQueueJobs)
+	}
+	var tsID string
+	for _, unit := range discovered {
+		if unit.Kind == index.UnitTypeScript {
+			tsID = unit.ID
+		}
+	}
+	if tsID == "" {
+		t.Fatal("no TypeScript unit discovered")
+	}
+	moved, err := wsched.Prioritize(t.Context(), discovered, tsID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved != filesPerUnit {
+		t.Fatalf("prioritized %d files, want %d", moved, filesPerUnit)
+	}
+	tsRoot := filepath.Join(repo, "ts") + string(filepath.Separator)
+	for i, path := range wsched.Paths()[:filesPerUnit] {
+		if len(path) < len(tsRoot) || path[:len(tsRoot)] != tsRoot {
+			t.Fatalf("queue[%d] = %s, want the targeted unit first", i, path)
+		}
+	}
+	t.Logf("cold window %d (more=%t), prioritized %d TypeScript files first", enqueued, more, moved)
+
+	// Drain to READY through refill windows; every completed hash is
+	// processed exactly once (attempts stays 1).
+	completed := 0
+	for {
+		n, more, err := wsched.FillCold(t.Context(), discovered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 && !more {
+			break
+		}
+		done, err := wsched.Run(t.Context())
+		if err != nil {
+			t.Fatalf("drain run: %v", err)
+		}
+		completed += done
+	}
+	if completed != total {
+		t.Fatalf("drained %d files, want %d", completed, total)
+	}
+	var attemptRows, maxAttempts int
+	if err := worker.DB().QueryRowContext(t.Context(), `SELECT count(*), max(attempts) FROM file_index_state`).Scan(&attemptRows, &maxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if attemptRows != total || maxAttempts != 1 {
+		t.Fatalf("rows %d max attempts %d, want %d rows at 1 attempt each (no reprocessing)", attemptRows, maxAttempts, total)
+	}
+	if err := worker.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	final := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = final.Shutdown(context.Background()) })
+	if err := final.Start(t.Context()); err != nil {
+		t.Fatalf("final startup: %v", err)
+	}
+	if got := status.Build(final.Subject(), time.Millisecond).Readiness; got != status.ReadinessReady {
+		t.Fatalf("readiness = %q after the drain, want READY", got)
+	}
+
+	// Warm-path SLO reading on the drained index: status answers from
+	// persisted rows, so every sample must clear the §5 STRUCTURAL budget.
+	subject = final.Subject()
+	var worst time.Duration
+	for range 20 {
+		started := time.Now()
+		status.Build(subject, time.Millisecond)
+		if elapsed := time.Since(started); elapsed > worst {
+			worst = elapsed
+		}
+	}
+	t.Logf("status over %d indexed files: worst of 20 builds %v (budget 150ms)", total, worst)
+	if worst > 150*time.Millisecond {
+		t.Fatalf("status worst %v exceeds the 150ms STRUCTURAL budget", worst)
+	}
+}
+
+func itoa(i int) string {
+	return strconv.Itoa(i)
 }

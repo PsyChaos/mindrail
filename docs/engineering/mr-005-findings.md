@@ -629,3 +629,55 @@ ister). D-81 "unsupported READY'yi engellemez" ile gerilimlidir; üretim
 yürüyüşü (`inventory/files.go`) desteklenmeyen uzantıları hiç kaydetmediği
 için yalnız el-yapımı satırlarla erişilir. TASK-07 kanıtı bu kenar için
 hedef fazı kayda geçirsin.
+
+## TASK-07 — kanıt, non-goal'lar ve kayıt (implementation evidence)
+
+Scope is proof only: no production behavior changes except one real bug fix
+below. Owns REQ-10, REQ-11, REQ-12.
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-07.1 | Karşılandı | `TestLargeInventoryColdIndexProof` (`internal/bootstrap/app_test.go`): 2700 dosya (py/ts/js × 900). init 2700 pending ile ~16ms'de döndü (bekleme yok, 60s gevşek sınır), read-only status PARTIAL_READY + pending=2700, cold window 1024 (`more=true`), 900 TS dosyası öne alındı, drain sonunda 2700/2700 indexed + `max(attempts)=1` (tekrar işleme yok), final status READY, 20 status build worst ~25µs (150ms bütçe). |
+| AC-07.2 | Karşılandı | `TestProcessRestartResumesRemainderOnly` (`internal/index/indexer_test.go`): 2 dosya indexlendi, handle'lar kapatılıp DB/registry/cache yeniden açıldı, resume yalnız kalan 4 dosyayı parse etti (sayaç 2+4), tamamı indexed (D-92). |
+| AC-07.3 | Karşılandı | `TestNonGoalsHold` (import-yolu taraması: resolver/coverage/vector/graph yok, `internal/semantic/` yok), `TestRegistryShipsFourLanguagesOnly` (4 dil), `TestIndexCodesCarryDistinctRemedies` (3 kod, ayrık remedy). |
+| AC-07.4 | Karşılandı | Aşağıdaki mutasyon defteri (M9–M15); `TestTimingNeverReachesTheWire` + `TestSyntaxComponentCarriesNoTimingKeys` (REQ-12/D-86: `Timing` alanlarının tamamı `json:"-"`, zarfta zamanlama anahtarı yok). |
+
+Ölçülen sayılar (kanıt koşusundan): init ~16ms; drain ~1.5s (2700 dosya);
+status worst-of-20 ~25µs.
+
+### Gerçek bug: `reindex` bayat map girdisi bırakıyordu
+
+Kanıt testinin ilk çalışması 2700 yerine 1800 dosyada durdu: `Prioritize`
+eviction'ı dilimden çıkarılan yolları `queued` map'inden silmiyordu
+(`reindex` yalnız ekliyordu). Sonraki `FillCold`, tahliye edilen 900 dosyayı
+"hâlâ kuyrukta" sanıp coalesce ile eleyerek sessizce atlıyordu — soğuk index
+hiç tamamlanamazdı. Düzeltme: `reindex` map'i yeniden kurar (`clear` +
+rebuild). `TestEvictedPathsRefillAfterPrioritize` pinler (M12 kırmızı).
+Bu, kanıt görevinin varoluş nedenidir.
+
+### D-92 — süreç-ölçeği kanıtı yeniden-açılan handle'lardır
+
+Kill yalnızca SQLite satırlarını + snapshot dosyalarını bırakır; test aynı
+DB dosyasını yeni handle ile, registry'i ve boş snapshot cache'i yeniden
+açar. Gerçek SIGKILL ikili deneyi orantısızdır: öldükten sonra yaşayan durum
+tam olarak yeniden açılan şeydir, fazlası yoktur.
+
+### TASK-07 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M9 | scheduler Run: hatada kuyruğu boşalt | `TestRunMidQueueFailureKeepsRemainder` FAIL |
+| M10 | status READY dalı INDEXING raporlar | `TestBuildReadyWhenIndexDrained` FAIL |
+| M11 | status default dalında count anahtarları yok | `TestBuildInventoryPhaseWithEmptyCensus` FAIL |
+| M12 | scheduler `reindex`: `clear` yok (bayat map) | `TestEvictedPathsRefillAfterPrioritize` FAIL |
+| M13 | ağaca yasak import eklendi (yokluk-test duyarlılığı) | `TestNonGoalsHold` FAIL (scratch dosya silindi) |
+| M14 | `Timing.Parse` etiketi `json:"parse_ms"` | `TestTimingNeverReachesTheWire` FAIL |
+| M15 | indexer unchanged-skip kapalı | **GEÇERSİZ mutant**: restart sayacı 4'te kalır — CAS fast-path yedeği aynı davranışı verir. Skip guard'ı TASK-05 M3'te pinli. |
+| M15b | CAS unchanged-indexed fast-path kaldırıldı | Tüm index süiti YEŞİL kaldı → guard pinsizdi! `TestRegistrationCASLeavesUnchangedIndexedWithoutNewGeneration` eklendi; mutant altında FAIL, restore sonrası yeşil. AC-07.4'ün yakaladığı gerçek kapsama açığı. |
+
+### TASK-07 kapı (PENDING — Reader/Breaker bekleniyor)
+
+`make check` yeşil, race (scheduler+status) yeşil, M9–M15 koşuldu (M15
+geçersiz, M15b açığı kapatıldı). Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1027** (TASK-06 kapısında
+1017 idi, +10).

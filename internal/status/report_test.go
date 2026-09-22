@@ -1,6 +1,7 @@
 package status
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -147,6 +148,57 @@ func TestBuildReportsIndexingPartialReady(t *testing.T) {
 	inventory := report.Components[ComponentInventory]
 	if inventory.Units == nil || *inventory.Units != 1 {
 		t.Errorf("inventory units = %v, want 1", inventory.Units)
+	}
+}
+
+// TestSyntaxComponentCarriesNoTimingKeys is REQ-12 at the status surface:
+// the census adds counts, never timings. The golden key list pins this
+// globally; this test names the reason beside the wire shape.
+func TestSyntaxComponentCarriesNoTimingKeys(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StatePending: 2, index.StateIndexed: 4}
+
+	encoded, err := json.Marshal(Build(subject, time.Millisecond).Components[ComponentSyntax])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for key := range keys {
+		switch key {
+		case "state", "phase", "summary", "code", "next_action", "pending", "failed":
+		default:
+			t.Errorf("syntax component carries unexpected key %q", key)
+		}
+	}
+	for _, timing := range []string{"timing", "parse", "extract", "duration", "waited", "held"} {
+		if strings.Contains(string(encoded), `"`+timing) {
+			t.Errorf("syntax component carries timing key %q: %s", timing, encoded)
+		}
+	}
+}
+
+// TestBuildInventoryPhaseWithEmptyCensus pins the observed-but-empty census:
+// units discovered, no file rows yet — still INVENTORY, with explicit zero
+// counts rather than absent keys.
+func TestBuildInventoryPhaseWithEmptyCensus(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q before the first file row", report.Readiness, ReadinessPartialReady)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateOK || syntax.Phase != "INVENTORY" {
+		t.Errorf("syntax component = %+v, want OK INVENTORY", syntax)
+	}
+	if syntax.Pending == nil || *syntax.Pending != 0 || syntax.Failed == nil || *syntax.Failed != 0 {
+		t.Errorf("syntax counts = %v/%v, want explicit zeros", syntax.Pending, syntax.Failed)
 	}
 }
 

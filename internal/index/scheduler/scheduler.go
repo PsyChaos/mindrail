@@ -155,6 +155,11 @@ func (s *Scheduler) Enqueue(unit index.ProjectUnit, path string, priority Priori
 }
 
 func (s *Scheduler) reindex() {
+	// Rebuild, never patch: eviction (Prioritize) and pops (Run) remove jobs
+	// from the slice, and a stale path left in the map would coalesce away a
+	// future enqueue — silently dropping a file the durable resume set still
+	// names as pending.
+	clear(s.queued)
 	for i, job := range s.jobs {
 		s.queued[job.Path] = i
 	}
@@ -202,11 +207,13 @@ func (s *Scheduler) FillCold(ctx context.Context, units []index.ProjectUnit) (en
 	return enqueued, false, nil
 }
 
-// Prioritize moves an unindexed unit's queued files ahead of the cold
-// remainder in path order, at P0. Files of the unit that are pending in the
-// store but not yet queued are enqueued first (up to the bound); the in-flight
-// parse, if any, is never interrupted — reordering touches queue order only.
-// It returns how many of the unit's files now head the queue.
+// Prioritize moves an unindexed unit's files ahead of the cold remainder in
+// path order, at P0. Files of the unit that are pending in the store but not
+// yet queued are enqueued too; cold-remainder jobs beyond the bound are
+// evicted from the window — never from the durable resume set, so eviction
+// delays them (§49) instead of dropping them. The in-flight parse, if any, is
+// never interrupted: reordering touches queue order only. It returns how many
+// of the unit's files now head the queue.
 func (s *Scheduler) Prioritize(ctx context.Context, units []index.ProjectUnit, unitID string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -227,35 +234,35 @@ func (s *Scheduler) Prioritize(ctx context.Context, units []index.ProjectUnit, u
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	wanted := make(map[string]index.ProjectUnit, len(pending))
+	wanted := make(map[string]struct{}, len(pending))
 	for _, row := range pending {
-		wanted[row.Path] = byID[unitID]
+		wanted[row.Path] = struct{}{}
 	}
-	var head, tail []Job
+	var candidates []Job
+	var tail []Job
 	for _, job := range s.jobs {
 		if _, ok := wanted[job.Path]; ok {
 			job.Priority = P0Targeted
-			head = append(head, job)
+			candidates = append(candidates, job)
 			delete(wanted, job.Path)
 		} else {
 			tail = append(tail, job)
 		}
 	}
-	var missing []string
 	for path := range wanted {
-		missing = append(missing, path)
+		candidates = append(candidates, Job{Unit: byID[unitID], Path: path, Priority: P0Targeted})
 	}
-	sort.Strings(missing)
-	for _, path := range missing {
-		if len(head)+len(tail) >= s.maxJobs {
-			break
-		}
-		head = append(head, Job{Unit: byID[unitID], Path: path, Priority: P0Targeted})
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Path < candidates[j].Path })
+	if len(candidates) > s.maxJobs {
+		candidates = candidates[:s.maxJobs]
 	}
-	sort.SliceStable(head, func(i, j int) bool { return head[i].Path < head[j].Path })
-	s.jobs = append(head, tail...)
+	kept := s.maxJobs - len(candidates)
+	if len(tail) > kept {
+		tail = tail[:kept]
+	}
+	s.jobs = append(candidates, tail...)
 	s.reindex()
-	return len(head), nil
+	return len(candidates), nil
 }
 
 // Register records walked files as durable index work: a file whose language

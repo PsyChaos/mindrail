@@ -265,3 +265,40 @@ func TestFailedObservationMustRegisterRetryBeforeCompletion(t *testing.T) {
 		t.Fatalf("completion=%t err=%v", applied, err)
 	}
 }
+
+// TestRegistrationCASLeavesUnchangedIndexedWithoutNewGeneration pins the
+// CAS fast path the restart proof leans on: re-registering an indexed file
+// whose hash did not change is a no-op — same generation, nothing rewritten.
+// Without it every repeat visit would mint a new attempt and reparse.
+func TestRegistrationCASLeavesUnchangedIndexedWithoutNewGeneration(t *testing.T) {
+	store, _ := indexStore(t)
+	unit, err := store.UpsertUnit(t.Context(), t.TempDir(), index.UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(unit.Path, "file.py")
+	before, err := store.ReadFileState(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := casHash("same")
+	registered, applied, err := store.RegisterFileCAS(t.Context(), before, unit.ID, path, "python", hash)
+	if err != nil || !applied {
+		t.Fatalf("register=%v applied=%t", err, applied)
+	}
+	completed, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), registered, index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed})
+	if err != nil || !applied {
+		t.Fatalf("complete=%v applied=%t", err, applied)
+	}
+	observed, err := store.ReadFileState(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, applied, err := store.RegisterFileCAS(t.Context(), observed, unit.ID, path, "python", hash)
+	if err != nil || applied {
+		t.Fatalf("unchanged re-registration applied=%t err=%v", applied, err)
+	}
+	if again.State.Attempts != completed.State.Attempts {
+		t.Fatalf("attempts %d -> %d on an unchanged hash", completed.State.Attempts, again.State.Attempts)
+	}
+}

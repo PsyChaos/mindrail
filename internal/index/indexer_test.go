@@ -7,15 +7,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/index/parser"
 	"github.com/PsyChaos/mindrail/internal/index/snapshot"
+	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
+	"github.com/PsyChaos/mindrail/migrations"
 )
 
 func indexerFixture(t *testing.T) (*Indexer, ProjectUnit, string, *sql.DB) {
@@ -713,5 +717,89 @@ func TestIndexFileRejectsParentDirSymlinkEscape(t *testing.T) {
 	}
 	if state.Exists {
 		t.Fatalf("escape attempt left state: %+v", state.State)
+	}
+}
+
+// TestProcessRestartResumesRemainderOnly is AC-07.2 at process scale. A kill
+// survives only in SQLite rows and snapshot files, so reopening the database,
+// the registry and an empty snapshot cache is the restart: the resumed run
+// must parse exactly the un-recorded remainder and nothing else.
+func TestProcessRestartResumesRemainderOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restart.db")
+	db, err := storage.Open(t.Context(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := app.FixedClock{Instant: time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)}
+	if _, err := migration.New(db.DB, set, clock).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(db.DB, clock)
+	root := t.TempDir()
+	unit, err := store.UpsertUnit(t.Context(), root, UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := parser.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(registry.Close)
+	var paths []string
+	for i, name := range []string{"a.py", "b.py", "c.py", "d.py", "e.py", "f.py"} {
+		paths = append(paths, sourceFile(t, root, name, fmt.Sprintf("def f%d():\n    return %d\n", i, i)))
+	}
+	var firstParses int
+	first := NewIndexer(store, registry, snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache1")}))
+	first.extract = func(ctx context.Context, a parser.SyntaxAdapter, s parser.SourceFile) (parser.Facts, error) {
+		firstParses++
+		return parser.Extract(ctx, a, s)
+	}
+	for _, path := range paths[:2] {
+		if _, err := first.IndexFile(t.Context(), unit, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if firstParses != 2 {
+		t.Fatalf("first run parsed %d files, want 2", firstParses)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The process dies here. Everything below reopens durable state only.
+	reopened, err := storage.Open(t.Context(), storage.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	registry2, err := parser.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(registry2.Close)
+	second := NewIndexer(NewStore(reopened.DB, clock), registry2, snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache2")}))
+	var resumedParses int
+	second.extract = func(ctx context.Context, a parser.SyntaxAdapter, s parser.SourceFile) (parser.Facts, error) {
+		resumedParses++
+		return parser.Extract(ctx, a, s)
+	}
+	for _, path := range paths {
+		if _, err := second.IndexFile(t.Context(), unit, path); err != nil {
+			t.Fatalf("resume %s: %v", path, err)
+		}
+	}
+	if resumedParses != 4 {
+		t.Fatalf("resumed run parsed %d files, want the 4-file remainder only", resumedParses)
+	}
+	for _, path := range paths {
+		state, err := second.store.ReadFileState(t.Context(), path)
+		if err != nil || state.State.State != StateIndexed {
+			t.Fatalf("state %s = %+v, %v", path, state.State, err)
+		}
 	}
 }
