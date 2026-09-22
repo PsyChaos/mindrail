@@ -74,9 +74,26 @@ confidence 0.5 indexer sabitinin kelimesi, uydurma değil.
 | M8 | binding statü filtresi kaldırıldı | invariant testi FAIL (orphaned sızdı) |
 | M9 | `DirectOnly` yok sayıldı | direct-only + breadth testleri FAIL |
 | M10 | `SymbolsNamed` NULL-uid filtresi kaldırıldı | ambiguity testi FAIL |
+| M11 | seen-anahtarı path'siz (kapı bulgusu) | cross-unit regresyon testi FAIL |
+| M12 | fallback'ta override-koruma kaldırıldı (kapı bulgusu) | override-survives testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1150**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 4/4 CONFIRMED + 2 gözlem; Breaker: 6/6 REFUTED + 1 BROKEN→KAPANDI + 1 tasarım-ihlali→KAPANDI
+
+**Reader:** AC-02.1…AC-02.4 CONFIRMED. Gözlemler (kapı-dışı): name-match'te
+path-filtresi yok (tasarıma uygun); file confidence 1 pinsizdi → pin eklendi.
+
+**Breaker B-2 (KAPATILDI):** `seen` anahtarı unit/path'sizdi — aynı anahtar
+iki unit'te çakışınca aday sessizce düşüyordu. Düzeltme: 4'lü anahtar
+(unit, path, key, target); regresyon testi eklendi (M11 ile kırmızı
+doğrulandı).
+
+**Reader/Breaker ortak gözlemi (KAPATILDI):** fallback engaged olunca
+justified override MODULE'a geri yazılıyordu (tasarım §6'ya aykırı).
+Düzeltme: override korunuyor, structural MODULE raporlanıyor; test eklendi
+(M12 ile kırmızı doğrulandı).
+
+**Karar:** TASK-02 KAPANDI.

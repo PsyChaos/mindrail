@@ -17,6 +17,7 @@ import (
 
 type impactFixture struct {
 	service *impact.Service
+	indexes *index.Store
 	db      *sql.DB
 	unit    index.ProjectUnit
 }
@@ -45,10 +46,15 @@ func newImpactFixture(t *testing.T) impactFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return impactFixture{service: service, db: db.DB, unit: unit}
+	return impactFixture{service: service, indexes: indexes, db: db.DB, unit: unit}
 }
 
 func seedSymbol(t *testing.T, fx impactFixture, uid, key, name, path string) int64 {
+	t.Helper()
+	return seedSymbolIn(t, fx, fx.unit, uid, key, name, path)
+}
+
+func seedSymbolIn(t *testing.T, fx impactFixture, unit index.ProjectUnit, uid, key, name, path string) int64 {
 	t.Helper()
 	exec := func(statement string, args ...any) {
 		t.Helper()
@@ -58,12 +64,12 @@ func seedSymbol(t *testing.T, fx impactFixture, uid, key, name, path string) int
 	}
 	exec(`INSERT INTO symbol_identities
 		(symbol_uid, project_id, unit_id, language, logical_key, previous_keys, created_at)
-		VALUES (?, 'PRJ', ?, 'python', ?, '[]', '2026-09-23T10:00:00Z')`, uid, fx.unit.ID, key)
+		VALUES (?, 'PRJ', ?, 'python', ?, '[]', '2026-09-23T10:00:00Z')`, uid, unit.ID, key)
 	exec(`INSERT INTO symbols
 		(unit_id, path, logical_key, kind, name, start_line, start_col, end_line, end_col,
 		signature_hash, body_hash, structure_hash, symbol_uid)
 		VALUES (?, ?, ?, 'function', ?, 1, 0, 2, 0, 's', 'b', 't', ?)`,
-		fx.unit.ID, path, key, name, uid)
+		unit.ID, path, key, name, uid)
 	var id int64
 	if err := fx.db.QueryRowContext(t.Context(),
 		`SELECT id FROM symbols WHERE symbol_uid = ?`, uid).Scan(&id); err != nil {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/impact"
+	"github.com/PsyChaos/mindrail/internal/index"
 )
 
 // TestAnalyzeNameMatchFallback is TASK-02 AC-02.1. A cross-file name user
@@ -116,6 +117,9 @@ func TestAnalyzeFileFallbackReportsFloor(t *testing.T) {
 	if floor.TargetUID != "SYM-F-A" || floor.TargetPath != "/r/a.py" {
 		t.Fatalf("floor = %+v", floor)
 	}
+	if floor.Confidence != 1 {
+		t.Fatalf("floor confidence = %v, want the input-membership 1", floor.Confidence)
+	}
 	if floor.FallbackReason == "" {
 		t.Fatal("file entry names no reason")
 	}
@@ -195,4 +199,65 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestAnalyzeSameKeyAcrossUnitsKeepsBoth is the Breaker regression for the
+// unit-blind seen key: one key shared across units must not let a direct
+// edge in one unit suppress the unrelated candidate in the other.
+func TestAnalyzeSameKeyAcrossUnitsKeepsBoth(t *testing.T) {
+	fx := newImpactFixture(t)
+	unit2, err := fx.indexes.UpsertUnit(t.Context(), t.TempDir(), index.UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := seedSymbol(t, fx, "SYM-K-A", "a", "fa", "/r/a.py")
+	seedSymbol(t, fx, "SYM-K-W1", "w", "fa", "/r/a.py")
+	seedSymbolIn(t, fx, unit2, "SYM-K-W2", "w", "fa", "/r/c.py")
+	seedReference(t, fx, "w", "fa", a)
+
+	result, err := fx.service.Analyze(t.Context(), impact.Request{
+		Symbols: []impact.Input{{UID: "SYM-K-A"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var direct, match int
+	for _, entry := range result.Entries {
+		switch entry.Via.Kind {
+		case impact.DirectEdge:
+			direct++
+		case impact.NameMatchEdge:
+			match++
+			if entry.Via.ReferrerPath != "/r/c.py" {
+				t.Fatalf("match = %+v, want the cross-unit candidate", entry)
+			}
+		}
+	}
+	if direct != 1 || match != 1 {
+		t.Fatalf("direct = %d, match = %d, want 1 and 1: %+v", direct, match, result.Entries)
+	}
+}
+
+// TestAnalyzeOverrideSurvivesFallback pins the design §6 rule: a justified
+// override records its breadth verbatim even when fallbacks engage — the
+// structural breadth still reports MODULE.
+func TestAnalyzeOverrideSurvivesFallback(t *testing.T) {
+	fx := newImpactFixture(t)
+	seedSymbol(t, fx, "SYM-J-A", "a", "fa", "/r/a.py")
+
+	result, err := fx.service.Analyze(t.Context(), impact.Request{
+		Symbols:         []impact.Input{{UID: "SYM-J-A"}},
+		BreadthOverride: impact.PackageBreadth,
+		Justification:   "explicit invariant scope: INV-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StructuralBreadth != impact.ModuleBreadth {
+		t.Fatalf("structural = %q, want MODULE", result.StructuralBreadth)
+	}
+	if result.Breadth != impact.PackageBreadth ||
+		result.Justification != "explicit invariant scope: INV-1" {
+		t.Fatalf("override = %q / %q", result.Breadth, result.Justification)
+	}
 }

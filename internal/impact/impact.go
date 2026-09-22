@@ -143,7 +143,7 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 	for _, uid := range frontier {
 		visited[uid] = true
 	}
-	seen := map[[2]string]bool{}
+	seen := map[[4]string]bool{}
 	fallback := false
 	for level := 1; level <= depth && len(frontier) > 0; level++ {
 		var next []string
@@ -154,7 +154,7 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 			}
 			target := targetOf(ctx, s.indexes, uid)
 			for _, referrer := range referrers {
-				key := [2]string{referrer.Key, uid}
+				key := [4]string{referrer.UnitID, referrer.Path, referrer.Key, uid}
 				if seen[key] {
 					continue
 				}
@@ -199,6 +199,9 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 	if fallback {
 		result.StructuralBreadth = ModuleBreadth
 		result.Breadth = ModuleBreadth
+		if request.BreadthOverride != "" && request.Justification != "" {
+			result.Breadth = request.BreadthOverride
+		}
 	}
 	return result, nil
 }
@@ -209,7 +212,7 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 // declarations share the name (decision D-154). The climb never follows
 // fallback edges: weak signals do not amplify. It reports whether any
 // fallback engaged.
-func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[2]string]bool, uid string, target targetFact, level int) (bool, error) {
+func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[4]string]bool, uid string, target targetFact, level int) (bool, error) {
 	unitID, path, found, err := s.indexes.UnitForUID(ctx, uid)
 	if err != nil {
 		return false, err
@@ -242,7 +245,7 @@ func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[2]str
 	}
 	var fresh []index.NamedSymbol
 	for _, candidate := range candidates {
-		if candidate.UID == uid || seen[[2]string{candidate.Key, uid}] {
+		if candidate.UID == uid || seen[[4]string{candidate.UnitID, candidate.Path, candidate.Key, uid}] {
 			continue
 		}
 		fresh = append(fresh, candidate)
@@ -251,7 +254,7 @@ func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[2]str
 	case 0:
 	case 1:
 		candidate := fresh[0]
-		seen[[2]string{candidate.Key, uid}] = true
+		seen[[4]string{candidate.UnitID, candidate.Path, candidate.Key, uid}] = true
 		match, err := s.withInvariants(ctx, Entry{
 			TargetUID:  uid,
 			TargetKey:  target.key,
@@ -274,7 +277,7 @@ func (s *Service) fallbacks(ctx context.Context, result *Result, seen map[[2]str
 	default:
 		var uids []string
 		for _, candidate := range fresh {
-			seen[[2]string{candidate.Key, uid}] = true
+			seen[[4]string{candidate.UnitID, candidate.Path, candidate.Key, uid}] = true
 			uids = append(uids, candidate.UID)
 		}
 		ambiguous, err := s.withInvariants(ctx, Entry{
