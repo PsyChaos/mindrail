@@ -21,6 +21,8 @@ import (
 	"github.com/PsyChaos/mindrail/migrations"
 )
 
+const testProjectID = "PRJ-TEST-01"
+
 type fixture struct {
 	store    *index.Store
 	registry *parser.Registry
@@ -100,14 +102,14 @@ func TestQueueCoalescesDuplicatePaths(t *testing.T) {
 	unit := mkunit(t, f, "pkg", index.UnitPython)
 	path := filepath.Join(unit.Path, "a.py")
 	for range 20 {
-		if _, err := f.sched.Enqueue(unit, path, scheduler.P4ColdRemainder); err != nil {
+		if _, err := f.sched.Enqueue(testProjectID, unit, path, scheduler.P4ColdRemainder); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if got := f.sched.Len(); got != 1 {
 		t.Fatalf("queue holds %d jobs for one path, want 1", got)
 	}
-	if added, err := f.sched.Enqueue(unit, path, scheduler.P0Targeted); err != nil || added {
+	if added, err := f.sched.Enqueue(testProjectID, unit, path, scheduler.P0Targeted); err != nil || added {
 		t.Fatalf("P0 re-enqueue added=%t err=%v, want coalesced", added, err)
 	}
 	if got := f.sched.Len(); got != 1 {
@@ -120,12 +122,12 @@ func TestEnqueueP0PromotesQueuedPath(t *testing.T) {
 	unit := mkunit(t, f, "pkg", index.UnitPython)
 	paths := []string{"a.py", "b.py", "c.py"}
 	for _, name := range paths {
-		if _, err := f.sched.Enqueue(unit, filepath.Join(unit.Path, name), scheduler.P4ColdRemainder); err != nil {
+		if _, err := f.sched.Enqueue(testProjectID, unit, filepath.Join(unit.Path, name), scheduler.P4ColdRemainder); err != nil {
 			t.Fatal(err)
 		}
 	}
 	target := filepath.Join(unit.Path, "b.py")
-	if added, err := f.sched.Enqueue(unit, target, scheduler.P0Targeted); err != nil || added {
+	if added, err := f.sched.Enqueue(testProjectID, unit, target, scheduler.P0Targeted); err != nil || added {
 		t.Fatalf("P0 re-enqueue added=%t err=%v, want coalesced promotion", added, err)
 	}
 	got := f.sched.Paths()
@@ -145,13 +147,13 @@ func TestEvictedPathsRefillAfterPrioritize(t *testing.T) {
 	b := mkunit(t, f, "b", index.UnitPython)
 	seedPending(t, f, a, "a1.py", "a2.py")
 	seedPending(t, f, b, "b1.py", "b2.py")
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{a, b}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.sched.Prioritize(t.Context(), []index.ProjectUnit{a, b}, b.ID); err != nil {
+	if _, err := f.sched.Prioritize(t.Context(), testProjectID, []index.ProjectUnit{a, b}, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{a, b}); err != nil {
 		t.Fatal(err)
 	}
 	// The window holds b's files plus evicted-room refills; every pending
@@ -179,7 +181,7 @@ func TestEvictedPathsRefillAfterPrioritize(t *testing.T) {
 	// Drain everything through refills: the evicted files must come back.
 	completed := 0
 	for {
-		n, more, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b})
+		n, more, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{a, b})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +208,7 @@ func TestEnqueueRejectsRelativeAndUncleanPaths(t *testing.T) {
 	f := newFixture(t, 0)
 	unit := mkunit(t, f, "pkg", index.UnitPython)
 	for _, path := range []string{"relative/a.py", unit.Path + "/sub/../a.py", ""} {
-		if _, err := f.sched.Enqueue(unit, path, scheduler.P4ColdRemainder); err == nil {
+		if _, err := f.sched.Enqueue(testProjectID, unit, path, scheduler.P4ColdRemainder); err == nil {
 			t.Fatalf("path %q accepted; the window mirrors the store's clean-absolute rule", path)
 		}
 	}
@@ -219,11 +221,11 @@ func TestQueueBoundRejectsManualOverflow(t *testing.T) {
 	f := newFixture(t, 3)
 	unit := mkunit(t, f, "pkg", index.UnitPython)
 	for _, name := range []string{"a.py", "b.py", "c.py"} {
-		if _, err := f.sched.Enqueue(unit, filepath.Join(unit.Path, name), scheduler.P4ColdRemainder); err != nil {
+		if _, err := f.sched.Enqueue(testProjectID, unit, filepath.Join(unit.Path, name), scheduler.P4ColdRemainder); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := f.sched.Enqueue(unit, filepath.Join(unit.Path, "d.py"), scheduler.P4ColdRemainder); !errors.Is(err, scheduler.ErrQueueFull) {
+	if _, err := f.sched.Enqueue(testProjectID, unit, filepath.Join(unit.Path, "d.py"), scheduler.P4ColdRemainder); !errors.Is(err, scheduler.ErrQueueFull) {
 		t.Fatalf("overflow error = %v, want ErrQueueFull", err)
 	}
 	if got := f.sched.Len(); got != 3 {
@@ -237,7 +239,7 @@ func TestFillColdOrdersByPathAndReportsMore(t *testing.T) {
 	ab := mkunit(t, f, "ab", index.UnitPython)
 	seedPending(t, f, xa, "z1.py", "z2.py")
 	seedPending(t, f, ab, "a1.py", "a2.py", "a3.py")
-	enqueued, more, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{xa, ab})
+	enqueued, more, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{xa, ab})
 	if err != nil || enqueued != 3 || !more {
 		t.Fatalf("fill = %d/%t/%v, want 3/true/nil", enqueued, more, err)
 	}
@@ -256,10 +258,10 @@ func TestPrioritizeMovesUnitAheadOfColdRemainder(t *testing.T) {
 	b := mkunit(t, f, "b", index.UnitPython)
 	seedPending(t, f, a, "z1.py", "z2.py")
 	seedPending(t, f, b, "a1.py", "a2.py")
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{a, b}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{a, b}); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := f.sched.Prioritize(t.Context(), []index.ProjectUnit{a, b}, a.ID)
+	moved, err := f.sched.Prioritize(t.Context(), testProjectID, []index.ProjectUnit{a, b}, a.ID)
 	if err != nil || moved != 2 {
 		t.Fatalf("prioritize = %d/%v, want 2/nil", moved, err)
 	}
@@ -281,7 +283,7 @@ func TestPrioritizeEnqueuesUnqueuedUnitFiles(t *testing.T) {
 	b := mkunit(t, f, "b", index.UnitPython)
 	seedPending(t, f, a, "z1.py")
 	seedPending(t, f, b, "a1.py")
-	moved, err := f.sched.Prioritize(t.Context(), []index.ProjectUnit{a, b}, b.ID)
+	moved, err := f.sched.Prioritize(t.Context(), testProjectID, []index.ProjectUnit{a, b}, b.ID)
 	if err != nil || moved != 1 {
 		t.Fatalf("prioritize = %d/%v, want 1/nil", moved, err)
 	}
@@ -303,7 +305,7 @@ func TestRunDrainsThroughIndexer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{unit}); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := f.sched.Run(t.Context())
@@ -330,7 +332,7 @@ func TestRunStopsOnFirstErrorWithoutSkipping(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{unit}); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := f.sched.Run(t.Context())
@@ -363,7 +365,7 @@ func TestRunMidQueueFailureKeepsRemainder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{unit}); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := f.sched.Run(t.Context())
@@ -406,7 +408,7 @@ func TestRunHonorsCancelBetweenFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{unit}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -445,7 +447,7 @@ func TestRunHonorsCancelBetweenFiles(t *testing.T) {
 	// The aborted job left the in-memory window; its durable pending row is
 	// the resume path. Refill recovers exactly the uncompleted file; the two
 	// untouched files coalesce instead of duplicating.
-	refilled, more, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit})
+	refilled, more, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{unit})
 	if err != nil || refilled != 1 || more {
 		t.Fatalf("refill = %d/%t/%v, want 1/false/nil", refilled, more, err)
 	}
@@ -468,7 +470,7 @@ func TestRunRejectsCancelledContextWithQueueIntact(t *testing.T) {
 	f := newFixture(t, 0)
 	unit := mkunit(t, f, "pkg", index.UnitPython)
 	seedPending(t, f, unit, "a.py")
-	if _, _, err := f.sched.FillCold(t.Context(), []index.ProjectUnit{unit}); err != nil {
+	if _, _, err := f.sched.FillCold(t.Context(), testProjectID, []index.ProjectUnit{unit}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

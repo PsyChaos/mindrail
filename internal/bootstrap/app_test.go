@@ -32,6 +32,8 @@ import (
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
+const testProjectID = "PRJ-TEST-01"
+
 // TestStartupStepOrderMatchesSpec pins the tech-stack §87 sequence.
 //
 // The order is asserted, not merely the outcome: a pipeline that opened SQLite
@@ -182,7 +184,8 @@ func TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource(t *testing.T) {
 		}
 	}
 	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{
-		UnitID: units[0].ID, Path: ghostFailed, Language: "python",
+		ProjectID: testProjectID,
+		UnitID:    units[0].ID, Path: ghostFailed, Language: "python",
 		ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		State:       index.StateFailed, LastError: "seeded failure",
 	}); err != nil {
@@ -1049,7 +1052,7 @@ func TestLargeInventoryColdIndexProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enqueued, more, err := wsched.FillCold(t.Context(), discovered)
+	enqueued, more, err := wsched.FillCold(t.Context(), testProjectID, discovered)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1065,7 +1068,7 @@ func TestLargeInventoryColdIndexProof(t *testing.T) {
 	if tsID == "" {
 		t.Fatal("no TypeScript unit discovered")
 	}
-	moved, err := wsched.Prioritize(t.Context(), discovered, tsID)
+	moved, err := wsched.Prioritize(t.Context(), testProjectID, discovered, tsID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1084,7 +1087,7 @@ func TestLargeInventoryColdIndexProof(t *testing.T) {
 	// processed exactly once (attempts stays 1).
 	completed := 0
 	for {
-		n, more, err := wsched.FillCold(t.Context(), discovered)
+		n, more, err := wsched.FillCold(t.Context(), testProjectID, discovered)
 		if err != nil {
 			t.Fatal(err)
 		}

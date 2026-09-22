@@ -22,6 +22,8 @@ import (
 	"github.com/PsyChaos/mindrail/migrations"
 )
 
+const testProjectID = "PRJ-TEST-01"
+
 func indexerFixture(t *testing.T) (*Indexer, ProjectUnit, string, *sql.DB) {
 	t.Helper()
 	store, db, _ := errorStore(t)
@@ -51,7 +53,7 @@ func sourceFile(t *testing.T, root, name, content string) string {
 func TestIndexFileUnchangedIndexedSkipsParseAndAllSQLWrites(t *testing.T) {
 	idx, unit, root, db := indexerFixture(t)
 	path := sourceFile(t, root, "a.py", "def f():\n    return 1\n")
-	first, err := idx.IndexFile(t.Context(), unit, path)
+	first, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || first.State.State != StateIndexed {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
@@ -71,7 +73,7 @@ func TestIndexFileUnchangedIndexedSkipsParseAndAllSQLWrites(t *testing.T) {
 		calls++
 		return parser.Facts{}, nil
 	}
-	second, err := idx.IndexFile(t.Context(), unit, path)
+	second, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || !second.Skipped || calls != 0 {
 		t.Fatalf("second=%+v err=%v parse calls=%d", second, err, calls)
 	}
@@ -89,7 +91,7 @@ func TestIndexFileCancellationLeavesTargetPendingAndRetries(t *testing.T) {
 		cancel()
 		return parser.Facts{}, context.Canceled
 	}
-	if _, err := idx.IndexFile(ctx, unit, path); !errors.Is(err, context.Canceled) {
+	if _, err := idx.IndexFile(ctx, testProjectID, unit, path); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel error=%v", err)
 	}
 	state, err := idx.store.ReadFileState(t.Context(), path)
@@ -101,7 +103,7 @@ func TestIndexFileCancellationLeavesTargetPendingAndRetries(t *testing.T) {
 		t.Fatalf("pending state=%+v", state.State)
 	}
 	idx.extract = parser.Extract
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || result.State.State != StateIndexed {
 		t.Fatalf("resume=%+v err=%v", result, err)
 	}
@@ -110,20 +112,20 @@ func TestIndexFileCancellationLeavesTargetPendingAndRetries(t *testing.T) {
 func TestIndexFileRejectsUnsupportedSymlinkAndOutsideUnit(t *testing.T) {
 	idx, unit, root, _ := indexerFixture(t)
 	unsupported := sourceFile(t, root, "a.md", "hello")
-	if _, err := idx.IndexFile(t.Context(), unit, unsupported); err == nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, unsupported); err == nil {
 		t.Fatal("unsupported accepted")
 	} else if payload, ok := app.PayloadOf(err); !ok || payload.Code != app.CodeSyntaxLanguageUnsupported {
 		t.Fatalf("unsupported=%v", err)
 	}
 	outside := sourceFile(t, t.TempDir(), "a.py", "pass\n")
-	if _, err := idx.IndexFile(t.Context(), unit, outside); err == nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, outside); err == nil {
 		t.Fatal("outside unit accepted")
 	}
 	link := filepath.Join(root, "linked.py")
 	if err := os.Symlink(outside, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	if _, err := idx.IndexFile(t.Context(), unit, link); err == nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, link); err == nil {
 		t.Fatal("symlink accepted")
 	}
 }
@@ -133,7 +135,7 @@ func TestIndexFileChangedReplacesOnlyOwnFacts(t *testing.T) {
 	a := sourceFile(t, root, "a.py", "def old():\n    return 1\n")
 	b := sourceFile(t, root, "b.py", "def sibling():\n    return 2\n")
 	for _, path := range []string{a, b} {
-		if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+		if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -142,7 +144,7 @@ func TestIndexFileChangedReplacesOnlyOwnFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	sourceFile(t, root, "a.py", "def newer():\n    return 3\n")
-	if _, err := idx.IndexFile(t.Context(), unit, a); err != nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, a); err != nil {
 		t.Fatal(err)
 	}
 	var ownNames string
@@ -161,12 +163,12 @@ func TestIndexFileChangedReplacesOnlyOwnFacts(t *testing.T) {
 func TestIndexFileFailedSameHashRetriesAndClassifiesParseFailure(t *testing.T) {
 	idx, unit, root, _ := indexerFixture(t)
 	path := sourceFile(t, root, "bad.py", "def broken(:\n    pass\n")
-	first, err := idx.IndexFile(t.Context(), unit, path)
+	first, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	payload, ok := app.PayloadOf(err)
 	if !ok || payload.Code != app.CodeSyntaxParseFailed || first.State.State != StateFailed || first.State.Attempts != 1 {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
-	second, err := idx.IndexFile(t.Context(), unit, path)
+	second, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	payload, ok = app.PayloadOf(err)
 	if !ok || payload.Code != app.CodeSyntaxParseFailed || second.Skipped || second.State.State != StateFailed || second.State.Attempts != 2 {
 		t.Fatalf("retry=%+v err=%v", second, err)
@@ -182,7 +184,7 @@ func TestIndexFileSourceChangedDuringParseDoesNotCommitOldFacts(t *testing.T) {
 		}
 		return parser.Extract(ctx, adapter, source)
 	}
-	first, err := idx.IndexFile(t.Context(), unit, path)
+	first, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || !first.Stale || first.State.State != StatePending {
 		t.Fatalf("stale=%+v err=%v", first, err)
 	}
@@ -191,7 +193,7 @@ func TestIndexFileSourceChangedDuringParseDoesNotCommitOldFacts(t *testing.T) {
 		t.Fatalf("old rows=%d err=%v", rows, err)
 	}
 	idx.extract = parser.Extract
-	second, err := idx.IndexFile(t.Context(), unit, path)
+	second, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || second.State.State != StateIndexed {
 		t.Fatalf("retry=%+v err=%v", second, err)
 	}
@@ -215,7 +217,7 @@ func TestIndexFilePostCommitChangeRequeuesNewTargetWithoutClaimingItParsed(t *te
 		}
 		return sourceStillMatches(path, prior)
 	}
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || !result.Stale || result.State.State != StatePending || result.State.ContentHash != contentHash([]byte(newContent)) {
 		t.Fatalf("result=%+v err=%v checks=%d", result, err, checks)
 	}
@@ -224,7 +226,7 @@ func TestIndexFilePostCommitChangeRequeuesNewTargetWithoutClaimingItParsed(t *te
 		t.Fatalf("completed old facts=%q err=%v", oldName, err)
 	}
 	idx.recheck = sourceStillMatches
-	second, err := idx.IndexFile(t.Context(), unit, path)
+	second, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || second.State.State != StateIndexed || second.State.ContentHash != contentHash([]byte(newContent)) {
 		t.Fatalf("retry=%+v err=%v", second, err)
 	}
@@ -251,7 +253,7 @@ func TestIndexFilePostCommitInvalidationCannotOverwriteNewerRegistration(t *test
 		}
 		return sourceStillMatches(path, prior)
 	}
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || !result.Stale {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -277,7 +279,7 @@ func TestIndexFilePostCommitDeletionRemovesOnlyItsCompletedFacts(t *testing.T) {
 		}
 		return sourceStillMatches(path, prior)
 	}
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || !result.Stale || checks != 3 {
 		t.Fatalf("result=%+v err=%v checks=%d", result, err, checks)
 	}
@@ -304,7 +306,7 @@ func TestIndexFilePostCommitUnreadableSourceInvalidatesCompletion(t *testing.T) 
 		}
 		return sourceStillMatches(path, prior)
 	}
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if !errors.Is(err, os.ErrPermission) || !result.Stale {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -335,7 +337,7 @@ func TestIndexFilePostCommitDeletionCannotRemoveNewerRegistration(t *testing.T) 
 		}
 		return sourceStillMatches(path, prior)
 	}
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	if err != nil || !result.Stale {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -360,14 +362,14 @@ func TestIndexFileCannotStealChildOwnedIndexedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := sourceFile(t, nested, "a.py", "def child():\n    pass\n")
-	if _, err := idx.IndexFile(t.Context(), child, path); err != nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, child, path); err != nil {
 		t.Fatal(err)
 	}
 	var originalID int64
 	if err := db.QueryRowContext(t.Context(), `SELECT id FROM symbols WHERE path = ?`, path).Scan(&originalID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := idx.IndexFile(t.Context(), parent, path); err == nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, parent, path); err == nil {
 		t.Fatal("stale parent stole child-owned indexed file")
 	}
 	state, err := idx.store.ReadFileState(t.Context(), path)
@@ -383,7 +385,7 @@ func TestIndexFileCannotStealChildOwnedIndexedFile(t *testing.T) {
 func TestIndexFileUniqueAndAmbiguousCalls(t *testing.T) {
 	idx, unit, root, db := indexerFixture(t)
 	path := sourceFile(t, root, "a.py", "def target():\n    pass\ntarget()\n")
-	if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 		t.Fatal(err)
 	}
 	var resolved sql.NullInt64
@@ -396,7 +398,7 @@ func TestIndexFileUniqueAndAmbiguousCalls(t *testing.T) {
 		t.Fatalf("unique ref=%v %q %g", resolved, label, confidence)
 	}
 	sourceFile(t, root, "a.py", "def target():\n    pass\ndef target():\n    pass\ntarget()\n")
-	if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRowContext(t.Context(), `SELECT resolved_symbol_id, label, confidence FROM symbol_references WHERE path = ? AND target_text = 'target' LIMIT 1`, path).Scan(&resolved, &label, &confidence); err != nil {
@@ -414,7 +416,7 @@ func TestIndexFileResumeSkipsCompletedAndProcessesOnlyRemainder(t *testing.T) {
 		sourceFile(t, root, "b.py", "def b():\n    pass\n"),
 		sourceFile(t, root, "c.py", "def c():\n    pass\n"),
 	}
-	if _, err := idx.IndexFile(t.Context(), unit, paths[0]); err != nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, paths[0]); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -422,7 +424,7 @@ func TestIndexFileResumeSkipsCompletedAndProcessesOnlyRemainder(t *testing.T) {
 		cancel()
 		return parser.Facts{}, context.Canceled
 	}
-	if _, err := idx.IndexFile(ctx, unit, paths[1]); !errors.Is(err, context.Canceled) {
+	if _, err := idx.IndexFile(ctx, testProjectID, unit, paths[1]); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel=%v", err)
 	}
 	var calls int
@@ -431,7 +433,7 @@ func TestIndexFileResumeSkipsCompletedAndProcessesOnlyRemainder(t *testing.T) {
 		return parser.Extract(ctx, a, s)
 	}
 	for _, path := range paths {
-		if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+		if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 			t.Fatalf("resume %s: %v", path, err)
 		}
 	}
@@ -461,7 +463,7 @@ func TestIndexFileWarmDeletedAndCorruptCacheProduceSameDurableFacts(t *testing.T
 	indexContent := func(content string) {
 		t.Helper()
 		sourceFile(t, root, "a.py", content)
-		if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+		if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -587,7 +589,7 @@ func semanticFileFacts(t *testing.T, db *sql.DB, path string) string {
 func TestSemanticFileFactsDetectsWrongNonNullResolvedTarget(t *testing.T) {
 	idx, unit, root, db := indexerFixture(t)
 	path := sourceFile(t, root, "a.py", "def helper(): pass\ndef other(): pass\nhelper()\n")
-	if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 		t.Fatal(err)
 	}
 	baseline := semanticFileFacts(t, db, path)
@@ -606,7 +608,7 @@ func TestSemanticFileFactsDetectsWrongNonNullResolvedTarget(t *testing.T) {
 func TestIndexFilePersistsPartialFactsWithFailedState(t *testing.T) {
 	idx, unit, root, db := indexerFixture(t)
 	path := sourceFile(t, root, "partial.py", "def intact(): pass\ndef broken(:\n")
-	result, err := idx.IndexFile(t.Context(), unit, path)
+	result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 	payload, ok := app.PayloadOf(err)
 	if !ok || payload.Code != app.CodeSyntaxParseFailed || result.State.State != StateFailed {
 		t.Fatalf("result=%+v err=%v", result, err)
@@ -628,7 +630,7 @@ func TestIndexFilePersistsFourLanguagePackageFacts(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			idx, unit, root, db := indexerFixture(t)
 			path := sourceFile(t, root, fixture.name, fixture.source)
-			result, err := idx.IndexFile(t.Context(), unit, path)
+			result, err := idx.IndexFile(t.Context(), testProjectID, unit, path)
 			if err != nil || result.State.State != StateIndexed {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
@@ -659,7 +661,7 @@ func TestIndexFileStoredFingerprintsSeparateBodyAndSignature(t *testing.T) {
 	path := sourceFile(t, root, "a.py", "def f(x):\n    return x + 1\n")
 	read := func() (string, string, string) {
 		t.Helper()
-		if _, err := idx.IndexFile(t.Context(), unit, path); err != nil {
+		if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 			t.Fatal(err)
 		}
 		var signature, body, structure string
@@ -692,7 +694,7 @@ func TestIndexFileNeverParsesInsideWriteTransaction(t *testing.T) {
 		}
 		return parser.Extract(ctx, a, s)
 	}
-	if _, err := idx.IndexFile(t.Context(), unit, path); err != nil || !called {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, path); err != nil || !called {
 		t.Fatalf("parse called=%t err=%v", called, err)
 	}
 }
@@ -708,7 +710,7 @@ func TestIndexFileRejectsParentDirSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	escaped := filepath.Join(link, "a.py")
-	if _, err := idx.IndexFile(t.Context(), unit, escaped); err == nil {
+	if _, err := idx.IndexFile(t.Context(), testProjectID, unit, escaped); err == nil {
 		t.Fatal("parent-dir symlink escape accepted")
 	}
 	state, err := idx.store.ReadFileState(t.Context(), escaped)
@@ -760,7 +762,7 @@ func TestProcessRestartResumesRemainderOnly(t *testing.T) {
 		return parser.Extract(ctx, a, s)
 	}
 	for _, path := range paths[:2] {
-		if _, err := first.IndexFile(t.Context(), unit, path); err != nil {
+		if _, err := first.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -789,7 +791,7 @@ func TestProcessRestartResumesRemainderOnly(t *testing.T) {
 		return parser.Extract(ctx, a, s)
 	}
 	for _, path := range paths {
-		if _, err := second.IndexFile(t.Context(), unit, path); err != nil {
+		if _, err := second.IndexFile(t.Context(), testProjectID, unit, path); err != nil {
 			t.Fatalf("resume %s: %v", path, err)
 		}
 	}

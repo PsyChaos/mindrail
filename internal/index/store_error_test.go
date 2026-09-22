@@ -165,7 +165,7 @@ func errorFixture(t *testing.T, store *Store) (ProjectUnit, FileFacts, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	facts := FileFacts{UnitID: unit.ID, Path: filepath.Join(unit.Path, "a.py"), Language: "python", ContentHash: "old", State: StateFailed, LastError: "old parse error",
+	facts := FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: filepath.Join(unit.Path, "a.py"), Language: "python", ContentHash: "old", State: StateFailed, LastError: "old parse error",
 		Symbols: []Symbol{{LogicalKey: "f", Kind: "function", Name: "f", StartLine: 1, EndLine: 2, SignatureHash: "sig", BodyHash: "body", StructureHash: "shape"}},
 		Imports: []Import{{Module: "os", Names: []string{"path"}}}, References: []Reference{{TargetText: "f", TargetLogicalKey: "f", Confidence: .5}}}
 	if err := store.UpsertFileState(t.Context(), FileIndexState{UnitID: unit.ID, Path: facts.Path, Language: "python", State: StatePending}); err != nil {

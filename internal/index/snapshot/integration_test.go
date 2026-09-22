@@ -23,6 +23,8 @@ import (
 	"github.com/PsyChaos/mindrail/migrations"
 )
 
+const testProjectID = "PRJ-TEST-01"
+
 func gitCommand(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...)
@@ -186,7 +188,7 @@ func TestCacheLossKeepsStoreFactsStableThroughBridgeFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		replacement := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: contentHash, State: index.StateIndexed}
+		replacement := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: contentHash, State: index.StateIndexed}
 		for _, sym := range facts.Symbols {
 			replacement.Symbols = append(replacement.Symbols, index.Symbol{
 				LogicalKey: path + ":" + sym.Name, Kind: sym.Kind, Name: sym.Name,

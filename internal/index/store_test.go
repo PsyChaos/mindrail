@@ -15,6 +15,8 @@ import (
 	"github.com/PsyChaos/mindrail/migrations"
 )
 
+const testProjectID = "PRJ-TEST-01"
+
 func indexStore(t *testing.T) (*index.Store, *sql.DB) {
 	t.Helper()
 	db, err := storage.Open(t.Context(), storage.Options{Path: filepath.Join(t.TempDir(), "mindrail.db")})
@@ -112,13 +114,13 @@ func TestReplaceFileFactsIsAtomicAndScopedToOneFile(t *testing.T) {
 	}
 	sym := index.Symbol{LogicalKey: "f", Kind: "function", Name: "f", StartLine: 1, EndLine: 2, SignatureHash: "sig", BodyHash: "body", StructureHash: "shape"}
 	for _, path := range []string{a, b} {
-		_, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "old", State: index.StateIndexed, Symbols: []index.Symbol{sym}})
+		_, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "old", State: index.StateIndexed, Symbols: []index.Symbol{sym}})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	// D-83: two same-key declarations are legal; logical_key is an index, not identity.
-	_, err = store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: a, Language: "python", ContentHash: "new", State: index.StateFailed, LastError: "partial tree", Symbols: []index.Symbol{sym, sym}, Imports: []index.Import{{Module: "os", Names: []string{"path"}}}, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}})
+	_, err = store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: a, Language: "python", ContentHash: "new", State: index.StateFailed, LastError: "partial tree", Symbols: []index.Symbol{sym, sym}, Imports: []index.Import{{Module: "os", Names: []string{"path"}}}, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +133,7 @@ func TestReplaceFileFactsIsAtomicAndScopedToOneFile(t *testing.T) {
 	}
 	// A failed insert must roll back the deletions and state change with it.
 	badID := int64(999999)
-	_, err = store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: a, Language: "python", ContentHash: "bad", State: index.StateIndexed, References: []index.Reference{{TargetText: "missing", Confidence: 0.5, ResolvedSymbolID: &badID}}})
+	_, err = store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: a, Language: "python", ContentHash: "bad", State: index.StateIndexed, References: []index.Reference{{TargetText: "missing", Confidence: 0.5, ResolvedSymbolID: &badID}}})
 	if err == nil {
 		t.Fatal("invalid reference FK committed")
 	}
@@ -156,7 +158,7 @@ func TestCancelledReplacementChangesNothing(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := store.ReplaceFileFacts(ctx, index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "sha", State: index.StateIndexed}); err == nil {
+	if _, err := store.ReplaceFileFacts(ctx, index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "sha", State: index.StateIndexed}); err == nil {
 		t.Fatal("cancelled replacement committed")
 	}
 	if rowCount(t, db, "symbols", path) != 0 {
@@ -203,7 +205,7 @@ func TestReplacingASymbolClearsOtherFilesStaleResolvedPointer(t *testing.T) {
 		}
 	}
 	sym := index.Symbol{LogicalKey: "definition.py:function:f", Kind: "function", Name: "f", SignatureHash: "sig", BodyHash: "old", StructureHash: "shape"}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: declaration, Language: "python", ContentHash: "old", State: index.StateIndexed, Symbols: []index.Symbol{sym}}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: declaration, Language: "python", ContentHash: "old", State: index.StateIndexed, Symbols: []index.Symbol{sym}}); err != nil {
 		t.Fatal(err)
 	}
 	var symbolID int64
@@ -213,11 +215,11 @@ func TestReplacingASymbolClearsOtherFilesStaleResolvedPointer(t *testing.T) {
 	callerSym := sym
 	callerSym.LogicalKey = "caller.py:function:caller"
 	callerSym.Name = "caller"
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: caller, Language: "python", ContentHash: "caller", State: index.StateIndexed, Symbols: []index.Symbol{callerSym}, References: []index.Reference{{TargetText: "f", Confidence: 0.5, ResolvedSymbolID: &symbolID}}}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: caller, Language: "python", ContentHash: "caller", State: index.StateIndexed, Symbols: []index.Symbol{callerSym}, References: []index.Reference{{TargetText: "f", Confidence: 0.5, ResolvedSymbolID: &symbolID}}}); err != nil {
 		t.Fatal(err)
 	}
 	// A same-file reference to the old symbol exercises deletion order as well.
-	if _, err = store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: declaration, Language: "python", ContentHash: "new", State: index.StateIndexed, Symbols: []index.Symbol{sym}, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}); err != nil {
+	if _, err = store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: declaration, Language: "python", ContentHash: "new", State: index.StateIndexed, Symbols: []index.Symbol{sym}, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}); err != nil {
 		t.Fatalf("replace referenced symbol: %v", err)
 	}
 	var pointer sql.NullInt64
@@ -247,7 +249,7 @@ func TestRediscoveryPreservesIndexedHashAndUnitScopedCounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: first.ID, Path: a, Language: "python", ContentHash: "original", State: index.StateIndexed}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: first.ID, Path: a, Language: "python", ContentHash: "original", State: index.StateIndexed}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: first.ID, Path: a, Language: "python", ContentHash: "original", State: index.StatePending}); err != nil {
@@ -293,9 +295,9 @@ func TestStoreRejectsInvalidUnitAndFileInputs(t *testing.T) {
 		}
 	}
 	for _, facts := range []index.FileFacts{
-		{UnitID: unit.ID, Path: outside, Language: "python", ContentHash: "hash", State: index.StateIndexed},
-		{UnitID: unit.ID, Path: filepath.Join(unit.Path, "a.py"), Language: "python", ContentHash: "hash", State: index.StatePending},
-		{UnitID: unit.ID, Path: filepath.Join(unit.Path, "a.py"), Language: "python", ContentHash: "hash", State: index.StateFailed},
+		{ProjectID: testProjectID, UnitID: unit.ID, Path: outside, Language: "python", ContentHash: "hash", State: index.StateIndexed},
+		{ProjectID: testProjectID, UnitID: unit.ID, Path: filepath.Join(unit.Path, "a.py"), Language: "python", ContentHash: "hash", State: index.StatePending},
+		{ProjectID: testProjectID, UnitID: unit.ID, Path: filepath.Join(unit.Path, "a.py"), Language: "python", ContentHash: "hash", State: index.StateFailed},
 	} {
 		if _, err := store.ReplaceFileFacts(t.Context(), facts); err == nil {
 			t.Fatalf("invalid replacement accepted: %+v", facts)
@@ -341,7 +343,7 @@ func TestReplaceFileFactsResolvesOnlyUniqueSameUnitLogicalKey(t *testing.T) {
 	sym := index.Symbol{LogicalKey: "a.py:function:f", Kind: "function", Name: "f", SignatureHash: "s", BodyHash: "b", StructureHash: "t"}
 	write := func(hash string, symbols []index.Symbol) {
 		t.Helper()
-		if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed, Symbols: symbols, References: []index.Reference{{TargetText: "f", TargetLogicalKey: sym.LogicalKey, Confidence: 0.5}}}); err != nil {
+		if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed, Symbols: symbols, References: []index.Reference{{TargetText: "f", TargetLogicalKey: sym.LogicalKey, Confidence: 0.5}}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -376,7 +378,7 @@ func TestMovingFileToNestedUnitDropsOldFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	sym := index.Symbol{LogicalKey: "nested/a.py:function:f", Kind: "function", Name: "f", SignatureHash: "s", BodyHash: "b", StructureHash: "t"}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: parent.ID, Path: path, Language: "python", ContentHash: "old", State: index.StateIndexed, Symbols: []index.Symbol{sym}, Imports: []index.Import{{Module: "os"}}, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: parent.ID, Path: path, Language: "python", ContentHash: "old", State: index.StateIndexed, Symbols: []index.Symbol{sym}, Imports: []index.Import{{Module: "os"}}, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: child.ID, Path: path, Language: "python", State: index.StatePending}); err != nil {
@@ -401,7 +403,7 @@ func TestUnclassifiedWriteFailureKeepsCauseAndCancellation(t *testing.T) {
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: unit.ID, Path: path, Language: "python", State: index.StatePending}); err != nil {
 		t.Fatal(err)
 	}
-	good := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "good", State: index.StateIndexed, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}
+	good := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "good", State: index.StateIndexed, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}
 	if _, err := store.ReplaceFileFacts(t.Context(), good); err != nil {
 		t.Fatalf("valid confidence rejected: %v", err)
 	}
@@ -454,7 +456,7 @@ func TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation(t *testing.T) {
 			return store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: "UNT-1", Path: path, Language: "python", State: index.StatePending})
 		}},
 		{"replace facts", func() error {
-			_, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: "UNT-1", Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed})
+			_, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: "UNT-1", Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed})
 			return err
 		}},
 		{"list pending", func() error { _, err := store.ListPending(t.Context(), ""); return err }},
@@ -478,7 +480,7 @@ func TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation(t *testing.T) {
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: unit.ID, Path: path, Language: "python", State: index.StatePending}); err != nil {
 		t.Fatalf("v5 upsert file: %v", err)
 	}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed}); err != nil {
 		t.Fatalf("v5 replacement: %v", err)
 	}
 	if _, err := store.ListPending(t.Context(), ""); err != nil {
@@ -549,7 +551,7 @@ func TestExplicitSymbolIDHonorsUniqueKeyAndUnit(t *testing.T) {
 	}
 	sym := index.Symbol{LogicalKey: "shared", Kind: "function", Name: "f", SignatureHash: "s", BodyHash: "b", StructureHash: "t"}
 	for _, tc := range []struct{ id, path string }{{unit.ID, decl}, {other.ID, otherPath}} {
-		if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: tc.id, Path: tc.path, Language: "python", ContentHash: "one", State: index.StateIndexed, Symbols: []index.Symbol{sym}}); err != nil {
+		if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: tc.id, Path: tc.path, Language: "python", ContentHash: "one", State: index.StateIndexed, Symbols: []index.Symbol{sym}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -562,7 +564,7 @@ func TestExplicitSymbolIDHonorsUniqueKeyAndUnit(t *testing.T) {
 	}
 	write := func(target int64, hash string) error {
 		t.Helper()
-		_, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: call, Language: "python", ContentHash: hash, State: index.StateIndexed, References: []index.Reference{{TargetText: "f", Confidence: 0.5, ResolvedSymbolID: &target}}})
+		_, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: call, Language: "python", ContentHash: hash, State: index.StateIndexed, References: []index.Reference{{TargetText: "f", Confidence: 0.5, ResolvedSymbolID: &target}}})
 		return err
 	}
 	if err := write(id, "valid"); err != nil {
@@ -584,7 +586,7 @@ func TestExplicitSymbolIDHonorsUniqueKeyAndUnit(t *testing.T) {
 	if err := db.QueryRowContext(t.Context(), `SELECT resolved_symbol_id FROM symbol_references WHERE path = ?`, call).Scan(&pointer); err != nil || !pointer.Valid || pointer.Int64 != id {
 		t.Fatalf("cross-unit refusal changed committed reference to %v, err=%v", pointer, err)
 	}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: decl, Language: "python", ContentHash: "ambiguous", State: index.StateIndexed, Symbols: []index.Symbol{sym, sym}}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: decl, Language: "python", ContentHash: "ambiguous", State: index.StateIndexed, Symbols: []index.Symbol{sym, sym}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRowContext(t.Context(), `SELECT id FROM symbols WHERE path = ? ORDER BY id LIMIT 1`, decl).Scan(&id); err != nil {
@@ -613,7 +615,7 @@ func TestReplacementGuardsUseRegisteredValidFile(t *testing.T) {
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: parent.ID, Path: path, Language: "python", State: index.StatePending}); err != nil {
 		t.Fatal(err)
 	}
-	valid := index.FileFacts{UnitID: parent.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed}
+	valid := index.FileFacts{ProjectID: testProjectID, UnitID: parent.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed}
 	for _, tc := range []struct {
 		name string
 		edit func(*index.FileFacts)
@@ -676,7 +678,7 @@ func TestEmptyReferenceLabelUsesStructuralNameMatch(t *testing.T) {
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: unit.ID, Path: path, State: index.StatePending}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed, References: []index.Reference{{TargetText: "f", Confidence: 0.5}}}); err != nil {
 		t.Fatal(err)
 	}
 	var label string
@@ -721,7 +723,7 @@ func TestNilImportNamesPersistAsJSONArray(t *testing.T) {
 	if err := store.UpsertFileState(t.Context(), index.FileIndexState{UnitID: unit.ID, Path: path, State: index.StatePending}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed, Imports: []index.Import{{Module: "os"}}}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "hash", State: index.StateIndexed, Imports: []index.Import{{Module: "os"}}}); err != nil {
 		t.Fatal(err)
 	}
 	var names string

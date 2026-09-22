@@ -75,7 +75,7 @@ func TestFileConflictPredicatesPreserveUnchangedAndRequeueChangedHash(t *testing
 	if n := queryInt(t, db, `SELECT n FROM audit_file_updates`); n != 0 {
 		t.Fatalf("unchanged pending registration caused %d updates", n)
 	}
-	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: "original", State: index.StateIndexed}); err != nil {
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: "original", State: index.StateIndexed}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(t.Context(), `UPDATE audit_file_updates SET n = 0`); err != nil {
@@ -127,9 +127,9 @@ func TestUniqueResolutionUsesUnitAndLogicalKey(t *testing.T) {
 	decoy := target
 	decoy.LogicalKey, decoy.Name = "decoy", "decoy"
 	for _, facts := range []index.FileFacts{
-		{UnitID: first.ID, Path: firstDecl, Language: "python", ContentHash: "first", State: index.StateIndexed, Symbols: []index.Symbol{target, decoy}},
-		{UnitID: second.ID, Path: secondDecl, Language: "python", ContentHash: "second", State: index.StateIndexed, Symbols: []index.Symbol{target}},
-		{UnitID: first.ID, Path: firstCall, Language: "python", ContentHash: "call", State: index.StateIndexed, References: []index.Reference{{TargetText: "target", TargetLogicalKey: target.LogicalKey, Confidence: 0.5}}},
+		{ProjectID: testProjectID, UnitID: first.ID, Path: firstDecl, Language: "python", ContentHash: "first", State: index.StateIndexed, Symbols: []index.Symbol{target, decoy}},
+		{ProjectID: testProjectID, UnitID: second.ID, Path: secondDecl, Language: "python", ContentHash: "second", State: index.StateIndexed, Symbols: []index.Symbol{target}},
+		{ProjectID: testProjectID, UnitID: first.ID, Path: firstCall, Language: "python", ContentHash: "call", State: index.StateIndexed, References: []index.Reference{{TargetText: "target", TargetLogicalKey: target.LogicalKey, Confidence: 0.5}}},
 	} {
 		if _, err := store.ReplaceFileFacts(t.Context(), facts); err != nil {
 			t.Fatal(err)

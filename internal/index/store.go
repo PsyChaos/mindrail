@@ -93,7 +93,11 @@ type Reference struct {
 
 // FileFacts is a complete replacement of the facts for one file. State must
 // be indexed or failed; a failed parse may still carry useful partial facts.
+// ProjectID scopes the identities this completion mints or reuses: identity
+// is per project (decision D-94), so a completion that cannot name its
+// project is refused rather than minted into a shared namespace.
 type FileFacts struct {
+	ProjectID   string
 	UnitID      string
 	Path        string
 	Language    string
@@ -335,8 +339,8 @@ func (s *Store) ReplaceFileFacts(ctx context.Context, facts FileFacts) (storage.
 }
 
 func validReplacement(facts FileFacts) error {
-	if facts.UnitID == "" || !filepath.IsAbs(facts.Path) || filepath.Clean(facts.Path) != facts.Path || facts.Language == "" || facts.ContentHash == "" {
-		return invalidInput("replacement needs unit ID, clean absolute path, language and content hash")
+	if facts.ProjectID == "" || facts.UnitID == "" || !filepath.IsAbs(facts.Path) || filepath.Clean(facts.Path) != facts.Path || facts.Language == "" || facts.ContentHash == "" {
+		return invalidInput("replacement needs a project ID, unit ID, clean absolute path, language and content hash")
 	}
 	if facts.State != StateIndexed && facts.State != StateFailed {
 		return invalidInput("replacement state must be indexed or failed")
@@ -363,11 +367,27 @@ func (s *Store) replaceFileFactsTx(ctx context.Context, tx *sql.Tx, facts FileFa
 			return err
 		}
 	}
+	// Identity stamping shares the transaction with the facts it names
+	// (decision D-95): the same commit that replaces a file's symbols assigns
+	// each distinct key its lineage uid, so facts and identities never
+	// diverge. Migration matching arrives in TASK-04 between the lookup miss
+	// and the mint; this task only looks up or mints.
+	uids := make(map[string]string, len(facts.Symbols))
+	for _, sym := range facts.Symbols {
+		if _, ok := uids[sym.LogicalKey]; ok {
+			continue
+		}
+		uid, err := s.ensureIdentityTx(ctx, tx, facts.ProjectID, facts.UnitID, facts.Language, sym.LogicalKey)
+		if err != nil {
+			return err
+		}
+		uids[sym.LogicalKey] = uid
+	}
 	for _, sym := range facts.Symbols {
 		_, err := tx.ExecContext(ctx, `INSERT INTO symbols
-				(unit_id, path, logical_key, kind, name, container, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			facts.UnitID, facts.Path, sym.LogicalKey, sym.Kind, sym.Name, sym.Container, sym.StartLine, sym.StartCol, sym.EndLine, sym.EndCol, sym.SignatureHash, sym.BodyHash, sym.StructureHash)
+				(unit_id, path, logical_key, kind, name, container, start_line, start_col, end_line, end_col, signature_hash, body_hash, structure_hash, symbol_uid)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			facts.UnitID, facts.Path, sym.LogicalKey, sym.Kind, sym.Name, sym.Container, sym.StartLine, sym.StartCol, sym.EndLine, sym.EndCol, sym.SignatureHash, sym.BodyHash, sym.StructureHash, uids[sym.LogicalKey])
 		if err != nil {
 			return err
 		}

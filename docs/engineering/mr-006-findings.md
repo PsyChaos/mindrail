@@ -64,6 +64,43 @@ probları temiz; non-finding F3: CLI yüzeyi değişmedi).
 |---|---|---|
 | M5 | `container_uid` REFERENCES kaldırıldı | `TestIdentityContainerUidRejectsDanglingParent` FAIL |
 
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | `TestEnsureIdentityIsStableAcrossCalls`: iki çağrı aynı `SYM-` uid, identities tablosunda 1 satır. |
+| AC-02.2 | Karşılandı | `TestConcurrentFirstSightAgreesOnOneUID`: ayrı DB handle'ları üzerinden 16 yarışçı tek uid + 1 satır (UNIQUE index hakem). |
+| AC-02.3 | Karşılandı | `TestBackfillStampsWithoutReparse`: SQL-tohumlu 3 satır damgalanır (anahtar başına ortak uid), ikinci koşu 0 damgalar; pakette parser inşası yok. |
+| AC-02.4 | Karşılandı | `TestCompletionKeepsUIDsAcrossIdenticalRewrites`: iki rewrite aynı uid kümesi. |
+| AC-02.5 | Karşılandı | `TestOverloadsSharingAKeyShareOneUID`: aynı anahtarlı 2 satır, 1 uid, 1 identity satırı. |
+
+Plumbing: `FileFacts.ProjectID` zorunlu (fail-closed), `IndexFile` ve
+scheduler (`Job`/`Enqueue`/`FillCold`/`Prioritize`) projectID thread'ler;
+33 literal + 36 çağrı güncellendi. `symbol.Service` kuruldu (lookup→mint;
+migration kancası TASK-04'ün).
+
+## Reader / Breaker bulguları ve giderim — TASK-02 kapısı
+
+(TASK-02 kapısı aşağıda.)
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | `MintIdentity`: ON CONFLICT kaldırıldı (plain INSERT) | concurrent test FAIL (loser UNIQUE ihlali) |
+| M2 | `BackfillUnit`: stamp `AND 1 = 0` ile etkisiz | backfill testi FAIL (0 damga). İlk M2 derlemeyi bozdu (geçersiz mutant), derlenen varyantla tekrarlandı. |
+| M3 | completion INSERT uid yerine NULL + arg düşürüldü | overload/completion testleri FAIL |
+| M4 | `validReplacement` ProjectID şartı kaldırıldı | guard testi FAIL (önce SURVIVED kaldı — eksik-project durumu dosya-satırsız test ediliyordu; test dosya-satırı tohumlayıp usage kodu denetleyecek şekilde güçlendirildi) |
+| M5 | `IndexFile` project kontrolü kaldırıldı | `TestIndexerRejectsEmptyProject` FAIL (bu test M5 için eklendi) |
+| M6 | `symbol.New` nil kontrolü kaldırıldı | guard testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-02 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (exit 0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1039**.
+
 ### TASK-01 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
 
 Giderim sonrası focused süitler yeşil; tam `make check` aşağıda. Test sayısı

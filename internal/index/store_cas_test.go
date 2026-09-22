@@ -36,7 +36,7 @@ func TestRegistrationCASStoresTargetHashAndRejectsLateStaleRegistration(t *testi
 	if err != nil || !applied || !registered.Exists || registered.State.State != index.StatePending || registered.State.ContentHash != h2 || registered.State.Attempts != 1 {
 		t.Fatalf("H2 registration = %+v, applied=%t, err=%v", registered, applied, err)
 	}
-	facts := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: h2, State: index.StateIndexed, Symbols: []index.Symbol{casSymbol("new", path+":new")}}
+	facts := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: h2, State: index.StateIndexed, Symbols: []index.Symbol{casSymbol("new", path+":new")}}
 	completed, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), registered, facts)
 	if err != nil || !applied || completed.State.State != index.StateIndexed || completed.State.ContentHash != h2 {
 		t.Fatalf("H2 completion = %+v, applied=%t, err=%v", completed, applied, err)
@@ -75,7 +75,7 @@ func TestCompletionCASRejectsStaleH1BeforeDeletingH2Facts(t *testing.T) {
 	if err != nil || !applied || r2.State.Attempts != r1.State.Attempts+1 {
 		t.Fatalf("H2 registration: %+v, %v, %t", r2, err, applied)
 	}
-	f2 := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: h2, State: index.StateIndexed, Symbols: []index.Symbol{casSymbol("H2", path+":H2")}}
+	f2 := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: h2, State: index.StateIndexed, Symbols: []index.Symbol{casSymbol("H2", path+":H2")}}
 	_, _, applied, err = store.ReplaceFileFactsCAS(t.Context(), r2, f2)
 	if err != nil || !applied {
 		t.Fatalf("H2 completion: %v, %t", err, applied)
@@ -84,7 +84,7 @@ func TestCompletionCASRejectsStaleH1BeforeDeletingH2Facts(t *testing.T) {
 	if err := db.QueryRowContext(t.Context(), `SELECT id FROM symbols WHERE path = ?`, path).Scan(&originalID); err != nil {
 		t.Fatal(err)
 	}
-	f1 := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: h1, State: index.StateIndexed, Symbols: []index.Symbol{casSymbol("H1", path+":H1")}}
+	f1 := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: h1, State: index.StateIndexed, Symbols: []index.Symbol{casSymbol("H1", path+":H1")}}
 	_, _, applied, err = store.ReplaceFileFactsCAS(t.Context(), r1, f1)
 	if err != nil || applied {
 		t.Fatalf("stale H1 completion applied=%t, err=%v", applied, err)
@@ -115,7 +115,7 @@ func TestCASCompletionResolvesOnlyUniqueSameKey(t *testing.T) {
 		if err != nil || !applied {
 			t.Fatalf("register: %v, %t", err, applied)
 		}
-		facts := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed,
+		facts := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed,
 			Symbols: symbols, References: []index.Reference{{TargetText: "target", TargetLogicalKey: key, Label: "STRUCTURAL_NAME_MATCH", Confidence: 0.5}}}
 		_, _, applied, err = store.ReplaceFileFactsCAS(t.Context(), registered, facts)
 		if err != nil || !applied {
@@ -227,7 +227,7 @@ func TestLegacyRegistrationCannotRecreateOldCASTokenAfterStateABA(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	_, _, applied, err = store.ReplaceFileFactsCAS(t.Context(), old, index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed})
+	_, _, applied, err = store.ReplaceFileFactsCAS(t.Context(), old, index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed})
 	if err != nil || applied {
 		t.Fatalf("ABA completion applied=%t err=%v", applied, err)
 	}
@@ -249,11 +249,11 @@ func TestFailedObservationMustRegisterRetryBeforeCompletion(t *testing.T) {
 	if err != nil || !applied {
 		t.Fatalf("register=%v applied=%t", err, applied)
 	}
-	failed, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), registered, index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateFailed, LastError: "partial"})
+	failed, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), registered, index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateFailed, LastError: "partial"})
 	if err != nil || !applied || failed.State.State != index.StateFailed {
 		t.Fatalf("failure=%+v applied=%t err=%v", failed, applied, err)
 	}
-	complete := index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed}
+	complete := index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed}
 	if _, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), failed, complete); err == nil || applied {
 		t.Fatalf("unregistered retry accepted=%t err=%v", applied, err)
 	}
@@ -286,7 +286,7 @@ func TestRegistrationCASLeavesUnchangedIndexedWithoutNewGeneration(t *testing.T)
 	if err != nil || !applied {
 		t.Fatalf("register=%v applied=%t", err, applied)
 	}
-	completed, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), registered, index.FileFacts{UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed})
+	completed, _, applied, err := store.ReplaceFileFactsCAS(t.Context(), registered, index.FileFacts{ProjectID: testProjectID, UnitID: unit.ID, Path: path, Language: "python", ContentHash: hash, State: index.StateIndexed})
 	if err != nil || !applied {
 		t.Fatalf("complete=%v applied=%t", err, applied)
 	}

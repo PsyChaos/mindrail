@@ -100,12 +100,19 @@ func sourceStillMatches(path string, captured sourceVersion) (sourceVersion, boo
 // SQLite transaction, and CAS-replaces only this file's durable rows. A stale
 // attempt never deletes newer facts. Cancellation leaves its pending target
 // hash for resume instead of recording a failed parse.
-func (i *Indexer) IndexFile(ctx context.Context, unit ProjectUnit, path string) (IndexResult, error) {
+//
+// projectID scopes every identity this call mints or reuses: callers resolve
+// it from the workspace (one explicit parameter, never ambient), and an empty
+// project is refused before anything is read.
+func (i *Indexer) IndexFile(ctx context.Context, projectID string, unit ProjectUnit, path string) (IndexResult, error) {
 	if err := ctx.Err(); err != nil {
 		return IndexResult{}, err
 	}
 	if i == nil || i.store == nil || i.registry == nil || i.cache == nil {
 		return IndexResult{}, invalidInput("indexer needs a store, parser registry and snapshot cache")
+	}
+	if projectID == "" {
+		return IndexResult{}, invalidInput("indexing needs a project ID for identity scope")
 	}
 	if unit.ID == "" || !isCleanAbsolutePath(unit.Path) || !isCleanAbsolutePath(path) || !pathInRoot(unit.Path, path) || path == unit.Path {
 		return IndexResult{}, invalidInput("source path must be clean, absolute and inside its project unit")
@@ -167,7 +174,7 @@ func (i *Indexer) IndexFile(ctx context.Context, unit ProjectUnit, path string) 
 		result.Stale = true
 		return result, nil
 	}
-	fileFacts := mapFacts(unit, path, adapter.Info().Language, source.hash, state, lastError, facts)
+	fileFacts := mapFacts(projectID, unit, path, adapter.Info().Language, source.hash, state, lastError, facts)
 	started := time.Now()
 	completed, stats, applied, err := i.store.ReplaceFileFactsCAS(ctx, registered, fileFacts)
 	result.Timing.Write = time.Since(started)
@@ -228,8 +235,8 @@ func qualifiedKey(unit ProjectUnit, path, local string) string {
 	return string(key)
 }
 
-func mapFacts(unit ProjectUnit, path, language, hash string, state FileState, lastError string, facts parser.Facts) FileFacts {
-	result := FileFacts{UnitID: unit.ID, Path: path, Language: language, ContentHash: hash, State: state, LastError: lastError}
+func mapFacts(projectID string, unit ProjectUnit, path, language, hash string, state FileState, lastError string, facts parser.Facts) FileFacts {
+	result := FileFacts{ProjectID: projectID, UnitID: unit.ID, Path: path, Language: language, ContentHash: hash, State: state, LastError: lastError}
 	for _, sym := range facts.Symbols {
 		result.Symbols = append(result.Symbols, Symbol{LogicalKey: qualifiedKey(unit, path, sym.LocalKey), Kind: sym.Kind, Name: sym.Name,
 			Container: qualifiedKey(unit, path, sym.ContainerLocalKey), StartLine: int(sym.Range.StartRow), StartCol: int(sym.Range.StartColumn),

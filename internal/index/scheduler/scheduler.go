@@ -72,11 +72,14 @@ const MaxQueueJobs = 1024
 // never returns it: it stops at the bound and reports more work outstanding.
 var ErrQueueFull = fmt.Errorf("scheduler: in-memory queue is full")
 
-// Job is one file waiting for IndexFile.
+// Job is one file waiting for IndexFile. ProjectID scopes the identities
+// the run mints or reuses (decision D-94); it travels with the job because
+// the durable resume set carries no project.
 type Job struct {
-	Unit     index.ProjectUnit
-	Path     string
-	Priority Priority
+	ProjectID string
+	Unit      index.ProjectUnit
+	Path      string
+	Priority  Priority
 }
 
 // Scheduler orders index work. The zero value is unusable; construct with New.
@@ -130,9 +133,9 @@ func (s *Scheduler) Paths() []string {
 // durable layer could never store — mirroring the store's clean-absolute rule
 // so a latent relative path cannot enter the window. Past the bound it returns
 // ErrQueueFull and queues nothing.
-func (s *Scheduler) Enqueue(unit index.ProjectUnit, path string, priority Priority) (bool, error) {
-	if unit.ID == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return false, fmt.Errorf("scheduler: enqueue needs a unit ID and a clean absolute path")
+func (s *Scheduler) Enqueue(projectID string, unit index.ProjectUnit, path string, priority Priority) (bool, error) {
+	if projectID == "" || unit.ID == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false, fmt.Errorf("scheduler: enqueue needs a project ID, a unit ID and a clean absolute path")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -149,7 +152,7 @@ func (s *Scheduler) Enqueue(unit index.ProjectUnit, path string, priority Priori
 	if len(s.jobs) >= s.maxJobs {
 		return false, ErrQueueFull
 	}
-	s.jobs = append(s.jobs, Job{Unit: unit, Path: path, Priority: priority})
+	s.jobs = append(s.jobs, Job{ProjectID: projectID, Unit: unit, Path: path, Priority: priority})
 	s.queued[path] = len(s.jobs) - 1
 	return true, nil
 }
@@ -170,9 +173,12 @@ func (s *Scheduler) reindex() {
 // store holds more: the remainder stays durable and a later FillCold picks it
 // up. Unknown-unit rows fail the fill rather than scheduling work no unit
 // owns.
-func (s *Scheduler) FillCold(ctx context.Context, units []index.ProjectUnit) (enqueued int, more bool, err error) {
+func (s *Scheduler) FillCold(ctx context.Context, projectID string, units []index.ProjectUnit) (enqueued int, more bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
+	}
+	if projectID == "" {
+		return 0, false, fmt.Errorf("scheduler: fill needs a project ID")
 	}
 	byID := make(map[string]index.ProjectUnit, len(units))
 	for _, unit := range units {
@@ -196,7 +202,7 @@ func (s *Scheduler) FillCold(ctx context.Context, units []index.ProjectUnit) (en
 		if full {
 			return enqueued, true, nil
 		}
-		added, err := s.Enqueue(unit, row.Path, P4ColdRemainder)
+		added, err := s.Enqueue(projectID, unit, row.Path, P4ColdRemainder)
 		if err != nil {
 			return enqueued, true, err
 		}
@@ -214,12 +220,12 @@ func (s *Scheduler) FillCold(ctx context.Context, units []index.ProjectUnit) (en
 // delays them (§49) instead of dropping them. The in-flight parse, if any, is
 // never interrupted: reordering touches queue order only. It returns how many
 // of the unit's files now head the queue.
-func (s *Scheduler) Prioritize(ctx context.Context, units []index.ProjectUnit, unitID string) (int, error) {
+func (s *Scheduler) Prioritize(ctx context.Context, projectID string, units []index.ProjectUnit, unitID string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if unitID == "" {
-		return 0, fmt.Errorf("scheduler: prioritize needs a unit ID")
+	if projectID == "" || unitID == "" {
+		return 0, fmt.Errorf("scheduler: prioritize needs a project ID and a unit ID")
 	}
 	byID := make(map[string]index.ProjectUnit, len(units))
 	for _, unit := range units {
@@ -250,7 +256,7 @@ func (s *Scheduler) Prioritize(ctx context.Context, units []index.ProjectUnit, u
 		}
 	}
 	for path := range wanted {
-		candidates = append(candidates, Job{Unit: byID[unitID], Path: path, Priority: P0Targeted})
+		candidates = append(candidates, Job{ProjectID: projectID, Unit: byID[unitID], Path: path, Priority: P0Targeted})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Path < candidates[j].Path })
 	if len(candidates) > s.maxJobs {
@@ -322,7 +328,7 @@ func (s *Scheduler) Run(ctx context.Context) (int, error) {
 		delete(s.queued, job.Path)
 		s.reindex()
 		s.mu.Unlock()
-		if _, err := s.indexer.IndexFile(ctx, job.Unit, job.Path); err != nil {
+		if _, err := s.indexer.IndexFile(ctx, job.ProjectID, job.Unit, job.Path); err != nil {
 			return completed, err
 		}
 		completed++
