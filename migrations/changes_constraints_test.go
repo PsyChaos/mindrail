@@ -81,6 +81,10 @@ func TestChangeRowsEnforceForeignKeys(t *testing.T) {
 		VALUES ('CHG-NOPE', 'k', 'added', 'reconcile', 'SYM-NOPE')`); err == nil {
 		t.Error("symbol row with missing change accepted")
 	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO scope_attributions (logical_key, change_id, decided_by, decided_at)
+		VALUES ('k', 'CHG-NOPE', 'SES-1', '2026-09-23T10:00:00Z')`); err == nil {
+		t.Error("attribution with missing change accepted")
+	}
 }
 
 // TestChangeSymbolGrainIsPerKey pins the (change_id, logical_key) natural
