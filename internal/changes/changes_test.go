@@ -30,8 +30,8 @@ func TestChangesSchemaVersionNamesItsCreatingMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(set) < 6 || set[5].Version != changes.TableSchemaVersion || set[5].Name != "changes" {
-		t.Fatalf("changes schema gate %d does not name migration 000006_changes in the embedded set", changes.TableSchemaVersion)
+	if len(set) < 7 || set[6].Version != changes.TableSchemaVersion || set[6].Name != "scope_attribution" {
+		t.Fatalf("changes schema gate %d does not name migration 000007_scope_attribution in the embedded set", changes.TableSchemaVersion)
 	}
 	migrator := migration.New(db.DB, set, app.FixedClock{})
 	if _, err := migrator.Up(t.Context()); err != nil {

@@ -18,14 +18,14 @@ import (
 )
 
 // TableSchemaVersion is the migration that creates the changes,
-// change_files, change_symbols, change_baselines and change_operations
-// tables.
+// change_files, change_symbols, change_baselines, change_operations and
+// scope_attributions tables.
 //
 // It exists for the same reason every other store's version does: a reader
 // of these tables must be able to tell "the schema does not hold them yet"
 // apart from "they hold nothing", from the migration ledger, which is what
 // the migrator itself is answerable for.
-const TableSchemaVersion = 6
+const TableSchemaVersion = 7
 
 // Store owns only the change facts; Git spelling lives in internal/git and
 // symbol facts in internal/index.

@@ -79,10 +79,11 @@ func TestNoLaterMilestoneMachinery(t *testing.T) {
 	}
 }
 
-// TestNoNewCodesIn01 pins the 0.1 code vocabulary: enforcement codes arrive
-// with MR-008 and later, never here.
+// TestNoNewCodesIn01 pins the 0.1 code vocabulary: MR-008 added the three
+// attribution codes (SCOPE_DRIFT, UNREGISTERED_CHANGE, RECONCILE_AMBIGUOUS);
+// further enforcement codes arrive with MR-013 and later, never here.
 func TestNoNewCodesIn01(t *testing.T) {
-	if got := len(app.RegisteredCodes()); got != 40 {
-		t.Fatalf("registered codes = %d, want 40 (no new codes in MR-007)", got)
+	if got := len(app.RegisteredCodes()); got != 43 {
+		t.Fatalf("registered codes = %d, want 43 (three attribution codes in MR-008)", got)
 	}
 }

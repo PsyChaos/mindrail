@@ -102,6 +102,7 @@ var tablesPerMilestone = map[int64][]string{
 	4: {"project_units", "file_index_state", "symbols", "symbol_imports", "symbol_references"}, // MR-005
 	5: {"symbol_identities", "invariant_symbol_bindings", "symbol_identity_ambiguities"},       // MR-006; symbols.symbol_uid is an ALTER, not a table
 	6: {"changes", "change_files", "change_symbols", "change_baselines", "change_operations"},  // MR-007
+	7: {"scope_attributions"},                                                                  // MR-008
 }
 
 // TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.

@@ -225,6 +225,25 @@ const (
 	// to migrate, supersede or retire it explicitly, never to let it go
 	// silent.
 	CodeOrphanedProtectedSymbol Code = "ORPHANED_PROTECTED_SYMBOL"
+
+	// CodeScopeDrift marks a changed file outside the task's declared scope
+	// (spec §62, decision D-139). It is its own code because the file is
+	// genuinely changed and genuinely out of scope: the remedy extends the
+	// baseline or moves the edit, and completion must not silently include
+	// what no task declared.
+	CodeScopeDrift Code = "SCOPE_DRIFT"
+
+	// CodeUnregisteredChange marks a symbol no open change claims (spec §64,
+	// decision D-133). It is its own code because the work exists and the
+	// ownership does not: the remedy declares the scope or records an
+	// explicit attribution.
+	CodeUnregisteredChange Code = "UNREGISTERED_CHANGE"
+
+	// CodeReconcileAmbiguous marks a symbol two or more open changes claim
+	// (spec §66, decision D-133). It is its own code because choosing would
+	// launder one task's edit as another's: the remedy names every
+	// candidate, and a human assigns.
+	CodeReconcileAmbiguous Code = "RECONCILE_AMBIGUOUS"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -270,6 +289,9 @@ var allCodes = sortedCodes([]Code{
 	CodeIndexStateCorrupt,
 	CodeSymbolIdentityAmbiguous,
 	CodeOrphanedProtectedSymbol,
+	CodeScopeDrift,
+	CodeUnregisteredChange,
+	CodeReconcileAmbiguous,
 })
 
 var codeSet = indexCodes(allCodes)

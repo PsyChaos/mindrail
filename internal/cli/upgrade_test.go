@@ -219,8 +219,8 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 6 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000006, want 6", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 7 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000007, want 7", data.Runtime.SchemaVersion)
 	}
 
 	listed := run(t, repo, "task", "list", "--json")
@@ -264,8 +264,8 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 6 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000005 and 000006, want 6", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 7 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000007, want 7", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -285,13 +285,15 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 	}
 }
 
-// downgradeToSchemaFour removes what MR-006's and MR-007's migrations
+// downgradeToSchemaFour removes what MR-006's through MR-008's migrations
 // created, ledger rows included: the database a repository initialised by the
-// MR-005 binary holds, which never saw migration 5 or 6.
+// MR-005 binary holds, which never saw migration 5, 6 or 7.
 func downgradeToSchemaFour(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS scope_attributions`,
+		`DELETE FROM schema_migrations WHERE version = 7`,
 		`DROP INDEX IF EXISTS idx_changes_task_unique`,
 		`DROP INDEX IF EXISTS idx_changes_operation`,
 		`DROP TABLE IF EXISTS change_operations`,
@@ -345,8 +347,8 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 6 {
-		t.Errorf("schema_version = %d after init re-applied migration 000006, want 6", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 7 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000006 and 000007, want 7", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -366,8 +368,9 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 	}
 }
 
-// downgradeToSchemaFive removes what MR-007's migration created, ledger row
-// included: the database a repository initialised by the MR-006 binary holds.
+// downgradeToSchemaFive removes what MR-007's and MR-008's migrations
+// created, ledger rows included: the database a repository initialised by the
+// MR-006 binary holds, which never saw migration 6 or 7.
 func downgradeToSchemaFive(t *testing.T, repo string) {
 	t.Helper()
 
@@ -382,13 +385,72 @@ func downgradeToSchemaFive(t *testing.T, repo string) {
 		`DELETE FROM schema_migrations WHERE version = 6`)
 }
 
-// downgradeToSchemaThree removes what MR-005's through MR-007's migrations
+// TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges is MR-008
+// AC-01.2. Migration 000007 adds one table and touches nothing else: the
+// fixture is a schema-6 database with change rows, and init must bring it
+// to 7 with those rows intact.
+func TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges(t *testing.T) {
+	repo := newInitializedRepo(t)
+	run(t, repo, "session", "open", "--json")
+	pkg := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "pyproject.toml"), []byte("[project]\nname = 'pkg'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execOnRuntimeDB(t, repo,
+		`INSERT INTO changes (change_id, created_at, updated_at) VALUES ('CHG-1', '2026-09-23T10:00:00Z', '2026-09-23T10:00:00Z')`,
+		`INSERT INTO change_files (change_id, path, kind, discovered_via) VALUES ('CHG-1', '`+pkg+`/a.py', 'modified', 'reconcile')`)
+	downgradeToSchemaSix(t, repo)
+
+	applied := run(t, repo, "init", "--json")
+	if applied.code != app.ExitSuccess {
+		t.Fatalf("init exited %d over a schema-6 database: %s", applied.code, applied.stdout)
+	}
+
+	got := run(t, repo, "status", "--json")
+	got.requireExit(t, app.ExitSuccess)
+	var data struct {
+		Runtime struct {
+			SchemaVersion int64 `json:"schema_version"`
+		} `json:"runtime"`
+	}
+	decodeData(t, got.stdout, &data)
+	if data.Runtime.SchemaVersion != 7 {
+		t.Errorf("schema_version = %d after init re-applied migration 000007, want 7", data.Runtime.SchemaVersion)
+	}
+
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var files int
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM change_files`).Scan(&files); err != nil || files != 1 {
+		t.Fatalf("change files = %d, %v", files, err)
+	}
+}
+
+// downgradeToSchemaSix removes what MR-008's migration created, ledger row
+// included: the database a repository initialised by the MR-007 binary holds.
+func downgradeToSchemaSix(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS scope_attributions`,
+		`DELETE FROM schema_migrations WHERE version = 7`)
+}
+
+// downgradeToSchemaThree removes what MR-005's through MR-008's migrations
 // created, ledger rows included: the database a repository initialised by the
-// MR-004 binary holds, which never saw migration 4, 5 or 6.
+// MR-004 binary holds, which never saw migration 4, 5, 6 or 7.
 func downgradeToSchemaThree(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS scope_attributions`,
+		`DELETE FROM schema_migrations WHERE version = 7`,
 		`DROP INDEX IF EXISTS idx_changes_task_unique`,
 		`DROP INDEX IF EXISTS idx_changes_operation`,
 		`DROP TABLE IF EXISTS change_operations`,

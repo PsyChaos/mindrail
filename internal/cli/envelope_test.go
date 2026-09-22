@@ -122,6 +122,13 @@ var exitForCode = map[app.Code]int{
 	// symbol meets, whether a protected symbol still resolves).
 	app.CodeSymbolIdentityAmbiguous: app.ExitFailed,
 	app.CodeOrphanedProtectedSymbol: app.ExitFailed,
+
+	// MR-008's three attribution findings: same class again — a discovered
+	// change asking for an owner it cannot have by itself, resolved by
+	// declaring scope or recording an assignment, never by retrying.
+	app.CodeScopeDrift:         app.ExitFailed,
+	app.CodeUnregisteredChange: app.ExitFailed,
+	app.CodeReconcileAmbiguous: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible
