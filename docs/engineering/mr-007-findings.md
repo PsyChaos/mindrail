@@ -77,3 +77,35 @@ kırmızı. B2/B3/B4 kırmızı. B5 (band 512) kırmızı. FK probları (3 adet)
 
 Tam `make check` aşağıda. Test sayısı
 `go test -list '.*' ./... | grep -c '^Test'` ile **1083**.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | `TestCaptureBaselineReplacesWithoutStacking` (değiştir, gerçek hash'ler) + `TestCaptureBaselineEmptyHashForMissingAndNonRegular` (kayıp/dizin boş hash, fail-closed validasyonlar). |
+| AC-02.2 | Karşılandı | `TestEnsureOpenChangeStable` (tek task tek satır) + `TestEnsureOpenChangeRetroactive` (NULL id'siz taze satırlar, id'li replay). |
+| AC-02.3 | Karşılandı | `TestOperationReplayAndConflict` (aynı id+hash replay, farklı hash `OPERATION_ID_CONFLICT` — Ensure ve CaptureBaseline'de). |
+| AC-02.4 | Karşılandı | `TestBaselineClearingDiscipline` (başka çağrılar dokunmaz, clear + recapture çalışır). |
+
+Ek: `TestConcurrentEnsureAgreesOnOneRow` (8 yarışçı, partial UNIQUE hakem) + `TestNewStoreRefusesNilHandle`.
+
+## Reader / Breaker bulguları ve giderim — TASK-02 kapısı
+
+(TASK-02 kapısı aşağıda.)
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M1 | baseline DELETE kaldırıldı (istiflenir) | replace testi FAIL |
+| M2 | task pre-lookup kaldırıldı | SURVIVED (benign) — ON CONFLICT + readback aynı cevabı verir; fazladan yazı yok, sadece tur. Perf-only, guard açığı değil. |
+| M3 | replay kontrolü kaldırıldı (hep yeniden yaz) | replay testi FAIL (dup op satırı) |
+| M4 | conflict dalı etkisiz (`&& false`) | conflict testi FAIL (laundering kabul edilirdi) |
+| M5 | hash hep boş | capture testi FAIL |
+| M6 | open-change ON CONFLICT kaldırıldı | concurrent + stable testleri FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+### TASK-02 kapı (PENDING — bağımsız değerlendirme bekleniyor)
+
+`make check` yeşil (EXIT=0). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1090**.
