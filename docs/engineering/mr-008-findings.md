@@ -105,4 +105,34 @@ imkânsız (twins NULL uid alır), bulgu yok.
 
 **Karar:** TASK-02 KAPANDI.
 
-## TASK-03 kabul kanıtı (PENDING)
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | Override ambiguous + unregistered sembolü çözüyor (`TestOverrideClearsOneSymbolWhileSiblingsBlock`, `TestOverrideBindsUnregisteredSymbols`). |
+| AC-03.2 | Karşılandı | Boş decider/bilinmeyen change/bozuk anahtar yazmadan reddediliyor; satır kalmıyor (`TestRecordAttributionRefusesBeforeAnyWrite`). Breaker B-1 kapandı. |
+| AC-03.3 | Karşılandı | Üç kod birlikte blocking set'te; temiz task boş dönüyor (`TestEvaluateTaskReturnsTheBlockingSet`). |
+| AC-03.4 | Karşılandı | Tek lease adlandırılıyor, sıfır/çoklu adlandırmıyor; lease sonucu değiştirmiyor — iki yön de pinli (`TestLeaseGuidanceNamesExactlyOneHolder`). |
+| AC-03.5 | Karşılandı | NULL-task unregistered bandında, isimsiz-change'siz task boş — ikisi de hatasız (`TestOwnerlessWorkEvaluatesUnregistered`). |
+
+**D-137 sonucu (açıklandı):** override anahtar-bazında global — `a::f`
+için kaydedilen atama, iki task'ın değerlendirmesinde de bulguyu kaldırır.
+Test önce kardeş-task beklentisini yanlış yazdı (aynı anahtar için bulgu
+bekledi); D-137 gereği düzeltildi — override'sız ikinci sembol (`a::h`)
+kardeşte bloklu kalıyor, seri-çözüm davranışı onunla pinli.
+
+### TASK-03 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M11 | decider-kontrolü kapatıldı | refusal testi FAIL |
+| M12 | override-danışma kapatıldı | iki override testi FAIL |
+| M13 | lease eşiği `!= 1` → `< 1` | lease testi FAIL |
+| M14 | ownerless sorgusu `IS NULL` → `IS NOT NULL` | ownerless testi FAIL |
+| M15 | task-lease eşleşmesi hep-doğru | lease testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1137**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
