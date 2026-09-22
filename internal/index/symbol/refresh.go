@@ -175,7 +175,9 @@ func (s *Service) refreshPrefix(ctx context.Context, repoRoot string, units []in
 // orphanUnlessSticky drops bindings whose lineage died and evaluates the
 // orphan track — unless an existing bound binding still has live rows, in
 // which case the lineage survived (a carried rename) and the binding stays
-// exactly where it is (decision D-110).
+// exactly where it is (decision D-110). A dead lineage the store left
+// explicitly undecided reports ambiguous instead of orphaned: the lineage did
+// not vanish, the decision is what is missing.
 func (s *Service) orphanUnlessSticky(ctx context.Context, invariant record.Invariant, resolution Resolution) (Outcome, error) {
 	kept, dropped, err := s.partitionLiveBindings(ctx, invariant.ID)
 	if err != nil {
@@ -183,6 +185,21 @@ func (s *Service) orphanUnlessSticky(ctx context.Context, invariant record.Invar
 	}
 	if len(kept) > 0 {
 		return Outcome{InvariantID: invariant.ID, UIDs: kept, Status: index.BindingBound}, nil
+	}
+	for _, uid := range dropped {
+		ambiguities, err := s.store.ListAmbiguitiesForUID(ctx, uid)
+		if err != nil {
+			return Outcome{}, err
+		}
+		if len(ambiguities) == 0 {
+			continue
+		}
+		if err := s.store.UpsertBinding(ctx, invariant.ID, uid, index.BindingAmbiguous, resolution.Detail); err != nil {
+			return Outcome{}, err
+		}
+		finding := index.AmbiguousHeirs(uid, ambiguities[0].CandidateKeys)
+		return Outcome{InvariantID: invariant.ID, UIDs: []string{uid}, Status: index.BindingAmbiguous,
+			Finding: finding, Blocking: blocks(invariant)}, nil
 	}
 	if len(dropped) > 0 {
 		if err := s.store.UpsertBinding(ctx, invariant.ID, dropped[0], index.BindingOrphaned, resolution.Detail); err != nil {

@@ -588,8 +588,10 @@ func TestResolvedRefreshPrunesStaleBindings(t *testing.T) {
 
 // TestEndToEndProtectRenameAmbiguousDelete is AC-05.1 in three acts on
 // stored rows: a CRITICAL invariant protects Box.run; a rename carries the
-// binding on the same uid; twin heirs record ambiguity and block; deleting
-// the symbols orphans and blocks. Both blocking codes appear end to end.
+// binding on the same uid; twin heirs record ambiguity and the refresh
+// reports it blocking with the ambiguous code (not an orphan: the lineage
+// did not vanish, the decision is missing); removing the symbols orphans
+// and blocks. Both blocking codes appear end to end.
 func TestEndToEndProtectRenameAmbiguousDelete(t *testing.T) {
 	f := newRefreshFixture(t)
 	path := f.indexFile(t, "a.py", "class Box:\n    def run(self):\n        return 1\n")
@@ -647,8 +649,19 @@ func TestEndToEndProtectRenameAmbiguousDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Outcomes) != 1 || !report.Outcomes[0].Blocking || report.Outcomes[0].Finding == nil {
-		t.Fatalf("act two outcome = %+v, want blocking", report.Outcomes)
+	if len(report.Outcomes) != 1 {
+		t.Fatalf("act two outcomes = %+v", report.Outcomes)
+	}
+	two := report.Outcomes[0]
+	if two.Status != index.BindingAmbiguous || !two.Blocking || two.Finding == nil {
+		t.Fatalf("act two outcome = %+v, want ambiguous blocking", two)
+	}
+	if payload, ok := app.PayloadOf(two.Finding); !ok || payload.Code != app.CodeSymbolIdentityAmbiguous {
+		t.Fatalf("act two finding = %v, want SYMBOL_IDENTITY_AMBIGUOUS", two.Finding)
+	}
+	twoRows, err := f.store.ListBindingsForInvariant(t.Context(), "INV-1000")
+	if err != nil || len(twoRows) != 1 || twoRows[0].Status != index.BindingAmbiguous || twoRows[0].UID != carried {
+		t.Fatalf("act two rows = %+v, %v", twoRows, err)
 	}
 
 	// Act three: the symbols leave the file; the orphan blocks.

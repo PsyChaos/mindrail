@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -140,7 +141,57 @@ func (s *Store) UidHasLiveRows(ctx context.Context, uid string) (bool, error) {
 	return count > 0, nil
 }
 
-// UpsertBinding records one binding outcome. Re-resolution overwrites the
+// Ambiguity names one blocked identity decision for a removed lineage.
+type Ambiguity struct {
+	ID            int64
+	UnitID        string
+	RemovedUID    string
+	RemovedKey    string
+	CandidateKeys []string
+	CreatedAt     time.Time
+}
+
+// ListAmbiguitiesForUID returns the blocking decisions naming a removed
+// lineage, newest first. Refresh consults them before orphaning: an
+// explicitly undecided lineage is ambiguous, not vanished.
+func (s *Store) ListAmbiguitiesForUID(ctx context.Context, uid string) ([]Ambiguity, error) {
+	if uid == "" {
+		return nil, invalidInput("ambiguity listing needs a uid")
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, unit_id, removed_uid, removed_key, candidate_keys, created_at
+		FROM symbol_identity_ambiguities WHERE removed_uid = ? ORDER BY id DESC`, uid)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	var out []Ambiguity
+	for rows.Next() {
+		var ambiguity Ambiguity
+		var candidates, created string
+		if err := rows.Scan(&ambiguity.ID, &ambiguity.UnitID, &ambiguity.RemovedUID,
+			&ambiguity.RemovedKey, &candidates, &created); err != nil {
+			return nil, corruptState(err)
+		}
+		if err := json.Unmarshal([]byte(candidates), &ambiguity.CandidateKeys); err != nil {
+			return nil, corruptState(err)
+		}
+		stamped, err := app.ParseTime(created)
+		if err != nil {
+			return nil, corruptState(err)
+		}
+		ambiguity.CreatedAt = stamped
+		out = append(out, ambiguity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return out, nil
+}
+
+// UpsertBinding records one binding outcome.// UpsertBinding records one binding outcome. Re-resolution overwrites the
 // previous status for the pair: the table describes the world now, while
 // symbol_identity_ambiguities keeps the audit trail.
 func (s *Store) UpsertBinding(ctx context.Context, invariantID, uid, status, reason string) error {

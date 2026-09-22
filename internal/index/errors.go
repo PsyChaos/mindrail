@@ -66,6 +66,16 @@ func AmbiguousTarget(target, detail string, uids []string) error {
 		remedy)
 }
 
+// AmbiguousHeirs names a removed lineage the store explicitly left
+// undecided among heir keys. It carries the ambiguous code (not the orphan
+// one): the lineage did not vanish, the decision is what is missing.
+func AmbiguousHeirs(removedUID string, candidateKeys []string) error {
+	return app.NewError(app.CodeSymbolIdentityAmbiguous, app.KindFailed,
+		fmt.Sprintf("removed %s is undecided among %d heirs", removedUID, len(candidateKeys)),
+		"Attaching the lineage to any one heir by guess would protect the wrong spelling.",
+		"Name the surviving heir explicitly: "+strings.Join(candidateKeys, ", ")+".")
+}
+
 // OrphanedProtectedSymbol keeps an active invariant blocking when its symbol
 // is gone with no confident heir. The invariant stays active and loud rather
 // than going silent.

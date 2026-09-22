@@ -349,8 +349,10 @@ Owns REQ-05, REQ-06, REQ-07, REQ-10.
 - **AC-05.1** end-to-end: protect `Box.run` (active CRITICAL) → rename to
   `Box.drive` → binding unchanged (same uid), completion-relevant state
   shows migrated-not-orphaned; then ambiguous twin rename →
-  `SYMBOL_IDENTITY_AMBIGUOUS` blocking; then delete the file → orphaned
-  blocking. One test, three acts, all assertions on stored rows.
+  `SYMBOL_IDENTITY_AMBIGUOUS` blocking; then remove the protected symbols
+  (rewrite without them — true disk deletion leaves stale rows for MR-007's
+  reconcile, so the executable form is removal) → orphaned blocking. One
+  test, three acts, all assertions on stored rows.
 - **AC-05.2** the non-goals hold under grep: no `internal/semantic/`, no new
   language, no resolver/coverage/vector imports, knowledge schema still v1,
   no new CLI commands.

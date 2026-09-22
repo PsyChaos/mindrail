@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -95,9 +96,10 @@ func TestKnowledgeSchemaStaysV1(t *testing.T) {
 	if len(entries) == 0 {
 		t.Fatal("no knowledge schemas")
 	}
+	versionPattern := regexp.MustCompile(`\.v([0-9]+)\.`)
 	for _, entry := range entries {
-		if strings.Contains(entry.Name(), "v2") {
-			t.Errorf("schema %s: v2 is out of 0.1 scope", entry.Name())
+		if match := versionPattern.FindStringSubmatch(entry.Name()); match != nil && match[1] != "1" {
+			t.Errorf("schema %s: version %s is out of 0.1 scope", entry.Name(), match[1])
 		}
 		body, err := os.ReadFile(filepath.Join(schemas, entry.Name()))
 		if err != nil {

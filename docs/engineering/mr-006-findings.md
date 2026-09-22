@@ -339,3 +339,40 @@ tek-kayıt yorumu; focused süit yeşil. `make check` yeşil, 1071 test.
 ### TASK-05 kapı (PENDING — bağımsız değerlendirme bekleniyor)
 
 `make verify` yeşil (EXIT=0: check + race + smoke). Test sayısı `go test -list .\* ./... | grep -c ^Test` ile **1074**.
+
+## Reader / Breaker bulguları ve giderim — TASK-05 kapısı (birinci tur)
+
+Bağımsız Reader **FAIL**, Breaker **VERIFIED** (E2E dürüstlük probları temiz,
+M-2 ile bloklar kırmızı, pinler duyarlı).
+
+- **HIGH (bulgu kodu):** 2. perde AMBIGUOUS kodunu assert etmiyordu (bulgu
+  orphan izliyordu). Giderim: refresh, ölü-lineage'da ambiguity satırı varsa
+  orphan yerine ambiguous raporlar (`ListAmbiguitiesForUID` +
+  `AmbiguousHeirs`); E2E kod + status + stored satır assert eder. Davranış
+  değişikliği AC-05.1'in lafzı gereği yapıldı; TASK-03 orphan/sticky
+  testleri yeşil (ambiguity satırsız yollar etkilenmez).
+- **HIGH (yorum):** "Both blocking codes" düzeltildi — artık doğru.
+- **MEDIUM (stored satır):** TASK-03 orphan testine pre-bind + row-flip
+  eklendi; E2E 3. perde D-111 finding-only şeklini assert eder.
+- **MEDIUM (E2E mutantı):** M-S3 (`blocks` false) + M-S4 (bar etkisiz)
+  kırmızı, deftere işlendi.
+- **LOW (silme):** AC-05.1 "delete the file" → "remove the protected
+  symbols" (disk-silme stale satır bırakır — MR-007 alanı; yürütülebilir
+  form removal; kapıda düzeltildi).
+- **LOW (şema pini):** v2-kontrolü her non-v1 sürüme genişletildi + v3
+  kırmızı-doğrulamalı.
+- **LOW (REQ-10):** alıntı eklendi — `TestTimingNeverReachesTheWire` +
+  symbol paketinde `json:` etiketi yok (AC-05.3'ün yeni zamanlaması da yok).
+
+### TASK-05 guard mutasyon defteri — ek (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M-S3 | `blocks` false | E2E FAIL (bloklar düşer) |
+| M-S4 | `matchBar` false (migrate yok) | E2E FAIL (taşıma orphan olur) |
+| M-S5 | ilk M-S3 varyantı kapanış ayracını yuttu (geçersiz mutant) | derlenen varyant FAIL |
+
+### TASK-05 kapı (PENDING — ikinci tur kapı bekleniyor)
+
+`make check` yeşil (EXIT=0). Test sayısı
+`go test -list '.*' ./... | grep -c '^Test'` ile **1074**.
