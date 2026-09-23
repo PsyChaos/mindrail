@@ -92,12 +92,12 @@ ediliyor (argümandaki secret satırda yaşamıyor); structured sanitizer yok
 
 | # | Mutant | Kırmızı kanıt |
 |---|---|---|
-| M6 | boş-değer koruması kaldırıldı | ilk pin yeşil kaldı → unset-değişken testi eklendi, FAIL |
-| M7 | desenlerden ilki atlandı | pattern testi FAIL |
-| M8 | kapsam-kaçış kontrolü kapatıldı | refusal testi FAIL |
-| M9 | op-conflict dalı kapatıldı | replay testi FAIL |
-| M10 | evidence tablosu düşürüldü | gate testi FAIL |
-| M11 | element-redaksiyon kaldırıldı (kapı bulgusu) | hostile-secret testi FAIL |
+| M8 | boş-değer koruması kaldırıldı | ilk pin yeşil kaldı → unset-değişken testi eklendi, FAIL |
+| M9 | desenlerden ilki atlandı | pattern testi FAIL |
+| M10 | kapsam-kaçış kontrolü kapatıldı | refusal testi FAIL |
+| M11 | op-conflict dalı kapatıldı | replay testi FAIL |
+| M12 | evidence tablosu düşürüldü | gate testi FAIL |
+| M13 | element-redaksiyon kaldırıldı (kapı bulgusu) | hostile-secret testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
@@ -111,7 +111,7 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 tırnak/ters-bölü içeren secret `command_argv`'de yaşıyordu. Düzeltme:
 element-bazlı redaksiyon (marshal öncesi); request-hash ham argv'den (retry
 kimliği); desen-bozması availability-deliği de kapandı (marshal hep geçerli).
-Pin: `TestRecordRedactsJSONHostileSecrets` (M11 ile kırmızı doğrulandı).
+Pin: `TestRecordRedactsJSONHostileSecrets` (M13 ile kırmızı doğrulandı).
 
 **Breaker kayda değer (bulgu değil):** substring over-redaction (tasarım
 gereği kanonik), symlink-scope boş-hash (deterministik), boş-op çift satır
@@ -125,9 +125,24 @@ gereği kanonik), symlink-scope boş-hash (deterministik), boş-op çift satır
 |---|---|---|
 | AC-03.1 | Karşılandı (kapıda) | `make verify` + `make tidy-check` + sayı aşağıda. |
 | AC-03.2 | Karşılandı | Grep kanıtı: spawn yolunda shell yok; kod 43; env'i okuyan tek yer redactor (değer saklanmıyor); knowledge `decision`/`invariant` dışında tür yok. |
-| AC-03.3 | Karşılandı (kapıda) | M1…M11 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
+| AC-03.3 | Karşılandı (kapıda) | M1…M13 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
 
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1174**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: AC-03.1/03.2 CONFIRMED, ledger CONFIRMED; Breaker: 4 REFUTED + 1 süreç-doğru
+
+**Reader + Breaker:** kapılar temiz; tek takip M-etiket çakışmasıydı —
+giderildi (M1…M7 TASK-01, M8…M13 TASK-02). +1 sayım farkı açıklandı (B-3
+pin testi).
+
+**Karar:** TASK-03 KAPANDI.
+
+---
+
+## MR-010 kapanış
+
+Üç görev kapandı (TASK-01…03), 13 mutant kırmızı, `make verify` +
+`make tidy-check` yeşil, 1174 test. MR-011'e devir (Durum bloğundaki gibi):
+evidence satırları → invalidation; snapshot hash'leri → staleness; op-id
+replay → retry.

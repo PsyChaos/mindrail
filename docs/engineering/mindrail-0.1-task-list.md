@@ -519,11 +519,34 @@ Project-defined validation profile seçimi, argv-only process execution, timeout
 
 #### Kabul kriterleri
 
-- [ ] Shell string yerine yalnızca argv tabanlı komut çalıştırılır.
-- [ ] Timeout ve çıktı sınırı deterministic, yapılandırılmış sonuç üretir.
-- [ ] Evidence; profile, command sonucu, snapshot hash, provenance ve timestamp taşır.
-- [ ] Configured known secret plaintext olarak Evidence içine girmez.
-- [ ] Runner unit testleri ile gerçek process integration testleri bulunur.
+- [x] Shell string yerine yalnızca argv tabanlı komut çalıştırılır.
+- [x] Timeout ve çıktı sınırı deterministic, yapılandırılmış sonuç üretir.
+- [x] Evidence; profile, command sonucu, snapshot hash, provenance ve timestamp taşır.
+- [x] Configured known secret plaintext olarak Evidence içine girmez.
+- [x] Runner unit testleri ile gerçek process integration testleri bulunur.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de PATH-hijack tespiti (ResolvedExe
++ LookPath) ve torun-sarkması (process-group kill) kapıda kapatıldı (M6,
+M7). TASK-02'de B-3 gerçek sızıntısı çıktı (JSON-escape argv'de yaşıyordu)
+— element-bazlı redaksiyona geçildi (M13). TASK-03 kapıları temizdi
+(M-etiket çakışması aynı turda giderildi: M1…M7 TASK-01, M8…M13 TASK-02).
+
+Sözleşme koda başlanmadan donduruldu
+([mr-010-requirements.md](mr-010-requirements.md),
+[mr-010-design.md](mr-010-design.md), `2444309`), kararlar D-155…D-164:
+D-155 runtime-DB-evidence, D-156 göç-000008/sürüm-8, D-157 argv-only +
+64KB, D-158 fail-closed-snapshot, D-160 op-id-replay, D-164 tipsiz-default
+yok. Kod 43, knowledge decision/invariant, göç 8. Yeni paket
+`internal/validation`; config'e profil + secret-isimleri.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1174
+test (MR-010 başında 1154 idi; +1 B-3 pin testi). 13 guard mutasyonu kırmızı
+koşuldu (M1…M13). Kapıların MR-011'e bıraktıkları: evidence satırları
+(invalidation girdisi), snapshot hash'leri (staleness girdisi), op-id
+replay (retry girdisi).
 
 ---
 
