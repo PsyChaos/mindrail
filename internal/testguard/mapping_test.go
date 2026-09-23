@@ -54,6 +54,9 @@ func TestPolicyMatrixBlocking(t *testing.T) {
 	skipped := guardDelta("t.py",
 		"def test_a():\n    assert x\n",
 		"@pytest.mark.skip\ndef test_a():\n    assert x\n")
+	xfailed := guardDelta("t.py",
+		"def test_a():\n    assert x\n",
+		"@pytest.mark.xfail\ndef test_a():\n    assert x\n")
 	removed := guardDelta("t.py",
 		"def test_a():\n    assert x\n",
 		"def test_b():\n    assert x\n")
@@ -78,6 +81,7 @@ func TestPolicyMatrixBlocking(t *testing.T) {
 		{"high removal warns", removed, high, false},
 		{"inactive removal warns", removed, inactive, false},
 		{"critical skip warns", skipped, critical, false},
+		{"critical xfail warns", xfailed, critical, false},
 		{"critical decrease warns", weaken, critical, false},
 		{"critical suite disable blocks", suiteDisabled, suiteCritical, true},
 	} {

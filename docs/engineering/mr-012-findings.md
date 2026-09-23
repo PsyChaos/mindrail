@@ -84,9 +84,26 @@ Kural: oturum-içi davranış değişince backup tazelenir; restore sonrası
 | M8 | bastırma-listesi kapatıldı | hatch testi FAIL |
 | M9 | şekil-kısıtı gevşetildi | cousin testi FAIL |
 | M10 | excluded-kümesi kapatıldı | cousin testi FAIL |
+| M11 | unescape kaldırıldı (kapı bulgusu) | escaped-mapping testi FAIL |
+| M12 | aggregation kaldırıldı (kapı bulgusu) | duplicate testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0, ikinci koşu — ilki `gofmt` düşürdü, düzeltildi). Test sayısı **1199**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 5/5 CONFIRMED + 4 artık; Breaker: 4 REFUTED + 2 BROKEN→KAPANDI
+
+**Reader artıkları (kapatıldı):** mapped-xfail-warn, ECMA-unmapped-warn,
+ECMA-hatch, ECMA-added-quiet pinleri eklendi.
+
+**Breaker B-4 (kaçış-tırnak, KAPATILDI):** `unquote` escape açmıyordu,
+gerçek-isimli eşleme reddediliyordu. Düzeltme: `strconv.Unquote` + tek-tırnak
+fallback (`jsUnescape`); pin eklendi (M11 kırmızı).
+
+**Breaker B-5 (duplicate-maskeleme, KAPATILDI):** aynı-isim ECMA
+testlerinde last-wins sıralamaya göre bulgu gizliyordu (Python'da gölgeleme
+doğru, JS'de hepsi koşar). Düzeltme: isim-başı aggregation (sum + union);
+tek kopya silinmesi decrease okunuyor — doğru, test duruyor. Pin eklendi
+(M12 kırmızı).
+
+**Karar:** TASK-02 KAPANDI.

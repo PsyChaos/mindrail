@@ -3,6 +3,7 @@ package testguard
 import (
 	_ "embed"
 	"fmt"
+	"strconv"
 	"strings"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
@@ -130,7 +131,13 @@ func (a *ecmaAnalyzer) tests(source []byte) (map[string]testFunc, error) {
 		if def.callback != nil {
 			count = expects[def.callback.StartByte()]
 		}
-		out[def.name] = testFunc{
+		// Same-name duplicates all execute in JS (no shadowing, unlike
+		// Python): aggregate asserts and markers per name so no copy's
+		// weakening hides behind file ordering (Breaker B-5). Removal
+		// of one copy then reads as decrease — correctly, since the
+		// test still exists.
+		previous, dup := out[def.name]
+		merged := testFunc{
 			name:       def.name,
 			asserts:    count,
 			markers:    markers,
@@ -141,8 +148,26 @@ func (a *ecmaAnalyzer) tests(source []byte) (map[string]testFunc, error) {
 			decSignal:  SignalAssertionCountDecreased,
 			zeroSignal: SignalExpectationRemoved,
 		}
+		if dup {
+			merged.asserts = previous.asserts + count
+			merged.markers = unionMarkers(previous.markers, markers)
+			merged.allowed = previous.allowed || merged.allowed
+			merged.trivial = previous.trivial && merged.trivial
+			merged.startRow = previous.startRow
+		}
+		out[def.name] = merged
 	}
 	return out, nil
+}
+
+func unionMarkers(a, b []string) []string {
+	union := append([]string{}, a...)
+	for _, marker := range b {
+		if !hasMarker(union, marker) {
+			union = append(union, marker)
+		}
+	}
+	return union
 }
 
 type suiteBlock struct {
@@ -252,13 +277,34 @@ func callbackArg(call ecmaCall, source []byte) *ts.Node {
 
 func unquote(text string) string {
 	if len(text) >= 2 {
-		if (text[0] == '"' && text[len(text)-1] == '"') ||
-			(text[0] == '\'' && text[len(text)-1] == '\'') ||
-			(text[0] == '`' && text[len(text)-1] == '`') {
-			return text[1 : len(text)-1]
+		switch {
+		case text[0] == '"' && text[len(text)-1] == '"',
+			text[0] == '\'' && text[len(text)-1] == '\'',
+			text[0] == '`' && text[len(text)-1] == '`' && !strings.Contains(text, "${"):
+			inner := text[1 : len(text)-1]
+			if unquoted, err := strconv.Unquote(text); err == nil {
+				return unquoted
+			}
+			// Single-quoted literals are not Go syntax: unescape the
+			// common cases literally instead of failing the name.
+			return jsUnescape(inner)
 		}
 	}
 	return text
+}
+
+var jsUnescaper = strings.NewReplacer(
+	`\\`, `\`,
+	`\"`, `"`,
+	`\'`, `'`,
+	`\n`, "\n",
+	`\r`, "\r",
+	`\t`, "\t",
+	`\0`, "\x00",
+)
+
+func jsUnescape(text string) string {
+	return jsUnescaper.Replace(text)
 }
 
 // expectsByCallback bins every bare or trailing expect call into the
