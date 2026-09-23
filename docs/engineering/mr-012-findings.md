@@ -17,7 +17,7 @@ korur; gereksinim veya tasarımın yerine geçmez.
 | AC-01.1 | Karşılandı | Sayı-azalma + sıfır-kalan (removal/noop) özetli bulunuyor (`TestPythonAssertionDecrease`, `TestPythonAssertionRemoved`). |
 | AC-01.2 | Karşılandı | Spec-listesi marker'lar + yakın-akrabalar negatif pinli (`TestPythonSkipMarkers`). |
 | AC-01.3 | Karşılandı | Kaldırılan fonksiyon before-özetli; eklenen sessiz (`TestPythonRemovedAndAddedTests`). |
-| AC-01.4 | Karşılandı | Kod kayıtlı + exit-class; bulgu 8 alanlı (`TestGuardCodeRegistered`, decrease testi). |
+| AC-01.4 | Karşılandı | Kod kayıtlı + exit-class; bulgu AC-adlı alanları taşıyor (`TestGuardCodeRegistered`, decrease testi). |
 | AC-01.5 | Karşılandı | String/comment içi assert sayılmıyor — node eşleşmesi (`TestPythonStringsAndCommentsDoNotCount`). |
 
 **Tasarım notu (pointer API):** go-tree-sitter v0.25 düğümleri pointer
@@ -38,4 +38,18 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0, ikinci koşu — ilki `gofmt` düşürdü, düzeltildi). Test sayısı **1191**.
 
-### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-01 kapı — Reader: 5/5 CONFIRMED + 3 gözlem; Breaker: 6/6 REFUTED
+
+**Reader:** AC-01.1…AC-01.5 CONFIRMED. Gözlemler (kapatıldı): call-form
+marker pinleri eklendi; "8 alan" dili düzeltildi.
+
+**`test` prefix kararı (D-171 şerhi):** `isTestName` prefix-`test`
+kullanıyor, D-171 `test_*` diyor. Runtime haklı çıkarıyor: pytest
+varsayılan `test*` topluyor (`testimony` gerçekten koşar), guard'ın onu
+koruması doğru — daraltma yanlış-negatif üretirdi. D-171 bu kayıtla
+nitelendi.
+
+**Breaker:** 6 sonda REFUTED (nested/last-wins/stacked/CRLF/partial-parse/
+module-assert hepsi tutarlı).
+
+**Karar:** TASK-01 KAPANDI.
