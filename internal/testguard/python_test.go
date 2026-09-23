@@ -87,12 +87,12 @@ func TestPythonSkipMarkers(t *testing.T) {
 	service := newGuardService(t)
 	body := "def test_a():\n    assert x\n"
 	for marker, signal := range map[string]string{
-		"@pytest.mark.skip\n":    testguard.SignalTestSkipped,
-		"@pytest.mark.skip()\n":  testguard.SignalTestSkipped,
+		"@pytest.mark.skip\n":          testguard.SignalTestSkipped,
+		"@pytest.mark.skip()\n":        testguard.SignalTestSkipped,
 		"@pytest.mark.skip(\"why\")\n": testguard.SignalTestSkipped,
-		"@unittest.skip\n":       testguard.SignalTestSkipped,
-		"@pytest.mark.xfail\n":   testguard.SignalTestXFailed,
-		"@pytest.mark.xfail()\n": testguard.SignalTestXFailed,
+		"@unittest.skip\n":             testguard.SignalTestSkipped,
+		"@pytest.mark.xfail\n":         testguard.SignalTestXFailed,
+		"@pytest.mark.xfail()\n":       testguard.SignalTestXFailed,
 	} {
 		result := evaluate(t, service, guardDelta("t.py", body, marker+body))
 		if len(result.Findings) != 1 || result.Findings[0].Signal != signal {

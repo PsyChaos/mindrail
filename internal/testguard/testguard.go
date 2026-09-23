@@ -116,15 +116,20 @@ type Request struct {
 }
 
 // testFunc is one test function in one version: name, assertion count,
-// weakening markers, trivial body, start row for hatch association, and the
-// hatch flag itself (kept apart from markers so summaries never print it).
+// weakening markers, trivial body, start row for hatch association, the
+// hatch flag itself (kept apart from markers so summaries never print it),
+// the count noun the summary speaks ("asserts" or "expects"), and the
+// signals a loss reads as (assertions vs expectations).
 type testFunc struct {
-	name     string
-	asserts  int
-	markers  []string
-	allowed  bool
-	trivial  bool
-	startRow uint
+	name       string
+	asserts    int
+	markers    []string
+	allowed    bool
+	trivial    bool
+	startRow   uint
+	unit       string
+	decSignal  string
+	zeroSignal string
 }
 
 // analyzer parses one language version into test functions.
@@ -136,7 +141,9 @@ type analyzer interface {
 // Service evaluates test weakening. It owns compiled queries; Close it
 // when done.
 type Service struct {
-	python *pythonAnalyzer
+	python     *pythonAnalyzer
+	typescript *ecmaAnalyzer
+	javascript *ecmaAnalyzer
 }
 
 // New builds a Service with compiled queries.
@@ -145,13 +152,30 @@ func New() (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{python: python}, nil
+	typescript, err := newTypescriptAnalyzer()
+	if err != nil {
+		python.close()
+		return nil, err
+	}
+	javascript, err := newJavascriptAnalyzer()
+	if err != nil {
+		python.close()
+		typescript.close()
+		return nil, err
+	}
+	return &Service{python: python, typescript: typescript, javascript: javascript}, nil
 }
 
 // Close releases compiled queries and parsers.
 func (s *Service) Close() {
 	if s.python != nil {
 		s.python.close()
+	}
+	if s.typescript != nil {
+		s.typescript.close()
+	}
+	if s.javascript != nil {
+		s.javascript.close()
 	}
 }
 
@@ -240,17 +264,14 @@ func (s *Service) evaluateFile(ctx context.Context, file FileDelta, mappings []T
 			}
 			continue
 		}
-		if suppressed(afterFunc) {
-			result.Suppressions = append(result.Suppressions, Suppression{TestKey: key, Reason: "marked allow-test-weakening"})
-			continue
-		}
+		var weakened []Finding
 		for _, marker := range addedMarkers(beforeFunc.markers, afterFunc.markers) {
 			signal := signalForMarker(marker)
 			for _, finding := range mappedFindings(mapped, key, signal, summarize(beforeFunc), summarize(afterFunc), "marker "+marker+" added", trigger) {
-				result.Findings = append(result.Findings, finding)
+				weakened = append(weakened, finding)
 			}
 			if len(mapped) == 0 {
-				result.Findings = append(result.Findings, Finding{
+				weakened = append(weakened, Finding{
 					Code: code(), Signal: signal, TestKey: key,
 					BeforeSummary: summarize(beforeFunc), AfterSummary: summarize(afterFunc),
 					Reason: "marker " + marker + " added", Confidence: Confidence, Trigger: trigger,
@@ -258,24 +279,37 @@ func (s *Service) evaluateFile(ctx context.Context, file FileDelta, mappings []T
 			}
 		}
 		if afterFunc.asserts < beforeFunc.asserts {
-			signal := SignalAssertionCountDecreased
+			signal := afterFunc.decSignal
+			if signal == "" {
+				signal = SignalAssertionCountDecreased
+			}
 			afterSummary := summarize(afterFunc)
 			if afterFunc.asserts == 0 {
-				signal = SignalAssertionRemoved
+				signal = afterFunc.zeroSignal
+				if signal == "" {
+					signal = SignalAssertionRemoved
+				}
 				if afterFunc.trivial {
 					signal = SignalAssertToNoop
 				}
 			}
 			for _, finding := range mappedFindings(mapped, key, signal, summarize(beforeFunc), afterSummary, "assertions decreased", trigger) {
-				result.Findings = append(result.Findings, finding)
+				weakened = append(weakened, finding)
 			}
 			if len(mapped) == 0 {
-				result.Findings = append(result.Findings, Finding{
+				weakened = append(weakened, Finding{
 					Code: code(), Signal: signal, TestKey: key,
 					BeforeSummary: summarize(beforeFunc), AfterSummary: afterSummary,
 					Reason: "assertions decreased", Confidence: Confidence, Trigger: trigger,
 				})
 			}
+		}
+		if suppressed(afterFunc) {
+			if len(weakened) > 0 {
+				result.Suppressions = append(result.Suppressions, Suppression{TestKey: key, Reason: "marked allow-test-weakening"})
+			}
+		} else {
+			result.Findings = append(result.Findings, weakened...)
 		}
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
@@ -288,6 +322,10 @@ func (s *Service) analyzerFor(language string) (analyzer, error) {
 	switch language {
 	case LanguagePython:
 		return s.python, nil
+	case LanguageTypeScript, LanguageTSX:
+		return s.typescript, nil
+	case LanguageJavaScript:
+		return s.javascript, nil
 	default:
 		return nil, invalidInput("evaluation needs a supported language, not " + language)
 	}
@@ -333,7 +371,11 @@ func blocks(mapping TestMapping, signal string) bool {
 }
 
 func summarize(function testFunc) string {
-	summary := "asserts " + strconv.Itoa(function.asserts)
+	unit := function.unit
+	if unit == "" {
+		unit = "asserts"
+	}
+	summary := unit + " " + strconv.Itoa(function.asserts)
 	if len(function.markers) > 0 {
 		summary += " markers [" + strings.Join(function.markers, ",") + "]"
 	}

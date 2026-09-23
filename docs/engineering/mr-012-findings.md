@@ -53,3 +53,40 @@ nitelendi.
 module-assert hepsi tutarlı).
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Expect-azalma/silme + skip varyantları + suite-skip + removal; cousin'lar sessiz (`TestEcma*`). |
+| AC-02.2 | Karşılandı | CRITICAL removal/disable blokluyor (suite-disable dahil); skip/decrease/high/inactive uyarıyor; bilinmeyen eşleme reddediliyor (`TestMapped*`, `TestPolicyMatrixBlocking`, `TestUnknown*`). |
+| AC-02.3 | Karşılandı | 4 trigger'da aynı bulgular, yalnız provenance farklı (`TestSharedServiceAcrossTriggers`). |
+| AC-02.4 | Karşılandı | Marker'lı bastırma listeli; markersiz sessiz (`TestEscapeHatchSuppressesLoudly`). |
+| AC-02.5 | Karşılandı | Politika matrisi testte; cousin-dışı bırakmalar belgeli (D-171 + bulgu). |
+
+**Tasarım notları:** suite-skip `disabled` sayılıyor (spec "removed/disabled"
+sertliği) — M6 ölü-kodu açığa çıkardı, politika yarısı canlandı; `it.only`/
+`xdescribe` şekil-dışı (sıkı `splitMember` + excluded-kümesi); bastırma
+ancak bastırılacak bulgu varsa listeleniyor.
+
+**Süreç notu (backup zamanlaması):** M6/M9/M10 restore'ları TASK-02
+ortasında alınmış backup'tan yapıldı; suite-disable satırı geri alındı,
+tam-suite FAIL ile yakalandı, satır yeniden uygulandı, backup tazelendi.
+Kural: oturum-içi davranış değişince backup tazelenir; restore sonrası
+*hedef test değil tam-suite* koşulur.
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M6 | policy'den TEST_DISABLED çıkarıldı | ilk varyant ölü-koddu (yeşil) → suite-disable canlı bağlantısı sonrası FAIL |
+| M7 | bilinmeyen-eşleme reddi kapatıldı | refusal testi FAIL |
+| M8 | bastırma-listesi kapatıldı | hatch testi FAIL |
+| M9 | şekil-kısıtı gevşetildi | cousin testi FAIL |
+| M10 | excluded-kümesi kapatıldı | cousin testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0, ikinci koşu — ilki `gofmt` düşürdü, düzeltildi). Test sayısı **1199**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
