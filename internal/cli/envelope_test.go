@@ -129,6 +129,11 @@ var exitForCode = map[app.Code]int{
 	app.CodeScopeDrift:         app.ExitFailed,
 	app.CodeUnregisteredChange: app.ExitFailed,
 	app.CodeReconcileAmbiguous: app.ExitFailed,
+
+	// MR-012's guard finding: well-formed request, row-dependent refusal —
+	// a weakened verification test is resolved by restoring the guard or
+	// recording an allowance, never by retrying.
+	app.CodeTestGuardWeakened: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible

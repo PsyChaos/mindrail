@@ -244,6 +244,14 @@ const (
 	// launder one task's edit as another's: the remedy names every
 	// candidate, and a human assigns.
 	CodeReconcileAmbiguous Code = "RECONCILE_AMBIGUOUS"
+
+	// CodeTestGuardWeakened marks a weakened verification test: removed
+	// assertions, added skip/xfail/disable markers, or a removed test that
+	// verified an invariant (spec §103, decision D-173). It is its own code
+	// because the threat is a green run that proves nothing: the remedy
+	// restores the guard or records an explicit allowance, and a removed
+	// CRITICAL verification test blocks completion.
+	CodeTestGuardWeakened Code = "TEST_GUARD_WEAKENED"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -292,6 +300,7 @@ var allCodes = sortedCodes([]Code{
 	CodeScopeDrift,
 	CodeUnregisteredChange,
 	CodeReconcileAmbiguous,
+	CodeTestGuardWeakened,
 })
 
 var codeSet = indexCodes(allCodes)
