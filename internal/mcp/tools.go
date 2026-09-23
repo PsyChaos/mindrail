@@ -48,7 +48,7 @@ func (s *Server) search(ctx context.Context, _ *sdk.CallToolRequest, in SearchIn
 	}
 	if limit <= 0 || limit > MaxSearchResults {
 		return nil, SearchOut{Results: []SearchHit{}, Refusal: NotImplemented(
-			"search limit above 50",
+			"search limit outside 1..50",
 			"limit 1..50",
 			"Retry search with a limit of at most 50.")}, nil
 	}

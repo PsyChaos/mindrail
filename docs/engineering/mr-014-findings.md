@@ -41,4 +41,16 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 düşürdü: kod sayacı 45→46, exit-class satırı, MCP-yasağı kaldırma;
 tamamı düzeltildi). Test sayısı **1219**.
 
-### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-01 kapı — Reader: 3 CONFIRMED + 2 REFUTED(harf); Breaker: 6 REFUTED + 2 not
+
+**Reader bulguları (kapatıldı):** AC-01.1 "altı tool" dondurulmuş harfe
+aykırı 4 kayıttı → decide/invariant refuse-stub olarak kaydedildi (ad +
+şema sabit, davranış TASK-02'de); AC-01.2 eşdeğerlik prose Seviyesindeydi →
+`status.Build` bayt-eşitlik pini eklendi (duration_ms hariç).
+
+**Breaker:** 6/6 REFUTED (limit-sıfır refuse, 65-hit cap doktrini, boş
+detail refuse, concurrent roots, kötü-root, bozuk-knowledge hepsi tutarlı).
+Notlar (kapatıldı): limit mesajı düzeltildi; cap-truncation totalsızlığı
+0.1 kısıtı olarak kayda geçti.
+
+**Karar:** TASK-01 KAPANDI.

@@ -1,16 +1,20 @@
 package mcp_test
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/mcp"
+	"github.com/PsyChaos/mindrail/internal/status"
 )
 
-// TestServerRegistersFourReadTools is TASK-01 AC-01.1 at this stage: the
-// SDK, the server and the four read tools with derived schemas. Decide and
-// invariant complete the six in TASK-02.
+// TestServerRegistersFourReadTools is TASK-01 AC-01.1: the SDK, the
+// server and all six tools with derived schemas — four serving, two
+// refusing stubs until TASK-02.
 func TestServerRegistersFourReadTools(t *testing.T) {
 	root := newTestRepo(t)
 	server := newTestServer(t, root)
@@ -19,6 +23,7 @@ func TestServerRegistersFourReadTools(t *testing.T) {
 	want := map[string]bool{
 		mcp.ToolBootstrap: false, mcp.ToolStatus: false,
 		mcp.ToolSearch: false, mcp.ToolContext: false,
+		mcp.ToolDecide: false, mcp.ToolInvariant: false,
 	}
 	for _, name := range names {
 		if _, ok := want[name]; !ok {
@@ -34,6 +39,17 @@ func TestServerRegistersFourReadTools(t *testing.T) {
 	out := callTool(t, server, "probe", mcp.ToolBootstrap, map[string]any{})
 	if out["worktree_root"] == "" || out["readiness"] == "" {
 		t.Fatalf("bootstrap = %+v", out)
+	}
+	for _, tool := range []string{mcp.ToolDecide, mcp.ToolInvariant} {
+		args := map[string]any{"title": "t", "decision": "d"}
+		if tool == mcp.ToolInvariant {
+			args = map[string]any{"mode": "active", "statement": "s"}
+		}
+		got := callTool(t, server, "probe", tool, args)
+		refusal, ok := got["refusal"].(map[string]any)
+		if !ok || refusal["code"] != "NOT_IMPLEMENTED_IN_THIS_VERSION" {
+			t.Fatalf("%s = %+v, want refusing stub", tool, got)
+		}
 	}
 }
 
@@ -64,7 +80,8 @@ func listToolNames(t *testing.T, server *mcp.Server, clientName string) []string
 
 // TestBootstrapAndStatusShareServices is TASK-01 AC-01.2: the status tool
 // returns the CLI's report shape from the same application services —
-// readiness plus the report body the CLI prints.
+// pinned by byte-equality with status.Build on the same subject, modulo
+// the measured duration.
 func TestBootstrapAndStatusShareServices(t *testing.T) {
 	root := newTestRepo(t)
 	server := newTestServer(t, root)
@@ -77,6 +94,31 @@ func TestBootstrapAndStatusShareServices(t *testing.T) {
 	if _, ok := status["components"]; !ok {
 		t.Fatalf("status = %+v, want the CLI report shape", status)
 	}
+	expected := buildStatusDirectly(t, root)
+	delete(status, "duration_ms")
+	delete(expected, "duration_ms")
+	if !reflect.DeepEqual(status, expected) {
+		t.Fatal("status tool output differs from status.Build on the same subject")
+	}
+}
+
+func buildStatusDirectly(t *testing.T, root string) map[string]any {
+	t.Helper()
+	application := bootstrap.New(bootstrap.Options{StartDir: root, Mode: bootstrap.ModeReadOnly})
+	if err := application.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = application.Shutdown(t.Context()) }()
+	report := status.Build(application.Subject(), 0)
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded
 }
 
 // TestSearchBindsRecords is TASK-01 AC-01.3: knowledge text matches and
