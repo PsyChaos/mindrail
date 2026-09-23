@@ -52,3 +52,16 @@ reddediliyor (fail-closed); pin eklendi (M6 kırmızı).
 Düzeltme: birebir-aynı denial'lar tekleniyor; pin eklendi (M7 kırmızı).
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | `TestCompletionKernelEndToEnd`: beyansız keşif→ambiguity-DENY (iki claimant adlandırıldı); override + taze evidence → ALLOW. `TestGateFamilyBeatsEndToEnd`: stale-evidence, guard-blocking ve orphaned aileleri gerçek kompozisyonla DENY. |
+| AC-02.2 | Karşılandı | Grep kanıtı: tek yeni kod (45); gate'de store/DB yok (saf composer); migration/komut yok (yalnız exit-class satırı). |
+| AC-02.3 | Karşılandı | M1…M8 defterde, tamamı kırmızı koşuldu. TASK-02 yeni guard eklemiyor (kompozisyon testleri) — mutasyon borcu yok. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1215**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
