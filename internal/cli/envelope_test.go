@@ -41,6 +41,7 @@ var exitForCode = map[app.Code]int{
 	app.CodeBareRepository:              app.ExitUsage,
 	app.CodeCommandLineInvalid:          app.ExitUsage,
 	app.CodeConfigInvalid:               app.ExitUsage,
+	app.CodeNotImplementedInThisVersion: app.ExitUsage,
 	app.CodePathEscapesRoot:             app.ExitUsage,
 	app.CodePathNotRepresentable:        app.ExitUsage,
 	app.CodeGitUnavailable:              app.ExitUnavailable,

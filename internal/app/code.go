@@ -260,6 +260,14 @@ const (
 	// for: the remedy runs the named profile, and the reason tells missing
 	// apart from stale.
 	CodeRequiredEvidenceNotCurrent Code = "REQUIRED_EVIDENCE_NOT_CURRENT"
+
+	// CodeNotImplementedInThisVersion marks a well-formed tool value the
+	// 0.1 surface defers: full detail, drill-down pagination, candidate
+	// invariants (decision D-189). It is its own code because the request
+	// is valid and retryable with supported values — actionable like
+	// usage, never a failure of the run: every refusal names the next
+	// action instead of dropping the value silently.
+	CodeNotImplementedInThisVersion Code = "NOT_IMPLEMENTED_IN_THIS_VERSION"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -310,6 +318,7 @@ var allCodes = sortedCodes([]Code{
 	CodeReconcileAmbiguous,
 	CodeTestGuardWeakened,
 	CodeRequiredEvidenceNotCurrent,
+	CodeNotImplementedInThisVersion,
 })
 
 var codeSet = indexCodes(allCodes)

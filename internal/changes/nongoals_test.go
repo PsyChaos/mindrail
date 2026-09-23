@@ -27,9 +27,10 @@ func moduleRoot(t *testing.T) string {
 
 // TestNoLaterMilestoneMachinery scans import paths the way the task list
 // asks: impact traversal, evidence binding, coverage mapping, semantic
-// resolvers, MCP transport and HTTP remoting must not exist as code —
-// comments may name them, imports may not. Test files are excluded: fixtures
-// may reference anything, production may not.
+// resolvers and HTTP remoting must not exist as code — comments may name
+// them, imports may not. Test files are excluded: fixtures may reference
+// anything, production may not. MCP transport was on this list until
+// MR-014 built it deliberately; it is covered by contract tests now.
 func TestNoLaterMilestoneMachinery(t *testing.T) {
 	root := moduleRoot(t)
 	// knowledge/cli deliberately absent: bootstrap, doctor and the root
@@ -39,7 +40,7 @@ func TestNoLaterMilestoneMachinery(t *testing.T) {
 	// command surface is pinned separately.
 	banned := []string{
 		"impact", "evidence", "coverage", "semantic",
-		"/mcp", "mcp/", "net/http",
+		"net/http",
 	}
 	var violations []string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -80,10 +81,10 @@ func TestNoLaterMilestoneMachinery(t *testing.T) {
 }
 
 // TestNoNewCodesIn01 pins the 0.1 code vocabulary: MR-008 added the three
-// attribution codes, MR-012 the guard code, MR-013 the evidence code;
-// further enforcement codes arrive later, never here.
+// attribution codes, MR-012 the guard code, MR-013 the evidence code,
+// MR-014 the version-gap code; further codes arrive later, never here.
 func TestNoNewCodesIn01(t *testing.T) {
-	if got := len(app.RegisteredCodes()); got != 45 {
-		t.Fatalf("registered codes = %d, want 45 (three attribution codes in MR-008, one guard code in MR-012, one evidence code in MR-013)", got)
+	if got := len(app.RegisteredCodes()); got != 46 {
+		t.Fatalf("registered codes = %d, want 46 (three attribution codes in MR-008, one guard code in MR-012, one evidence code in MR-013, one version-gap code in MR-014)", got)
 	}
 }
