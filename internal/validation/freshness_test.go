@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/validation"
@@ -198,6 +199,70 @@ func TestCheckMalformedProvenanceStales(t *testing.T) {
 	}
 }
 
+// TestCheckReadOnlyPinsNoWrites is TASK-01 AC-01.5 on the letter: the
+// evidence table's full contents are identical before and after Check.
+func TestCheckReadOnlyPinsNoWrites(t *testing.T) {
+	fx := newEvidenceFixture(t)
+	redactor, err := validation.NewRedactor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "print(1)\n")
+	snapshot, err := validation.SnapshotScope(root, []string{"tests"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.store.Record(t.Context(), "test", "AUTOMATED_TEST", []string{"echo", "hi"},
+		validation.Result{Status: validation.StatusPass}, snapshot.Hash,
+		provenanceForTest(t, "test", snapshot.Scope), "OP-RO", redactor); err != nil {
+		t.Fatal(err)
+	}
+	dump := func() string {
+		t.Helper()
+		rows, err := fx.db.DB.QueryContext(t.Context(), `SELECT evidence_id, profile, type,
+			command_argv, status, exit_code, output, snapshot_hash, provenance,
+			created_at, operation_id, request_hash FROM evidence ORDER BY evidence_id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var sb strings.Builder
+		for rows.Next() {
+			var id, profile, typ, argv, status, output, snap, prov, created, op, hash string
+			var code int
+			if err := rows.Scan(&id, &profile, &typ, &argv, &status, &code, &output,
+				&snap, &prov, &created, &op, &hash); err != nil {
+				t.Fatal(err)
+			}
+			sb.WriteString(id + profile + typ + argv + status + output + snap + prov + created + op + hash)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return sb.String()
+	}
+	var countBefore int
+	if err := fx.db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM evidence`).Scan(&countBefore); err != nil {
+		t.Fatal(err)
+	}
+	before := dump()
+	rows := []validation.Evidence{{
+		ID: "EVD-1", Profile: "test", SnapshotHash: snapshot.Hash,
+		Provenance: provenanceForTest(t, "test", snapshot.Scope),
+	}}
+	if _, _, err := validation.Check(root, rows, []string{"test"}); err != nil {
+		t.Fatal(err)
+	}
+	var countAfter int
+	if err := fx.db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM evidence`).Scan(&countAfter); err != nil {
+		t.Fatal(err)
+	}
+	if countBefore != countAfter || before != dump() {
+		t.Fatal("Check wrote to evidence")
+	}
+}
+
 // TestCheckIsDeterministic pins the no-storage rule behaviorally: Check
 // takes values and touches no database, so repeated checks agree exactly.
 func TestCheckIsDeterministic(t *testing.T) {
@@ -216,4 +281,82 @@ func TestCheckIsDeterministic(t *testing.T) {
 	if !reflect.DeepEqual(firstV, secondV) || !reflect.DeepEqual(firstC, secondC) {
 		t.Fatalf("check is not deterministic:\n%+v\n%+v", firstV, secondV)
 	}
+}
+
+// TestCheckDedupesScopesAndCleansRoots pins the Breaker-divergence guards:
+// duplicated scope paths hash like SnapshotScope (which dedupes at record),
+// and a trailing-slash root checks like its clean form.
+func TestCheckDedupesScopesAndCleansRoots(t *testing.T) {
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "print(1)\n")
+	row := evidenceRow(t, "EVD-1", "test", root, []string{"tests"})
+	dup := row
+	dup.ID = "EVD-2"
+	dup.Provenance = provenanceForTest(t, "test", append(append([]string{}, rowScope(t, row)...), rowScope(t, row)...))
+
+	for _, checkRoot := range []string{root, root + "/"} {
+		verdicts, _, err := validation.Check(checkRoot, []validation.Evidence{row, dup}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, verdict := range verdicts {
+			if verdict.Status != validation.FreshCurrent {
+				t.Fatalf("root %q verdict = %+v", checkRoot, verdict)
+			}
+		}
+	}
+}
+
+// TestCheckEmptyScopeNeedsEmptyHash pins the vacuous-current edge: an
+// empty scope is current only beside the hash of nothing.
+func TestCheckEmptyScopeNeedsEmptyHash(t *testing.T) {
+	root := t.TempDir()
+	empty := validation.Evidence{ID: "EVD-E", Profile: "test",
+		SnapshotHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Provenance:   provenanceForTest(t, "test", []string{})}
+	junk := empty
+	junk.ID = "EVD-J"
+	junk.SnapshotHash = "junk"
+
+	verdicts, _, err := validation.Check(root, []validation.Evidence{empty, junk}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdicts[0].Status != validation.FreshCurrent {
+		t.Fatalf("recorded-empty = %+v", verdicts[0])
+	}
+	if verdicts[1].Status != validation.FreshStale {
+		t.Fatalf("malformed-empty = %+v", verdicts[1])
+	}
+}
+
+// TestCheckStaleReasonNamesSnapshot pins the non-vacuous gap: a content
+// change names the snapshot it differs from instead of an empty path.
+func TestCheckStaleReasonNamesSnapshot(t *testing.T) {
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "print(1)\n")
+	row := evidenceRow(t, "EVD-1", "test", root, []string{"tests"})
+	writeScopeFile(t, root, "tests/a.py", "print(2)\n")
+
+	verdicts, _, err := validation.Check(root, []validation.Evidence{row}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdicts[0].Status != validation.FreshStale {
+		t.Fatalf("verdict = %+v", verdicts[0])
+	}
+	if !strings.Contains(verdicts[0].Reason, row.SnapshotHash[:12]) {
+		t.Fatalf("reason = %q, want the snapshot named", verdicts[0].Reason)
+	}
+}
+
+func rowScope(t *testing.T, row validation.Evidence) []string {
+	t.Helper()
+	var decoded struct {
+		Scope []string `json:"scope"`
+	}
+	if err := json.Unmarshal([]byte(row.Provenance), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded.Scope
 }

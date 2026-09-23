@@ -54,6 +54,7 @@ type Coverage struct {
 // same core as SnapshotScope; scope escaping root, missing or unreadable
 // files, and unparseable provenance all fail safe to stale.
 func Check(root string, rows []Evidence, required []string) (verdicts []Verdict, coverage Coverage, err error) {
+	root = filepath.Clean(root)
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, Coverage{}, invalidInput("freshness check needs an absolute root")
 	}
@@ -70,7 +71,7 @@ func Check(root string, rows []Evidence, required []string) (verdicts []Verdict,
 		if !ok {
 			verdict.Status = FreshStale
 			verdict.Reason = "provenance scope unreadable"
-		} else if current, gap, hashErr := rehashScope(root, scope); hashErr != "" {
+		} else if current, hashErr := rehashScope(root, scope); hashErr != "" {
 			verdict.Status = FreshStale
 			verdict.Reason = hashErr
 			verdict.CurrentHash = current
@@ -81,7 +82,7 @@ func Check(root string, rows []Evidence, required []string) (verdicts []Verdict,
 				verdict.Reason = "scope re-hashes equal over " + strconv.Itoa(len(scope)) + " files"
 			} else {
 				verdict.Status = FreshStale
-				verdict.Reason = "scope changed under " + gap
+				verdict.Reason = "scope content differs from snapshot " + shortHash(row.SnapshotHash)
 			}
 		}
 		verdicts = append(verdicts, verdict)
@@ -131,26 +132,43 @@ func provenanceScope(provenance string) ([]string, bool) {
 }
 
 // rehashScope re-hashes stored absolute scope paths under root with the
-// SnapshotScope core. It returns the hash, the first gap path for reasons,
-// and the stale reason (empty when hashable). Escapes, missing files and
-// unreadable content fail safe: partial reads never report current.
-func rehashScope(root string, scope []string) (hash, gap, reason string) {
+// SnapshotScope core. It returns the hash and the stale reason (empty when
+// hashable). Escapes, missing files and unreadable content fail safe:
+// partial reads never report current. Duplicated paths dedupe here exactly
+// as SnapshotScope dedupes at record time.
+func rehashScope(root string, scope []string) (hash, reason string) {
 	var files []string
+	seen := map[string]bool{}
 	for _, path := range scope {
 		clean := filepath.Clean(path)
 		if clean != root && !strings.HasPrefix(clean, root+string(filepath.Separator)) {
-			return "", path, "scope escapes the root: " + path
+			return "", "scope escapes the root: " + path
 		}
 		info, err := os.Lstat(clean)
 		if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return "", path, "scope unreadable: " + path
+			return "", "scope unreadable: " + path
 		}
-		files = append(files, clean)
+		if !seen[clean] {
+			seen[clean] = true
+			files = append(files, clean)
+		}
 	}
 	sort.Strings(files)
 	hash, err := hashFiles(root, files)
 	if err != nil {
-		return "", files[0], "scope unreadable: " + err.Error()
+		return "", "scope unreadable: " + err.Error()
 	}
-	return hash, "", ""
+	// An empty scope hashes to the sha256 of nothing: equal only with a row
+	// recorded empty, so malformed rows (empty or garbage stored hash)
+	// still stale while legitimately empty scopes stay current. The
+	// equality in Check decides; no special case needed.
+	return hash, ""
+}
+
+// shortHash names a hash without printing all 64 hexits into a reason.
+func shortHash(hash string) string {
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
 }
