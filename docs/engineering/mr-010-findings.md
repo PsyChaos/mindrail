@@ -118,3 +118,16 @@ gereği kanonik), symlink-scope boş-hash (deterministik), boş-op çift satır
 (tasarım), race-tek-satır (doğrulandı).
 
 **Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı (kapıda) | `make verify` + `make tidy-check` + sayı aşağıda. |
+| AC-03.2 | Karşılandı | Grep kanıtı: spawn yolunda shell yok; kod 43; env'i okuyan tek yer redactor (değer saklanmıyor); knowledge `decision`/`invariant` dışında tür yok. |
+| AC-03.3 | Karşılandı (kapıda) | M1…M11 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1174**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
