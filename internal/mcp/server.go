@@ -72,43 +72,8 @@ func (s *Server) registerReads() {
 	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolStatus, Description: "Readiness report for the repository."}, s.status)
 	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolSearch, Description: "Search knowledge records and declarations."}, s.search)
 	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolContext, Description: "Aggregated repository context at a detail level."}, s.context)
-	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolDecide, Description: "Record a decision. Not implemented in this version."}, s.decideStub)
-	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolInvariant, Description: "Record an invariant. Not implemented in this version."}, s.invariantStub)
-}
-
-// DecideIn and InvariantIn are the TASK-02 input shapes, frozen early so
-// the six-tool registry is stable from the start; TASK-01 refuses every
-// call through them.
-type DecideIn struct {
-	Title    string `json:"title"`
-	Decision string `json:"decision"`
-}
-
-type DecideOut struct {
-	Refusal *Refusal `json:"refusal,omitempty"`
-}
-
-type InvariantIn struct {
-	Mode      string `json:"mode"`
-	Statement string `json:"statement"`
-}
-
-type InvariantOut struct {
-	Refusal *Refusal `json:"refusal,omitempty"`
-}
-
-func (s *Server) decideStub(_ context.Context, _ *sdk.CallToolRequest, _ DecideIn) (*sdk.CallToolResult, DecideOut, error) {
-	return nil, DecideOut{Refusal: NotImplemented(
-		"decision recording",
-		"read tools in 0.1",
-		"Read decisions with search and context; recording arrives after this version.")}, nil
-}
-
-func (s *Server) invariantStub(_ context.Context, _ *sdk.CallToolRequest, _ InvariantIn) (*sdk.CallToolResult, InvariantOut, error) {
-	return nil, InvariantOut{Refusal: NotImplemented(
-		"invariant recording",
-		"read tools in 0.1",
-		"Read invariants with search and context; recording arrives after this version.")}, nil
+	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolDecide, Description: "Record a decision."}, s.decide)
+	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolInvariant, Description: "Record an active invariant."}, s.invariant)
 }
 
 // BootstrapOut is session-start state: where everything lives and whether

@@ -54,3 +54,34 @@ Notlar (kapatıldı): limit mesajı düzeltildi; cap-truncation totalsızlığı
 0.1 kısıtı olarak kayda geçti.
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Validate + persist + loader-readback (filename==id) + max+1 (`TestDecideRoundTrips`). |
+| AC-02.2 | Karşılandı | Active round-trip + candidate/empty/missing refuse'ları (`TestInvariantActiveRoundTrips`). |
+| AC-02.3 | Karşılandı | Full deferred matrisi + over-limit, hepsi kodlu + next_action'lı (read + write testleri). |
+| AC-02.4 | Karşılandı | İki farklı kimlik, aynı şema + aynı sonuçlar, 6 tool (`TestTwoClientsAgree`). |
+| AC-02.5 | Karşılandı | Hata/red cevaplarında değer yankısı yok (`TestDiagnosticsEchoNamesOnly`). |
+
+**Tasarım notları:** severity/scope ön-kontrol kaldırıldı (record
+validasyonu tek kaynak); O_EXCL yarış-zırhı deterministik pinlenemiyor
+(tahsis hep max+1 seçer — best-effort, kayıtlı); stub assertion'ları
+TASK-02 ile emekli.
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M6 | tahsis max+1 → max | round-trip testi FAIL (çakışma) |
+| M7 | mode-kontrolü kapatıldı | invariant testi FAIL |
+| M8 | uzantısız dosya adı | round-trip testi FAIL (loader okumuyor) |
+| M9 | next_action boşaltıldı | ilk pin yeşil kaldı → len assertion'ı eklendi, FAIL |
+| M10 | id-dolgu kaldırıldı | round-trip testi FAIL (ID deseni) |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1223**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

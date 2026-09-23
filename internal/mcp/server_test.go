@@ -40,17 +40,6 @@ func TestServerRegistersFourReadTools(t *testing.T) {
 	if out["worktree_root"] == "" || out["readiness"] == "" {
 		t.Fatalf("bootstrap = %+v", out)
 	}
-	for _, tool := range []string{mcp.ToolDecide, mcp.ToolInvariant} {
-		args := map[string]any{"title": "t", "decision": "d"}
-		if tool == mcp.ToolInvariant {
-			args = map[string]any{"mode": "active", "statement": "s"}
-		}
-		got := callTool(t, server, "probe", tool, args)
-		refusal, ok := got["refusal"].(map[string]any)
-		if !ok || refusal["code"] != "NOT_IMPLEMENTED_IN_THIS_VERSION" {
-			t.Fatalf("%s = %+v, want refusing stub", tool, got)
-		}
-	}
 }
 
 func listToolNames(t *testing.T, server *mcp.Server, clientName string) []string {
@@ -146,7 +135,8 @@ func TestSearchBindsRecords(t *testing.T) {
 	if !ok || refusal["code"] != "NOT_IMPLEMENTED_IN_THIS_VERSION" {
 		t.Fatalf("over-limit = %+v, want loud refusal", limited)
 	}
-	if _, ok := refusal["next_action"]; !ok {
+	actions, ok := refusal["next_action"].([]any)
+	if !ok || len(actions) == 0 {
 		t.Fatalf("refusal without next_action: %+v", refusal)
 	}
 	empty := callTool(t, server, "probe", mcp.ToolSearch, map[string]any{"query": "no-such-thing-xyz"})
