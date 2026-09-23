@@ -29,9 +29,26 @@ korur; gereksinim veya tasarımın yerine geçmez.
 | M3 | kod kayıt dışı bırakıldı | registry + exit-class testleri FAIL |
 | M4 | sıralama kaldırıldı | idempotency sıra-testi FAIL |
 | M5 | attribution-blocking filtresi kapatıldı | allows testi FAIL |
+| M6 | boş-bulgu reddi kapatıldı (kapı bulgusu) | refusal testi FAIL |
+| M7 | dedupe kaldırıldı (kapı bulgusu) | dedupe testi FAIL |
+| M8 | ambiguous-dalı kaldırıldı (kapı bulgusu) | ambiguous testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1210**.
 
-### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-01 kapı — Reader: 5/5 CONFIRMED + gaps; Breaker: 3 REFUTED + 3 BROKEN→KAPANDI
+
+**Reader gaps (kapatıldı):** binding-ambiguous yolu pinsizdi → test eklendi;
+`"ambiguous"` literali → `index.BindingAmbiguous` sabiti; M-ledger
+doğrulanamaz kaydı not edildi.
+
+**Breaker B-1/B-2 (boş-bulgular, KAPATILDI):** boş blocking finding'ler
+belirsiz denial üretiyordu. Düzeltme: `Evaluate` artık `(Decision, error)`
+dönüyor — boş blocking bulgu ve bilinmeyen binding statüsü yüksek sesle
+reddediliyor (fail-closed); pin eklendi (M6 kırmızı).
+
+**Breaker B-3 (dup-denial, KAPATILDI):** aynı denial iki kez listeleniyordu.
+Düzeltme: birebir-aynı denial'lar tekleniyor; pin eklendi (M7 kırmızı).
+
+**Karar:** TASK-01 KAPANDI.

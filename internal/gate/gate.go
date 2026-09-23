@@ -8,6 +8,7 @@ package gate
 import (
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/changes"
@@ -76,13 +77,28 @@ func New() *Service {
 
 // Evaluate collects denials in fixed family order, sorts for byte
 // stability, and allows iff none remain. Pure: no I/O, no clock.
-func (s *Service) Evaluate(input Input) Decision {
+// Malformed blocking inputs (vacuous findings, unknown binding statuses)
+// refuse loudly instead of denying vaguely or passing silently: a safety
+// gate must never launder caller garbage in either direction.
+func (s *Service) Evaluate(input Input) (Decision, error) {
 	var denials []Denial
-	denials = append(denials, invariantDenials(input.Bindings)...)
+	invariant, err := invariantDenials(input.Bindings)
+	if err != nil {
+		return Decision{}, err
+	}
+	denials = append(denials, invariant...)
 	denials = append(denials, ambiguityDenials(input.Ambiguities)...)
-	denials = append(denials, attributionDenials(input.Attribution)...)
+	attribution, err := attributionDenials(input.Attribution)
+	if err != nil {
+		return Decision{}, err
+	}
+	denials = append(denials, attribution...)
 	denials = append(denials, evidenceDenials(input.Coverage)...)
-	denials = append(denials, guardDenials(input.Guard)...)
+	guard, err := guardDenials(input.Guard)
+	if err != nil {
+		return Decision{}, err
+	}
+	denials = append(denials, guard...)
 	sort.Slice(denials, func(i, j int) bool {
 		if denials[i].Code != denials[j].Code {
 			return denials[i].Code < denials[j].Code
@@ -92,10 +108,28 @@ func (s *Service) Evaluate(input Input) Decision {
 		}
 		return denials[i].Reason < denials[j].Reason
 	})
-	return Decision{Allow: len(denials) == 0, Denials: denials}
+	denials = dedupe(denials)
+	return Decision{Allow: len(denials) == 0, Denials: denials}, nil
 }
 
-func invariantDenials(bindings []InvariantBlock) []Denial {
+// dedupe collapses byte-identical denials: drivers may report one fact
+// twice, but the decision lists it once.
+func dedupe(denials []Denial) []Denial {
+	seen := map[string]bool{}
+	var out []Denial
+	for _, denial := range denials {
+		flat := string(denial.Code) + "\x00" + denial.Reason + "\x00" + denial.Key + "\x00" +
+			denial.Provenance + "\x00" + strings.Join(denial.NextAction, "\x00")
+		if seen[flat] {
+			continue
+		}
+		seen[flat] = true
+		out = append(out, denial)
+	}
+	return out
+}
+
+func invariantDenials(bindings []InvariantBlock) ([]Denial, error) {
 	var out []Denial
 	for _, binding := range bindings {
 		if binding.Status == index.BindingBound || !binding.Active || !hardSeverity(binding.Severity) {
@@ -104,10 +138,14 @@ func invariantDenials(bindings []InvariantBlock) []Denial {
 		code := app.CodeOrphanedProtectedSymbol
 		reason := "protected symbol has no confident heir"
 		remedy := "migrate, supersede or retire the invariant explicitly"
-		if binding.Status == "ambiguous" {
+		switch binding.Status {
+		case index.BindingOrphaned:
+		case index.BindingAmbiguous:
 			code = app.CodeSymbolIdentityAmbiguous
 			reason = "protected symbol identity cannot be settled"
 			remedy = "assign the identity explicitly among the candidates"
+		default:
+			return nil, invalidInput("unknown binding status: " + binding.Status)
 		}
 		out = append(out, Denial{
 			Code:       code,
@@ -117,7 +155,7 @@ func invariantDenials(bindings []InvariantBlock) []Denial {
 			NextAction: []string{remedy + " for " + binding.InvariantID + "."},
 		})
 	}
-	return out
+	return out, nil
 }
 
 func ambiguityDenials(ambiguities []Ambiguity) []Denial {
@@ -137,11 +175,14 @@ func ambiguityDenials(ambiguities []Ambiguity) []Denial {
 	return out
 }
 
-func attributionDenials(findings []changes.Finding) []Denial {
+func attributionDenials(findings []changes.Finding) ([]Denial, error) {
 	var out []Denial
 	for _, finding := range findings {
 		if !finding.Blocking {
 			continue
+		}
+		if finding.Code == "" || finding.Provenance.ChangeKey == "" {
+			return nil, invalidInput("blocking attribution finding without code or key")
 		}
 		out = append(out, Denial{
 			Code:       finding.Code,
@@ -151,7 +192,7 @@ func attributionDenials(findings []changes.Finding) []Denial {
 			NextAction: finding.NextAction,
 		})
 	}
-	return out
+	return out, nil
 }
 
 func evidenceDenials(coverage validation.Coverage) []Denial {
@@ -178,11 +219,14 @@ func evidenceDenials(coverage validation.Coverage) []Denial {
 	return out
 }
 
-func guardDenials(findings []testguard.Finding) []Denial {
+func guardDenials(findings []testguard.Finding) ([]Denial, error) {
 	var out []Denial
 	for _, finding := range findings {
 		if !finding.Blocking {
 			continue
+		}
+		if finding.TestKey == "" {
+			return nil, invalidInput("blocking guard finding without test key")
 		}
 		out = append(out, Denial{
 			Code:       app.CodeTestGuardWeakened,
@@ -192,9 +236,14 @@ func guardDenials(findings []testguard.Finding) []Denial {
 			NextAction: []string{"Restore the weakened test or record an explicit allowance for " + finding.TestKey + "."},
 		})
 	}
-	return out
+	return out, nil
 }
 
 func hardSeverity(severity string) bool {
 	return severity == "HIGH" || severity == "CRITICAL"
+}
+
+func invalidInput(why string) error {
+	return app.NewError(app.CodeCommandLineInvalid, app.KindUsage, why,
+		"No completion facts were changed.", "Pass valid bindings, findings and coverage.")
 }

@@ -23,7 +23,7 @@ func denyCodes(decision gate.Decision) []app.Code {
 // each denial carrying its deterministic code, provenance and next_action.
 func TestGateDeniesPerFamily(t *testing.T) {
 	service := gate.New()
-	decision := service.Evaluate(gate.Input{
+	decision := evaluate(t, service, gate.Input{
 		Bindings: []gate.InvariantBlock{{
 			InvariantID: "INV-1", UID: "SYM-1", Status: "orphaned",
 			Severity: "CRITICAL", Active: true,
@@ -76,11 +76,11 @@ func TestGateDeniesPerFamily(t *testing.T) {
 // coverage, bound bindings) never deny.
 func TestGateAllowsClean(t *testing.T) {
 	service := gate.New()
-	clean := service.Evaluate(gate.Input{})
+	clean := evaluate(t, service, gate.Input{})
 	if !clean.Allow || len(clean.Denials) != 0 {
 		t.Fatalf("empty = %+v", clean)
 	}
-	warnings := service.Evaluate(gate.Input{
+	warnings := evaluate(t, service, gate.Input{
 		Bindings: []gate.InvariantBlock{{
 			InvariantID: "INV-1", UID: "SYM-1", Status: "bound",
 			Severity: "CRITICAL", Active: true,
@@ -108,7 +108,7 @@ func TestGateAllowsClean(t *testing.T) {
 // ambiguities without active HIGH/CRITICAL scope stay outside the gate.
 func TestGateSeverityGatePinsWarnScope(t *testing.T) {
 	service := gate.New()
-	decision := service.Evaluate(gate.Input{
+	decision := evaluate(t, service, gate.Input{
 		Bindings: []gate.InvariantBlock{
 			{InvariantID: "INV-1", UID: "SYM-1", Status: "orphaned", Severity: "MEDIUM", Active: true},
 			{InvariantID: "INV-2", UID: "SYM-2", Status: "orphaned", Severity: "CRITICAL", Active: false},
@@ -139,8 +139,8 @@ func TestGateDecisionIdempotent(t *testing.T) {
 			ReRun:     []validation.ReRunItem{{Profile: "test", Reason: "scope changed"}},
 		},
 	}
-	first := service.Evaluate(input)
-	second := service.Evaluate(input)
+	first := evaluate(t, service, input)
+	second := evaluate(t, service, input)
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("decisions differ:\n%+v\n%+v", first, second)
 	}
@@ -160,7 +160,7 @@ func TestGateDecisionIdempotent(t *testing.T) {
 			ReRun:     []validation.ReRunItem{{Profile: "test", Reason: "scope changed"}},
 		},
 	}
-	third := service.Evaluate(reordered)
+	third := evaluate(t, service, reordered)
 	if !reflect.DeepEqual(first, third) {
 		t.Fatalf("order leaks:\n%+v\n%+v", first, third)
 	}
@@ -170,5 +170,72 @@ func TestGateDecisionIdempotent(t *testing.T) {
 func TestEvidenceCodeRegistered(t *testing.T) {
 	if !app.IsRegistered(app.CodeRequiredEvidenceNotCurrent) {
 		t.Fatal("REQUIRED_EVIDENCE_NOT_CURRENT is not registered")
+	}
+}
+
+func evaluate(t *testing.T, service *gate.Service, input gate.Input) gate.Decision {
+	t.Helper()
+	decision, err := service.Evaluate(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decision
+}
+
+// TestGateRefusesVacuousBlocking is the Breaker close-out: blocking
+// findings without code/key and unknown binding statuses refuse loudly
+// instead of denying vaguely or passing silently.
+func TestGateRefusesVacuousBlocking(t *testing.T) {
+	service := gate.New()
+	if _, err := service.Evaluate(gate.Input{
+		Attribution: []changes.Finding{{Blocking: true}},
+	}); err == nil {
+		t.Fatal("vacuous attribution accepted")
+	}
+	if _, err := service.Evaluate(gate.Input{
+		Guard: []testguard.Finding{{Blocking: true}},
+	}); err == nil {
+		t.Fatal("vacuous guard accepted")
+	}
+	if _, err := service.Evaluate(gate.Input{
+		Bindings: []gate.InvariantBlock{{
+			InvariantID: "INV-1", UID: "SYM-1", Status: "haunted",
+			Severity: "CRITICAL", Active: true,
+		}},
+	}); err == nil {
+		t.Fatal("unknown status accepted")
+	}
+}
+
+// TestGateDedupesIdenticalDenials pins one listing per fact: a driver
+// reporting one binding twice still decides a single denial.
+func TestGateDedupesIdenticalDenials(t *testing.T) {
+	service := gate.New()
+	block := gate.InvariantBlock{
+		InvariantID: "INV-1", UID: "SYM-1", Status: "orphaned",
+		Severity: "CRITICAL", Active: true,
+	}
+	decision := evaluate(t, service, gate.Input{Bindings: []gate.InvariantBlock{block, block}})
+	if decision.Allow || len(decision.Denials) != 1 {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+// TestGateAmbiguousBindingDenies pins the Reader-noted path: an ambiguous
+// binding under an active CRITICAL invariant denies with the identity
+// code, not the orphan code.
+func TestGateAmbiguousBindingDenies(t *testing.T) {
+	service := gate.New()
+	decision := evaluate(t, service, gate.Input{
+		Bindings: []gate.InvariantBlock{{
+			InvariantID: "INV-1", UID: "SYM-1", Status: "ambiguous",
+			Severity: "CRITICAL", Active: true,
+		}},
+	})
+	if decision.Allow || len(decision.Denials) != 1 {
+		t.Fatalf("decision = %+v", decision)
+	}
+	if decision.Denials[0].Code != app.CodeSymbolIdentityAmbiguous {
+		t.Fatalf("code = %q", decision.Denials[0].Code)
 	}
 }
