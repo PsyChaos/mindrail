@@ -155,3 +155,44 @@ func TestOperationIDReplay(t *testing.T) {
 		t.Fatal("conflicting retry accepted")
 	}
 }
+
+// TestRecordRedactsJSONHostileSecrets is Breaker B-3's repro as a pin:
+// secrets containing JSON syntax (quotes, backslashes) are redacted
+// element-wise before marshal, so escaping can never defeat the match —
+// and pattern-shaped argv still records instead of aborting.
+func TestRecordRedactsJSONHostileSecrets(t *testing.T) {
+	t.Setenv("MR010_QUOTE_SECRET", `say "hi`)
+	t.Setenv("MR010_SLASH_SECRET", `back\slash`)
+	fx := newEvidenceFixture(t)
+	redactor, err := validation.NewRedactor([]string{"MR010_QUOTE_SECRET", "MR010_SLASH_SECRET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted, err := fx.store.Record(t.Context(), "test", "AUTOMATED_TEST",
+		[]string{"echo", `say "hi`},
+		validation.Result{Status: validation.StatusPass}, "snap", "{}", "OP-Q", redactor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quoted.Argv) != 2 || quoted.Argv[1] != validation.Redacted {
+		t.Fatalf("quoted argv = %+v", quoted.Argv)
+	}
+	slashed, err := fx.store.Record(t.Context(), "test", "AUTOMATED_TEST",
+		[]string{"run", `back\slash`},
+		validation.Result{Status: validation.StatusPass}, "snap", "{}", "OP-S", redactor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slashed.Argv[1] != validation.Redacted {
+		t.Fatalf("slashed argv = %+v", slashed.Argv)
+	}
+	shaped, err := fx.store.Record(t.Context(), "test", "AUTOMATED_TEST",
+		[]string{"deploy", "password=hunter2"},
+		validation.Result{Status: validation.StatusPass}, "snap", "{}", "OP-P", redactor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shaped.Argv[1] != validation.Redacted {
+		t.Fatalf("shaped argv = %+v", shaped.Argv)
+	}
+}

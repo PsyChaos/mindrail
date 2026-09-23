@@ -105,11 +105,14 @@ type Evidence struct {
 }
 
 // Record stores one evidence row. Redaction applies to output AND argv
-// before insert: a secret passed as an argument must not survive in the
-// command record (AC-24). Operation-id replay mirrors D-121: the same id
-// with the same request hash returns the stored row without a new write;
-// the same id with a different hash is a conflict, never a second row. An
-// empty operation id records without idempotency.
+// before insert: argv is redacted element-wise (never as serialized JSON,
+// where escaping would defeat literal matching — Breaker B-3), so a secret
+// passed as an argument cannot survive in the command record (AC-24). The
+// request hash covers the raw argv: a retry is the same run only with the
+// same words. Operation-id replay mirrors D-121: the same id with the same
+// request hash returns the stored row without a new write; the same id with
+// a different hash is a conflict, never a second row. An empty operation id
+// records without idempotency.
 func (s *Store) Record(ctx context.Context, profile, typ string, argv []string, result Result, snapshotHash, provenance, operationID string, redactor *Redactor) (Evidence, error) {
 	if profile == "" || typ == "" || len(argv) == 0 || snapshotHash == "" {
 		return Evidence{}, invalidInput("evidence needs a profile, a type, a command and a snapshot")
@@ -133,10 +136,19 @@ func (s *Store) Record(ctx context.Context, profile, typ string, argv []string, 
 		}
 	}
 	now := app.FormatTime(s.clock.Now())
+	redactedArgv := make([]string, len(argv))
+	for i, word := range argv {
+		redactedArgv[i] = redactor.Redact(word)
+	}
+	redactedJSON, err := json.Marshal(redactedArgv)
+	if err != nil {
+		return Evidence{}, invalidInput("evidence command is not representable")
+	}
 	record := Evidence{
 		ID:           identity.NewID("EVD"),
 		Profile:      profile,
 		Type:         typ,
+		Argv:         redactedArgv,
 		Status:       result.Status,
 		ExitCode:     result.ExitCode,
 		Output:       redactor.Redact(result.Stdout + result.Stderr),
@@ -145,17 +157,13 @@ func (s *Store) Record(ctx context.Context, profile, typ string, argv []string, 
 		CreatedAt:    now,
 		OperationID:  operationID,
 	}
-	redactedArgv := redactor.Redact(string(argvJSON))
-	if err := json.Unmarshal([]byte(redactedArgv), &record.Argv); err != nil {
-		return Evidence{}, invalidInput("evidence command is not representable after redaction")
-	}
 	err = storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO evidence
 			(evidence_id, profile, type, command_argv, status, exit_code, output,
 			snapshot_hash, provenance, created_at, operation_id, request_hash)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)
 			ON CONFLICT(operation_id) DO NOTHING`,
-			record.ID, profile, typ, redactedArgv, record.Status, record.ExitCode,
+			record.ID, profile, typ, string(redactedJSON), record.Status, record.ExitCode,
 			record.Output, snapshotHash, provenance, now, operationID, hash)
 		return err
 	})

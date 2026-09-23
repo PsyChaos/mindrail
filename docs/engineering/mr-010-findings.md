@@ -78,7 +78,7 @@ değişiklik doğrulanacak — "restore ettim" beyanı kanıt sayılmayacak.
 | Kriter | Sonuç | Kanıt |
 |---|---|---|
 | AC-02.1 | Karşılandı | Canlı env'den exact değerler `[REDACTED]`; boş değer dünyayı redact etmiyor; isimler config gibi doğrulanıyor (`TestRedactExactValues`). |
-| AC-02.2 | Karşılandı | 6 kategori desen scrub'lıyor, orijinal hiçbir yerde yok (`TestRedactDefaultPatterns`). |
+| AC-02.2 | Karşılandı | 7 desen (5 kategori) scrub'lıyor, orijinal hiçbir yerde yok (`TestRedactDefaultPatterns`). |
 | AC-02.3 | Karşılandı | Aynı ağaç aynı hash; içerik hash'i oynatıyor; kaçış/kayıp/boş kapsam koşmadan reddediliyor (`TestSnapshotScope*`). |
 | AC-02.4 | Karşılandı | 000008 tek tablo + sürüm 8; satır 9 alanı bağlıyor; aynı op+hash replay, farklı hash conflict (`TestEvidenceSchemaVersionGate`, `TestRecordBindsEvidenceRow`, `TestOperationIDReplay`); v7→v8 upgrade satırları koruyor. |
 | AC-02.5 | Karşılandı | Profil→koş→redact→snapshot→store tek akışta; sızan secret satırda redakte; hash ağaçtan üretiliyor; aynı op replay (`TestRunProfileFlowEndToEnd`). |
@@ -97,9 +97,24 @@ ediliyor (argümandaki secret satırda yaşamıyor); structured sanitizer yok
 | M8 | kapsam-kaçış kontrolü kapatıldı | refusal testi FAIL |
 | M9 | op-conflict dalı kapatıldı | replay testi FAIL |
 | M10 | evidence tablosu düşürüldü | gate testi FAIL |
+| M11 | element-redaksiyon kaldırıldı (kapı bulgusu) | hostile-secret testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0, ikinci koşu — ilki `gofmt` düşürdü, düzeltildi). Test sayısı **1173**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 5/5 CONFIRMED + 1 nit; Breaker: 4 REFUTED + 1 LEAK→KAPANDI + 1 fail-closed
+
+**Reader:** AC-02.1…AC-02.5 CONFIRMED. Nit (kapatıldı): "6 kategori" → 7 desen/5 kategori.
+
+**Breaker B-3 (GERÇEK SIZINTI, KAPATILDI):** JSON-escape redaksiyonu yeniyordu —
+tırnak/ters-bölü içeren secret `command_argv`'de yaşıyordu. Düzeltme:
+element-bazlı redaksiyon (marshal öncesi); request-hash ham argv'den (retry
+kimliği); desen-bozması availability-deliği de kapandı (marshal hep geçerli).
+Pin: `TestRecordRedactsJSONHostileSecrets` (M11 ile kırmızı doğrulandı).
+
+**Breaker kayda değer (bulgu değil):** substring over-redaction (tasarım
+gereği kanonik), symlink-scope boş-hash (deterministik), boş-op çift satır
+(tasarım), race-tek-satır (doğrulandı).
+
+**Karar:** TASK-02 KAPANDI.
