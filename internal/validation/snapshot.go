@@ -3,6 +3,7 @@ package validation
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -78,19 +79,31 @@ func SnapshotScope(root string, paths []string) (Snapshot, error) {
 		}
 	}
 	sort.Strings(files)
+	hash, err := hashFiles(root, files)
+	if err != nil {
+		return Snapshot{}, invalidInput("snapshot scope unreadable: " + err.Error())
+	}
+	return Snapshot{Scope: files, Hash: hash}, nil
+}
+
+// hashFiles content-addresses sorted absolute files as rel + NUL + content
+// sha256, with rel against root. Check (MR-011) reuses it verbatim: the
+// same bytes must hash the same from either entry point, or staleness
+// would hallucinate on identical trees.
+func hashFiles(root string, files []string) (string, error) {
 	digest := sha256.New()
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
-			return Snapshot{}, invalidInput("snapshot scope unreadable: " + file)
+			return "", errors.New(filepath.ToSlash(file))
 		}
 		rel, err := filepath.Rel(root, file)
 		if err != nil {
-			return Snapshot{}, invalidInput("snapshot scope unreadable: " + file)
+			return "", errors.New(filepath.ToSlash(file))
 		}
 		digest.Write([]byte(filepath.ToSlash(rel)))
 		digest.Write([]byte{0})
 		digest.Write(content)
 	}
-	return Snapshot{Scope: files, Hash: hex.EncodeToString(digest.Sum(nil))}, nil
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
