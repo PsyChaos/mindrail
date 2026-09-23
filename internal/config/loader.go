@@ -191,8 +191,10 @@ func (l *Loader) userConfigFile() string {
 // no Runtime field, which is what makes a [runtime] table in a repository file
 // an unknown-key error rather than a silently accepted override.
 type fileConfig struct {
-	Project *fileProject `toml:"project"`
-	Output  *fileOutput  `toml:"output"`
+	Project    *fileProject               `toml:"project"`
+	Output     *fileOutput                `toml:"output"`
+	Validation map[string]*fileValidation `toml:"validation"`
+	Secrets    *fileSecrets               `toml:"secrets"`
 }
 
 type fileProject struct {
@@ -201,6 +203,19 @@ type fileProject struct {
 
 type fileOutput struct {
 	Color *string `toml:"color"`
+}
+
+// fileValidation shadows ValidationProfile with pointers so presence is
+// detectable per layer: a layer that says nothing about a field leaves the
+// lower layer's value alone.
+type fileValidation struct {
+	Type     *string     `toml:"type"`
+	Paths    *[]string   `toml:"paths"`
+	Commands *[][]string `toml:"commands"`
+}
+
+type fileSecrets struct {
+	Env *[]string `toml:"env"`
 }
 
 // applyFile folds one configuration file into cfg and reports whether the file
@@ -236,6 +251,31 @@ func applyFile(path string, cfg *Config, provenance Provenance, source Source) (
 	if file.Output != nil && file.Output.Color != nil {
 		cfg.Output.Color = *file.Output.Color
 		provenance[KeyOutputColor] = source
+	}
+	for _, name := range slices.Sorted(maps.Keys(file.Validation)) {
+		layer := file.Validation[name]
+		if layer == nil {
+			continue
+		}
+		if cfg.Validation == nil {
+			cfg.Validation = map[string]ValidationProfile{}
+		}
+		profile := cfg.Validation[name]
+		if layer.Type != nil {
+			profile.Type = *layer.Type
+		}
+		if layer.Paths != nil {
+			profile.Paths = *layer.Paths
+		}
+		if layer.Commands != nil {
+			profile.Commands = *layer.Commands
+		}
+		cfg.Validation[name] = profile
+		provenance["validation."+name] = source
+	}
+	if file.Secrets != nil && file.Secrets.Env != nil {
+		cfg.Secrets.Env = *file.Secrets.Env
+		provenance["secrets.env"] = source
 	}
 
 	return true, nil
