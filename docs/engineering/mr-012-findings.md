@@ -107,3 +107,16 @@ tek kopya silinmesi decrease okunuyor — doğru, test duruyor. Pin eklendi
 (M12 kırmızı).
 
 **Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | `TestWeakeningScenarioEndToEnd`: §1 senaryosu tek değerlendirmede (3 bulgu, 1 blocking, 1 suppression) × 4 trigger. |
+| AC-03.2 | Karşılandı | Grep kanıtı: text-scan yok; kod 44 (tek yeni); migration/komut yok (yalnız exit-class satırı); testguard'da SQL yok. |
+| AC-03.3 | Karşılandı | M1…M12 defterde, tamamı kırmızı koşuldu. TASK-03 yeni guard eklemiyor — mutasyon borcu yok. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1205**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
