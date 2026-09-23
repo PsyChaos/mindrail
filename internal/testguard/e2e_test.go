@@ -90,5 +90,11 @@ func TestWeakeningScenarioEndToEnd(t *testing.T) {
 			result.Suppressions[0].TestKey != "tests/test_auth.py::test_legacy" {
 			t.Fatalf("suppressions = %+v", result.Suppressions)
 		}
+		for i := 1; i < len(result.Findings); i++ {
+			prev, curr := result.Findings[i-1].TestKey, result.Findings[i].TestKey
+			if prev > curr {
+				t.Fatalf("findings unordered: %+v", result.Findings)
+			}
+		}
 	}
 }

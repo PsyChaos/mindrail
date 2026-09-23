@@ -86,6 +86,7 @@ Kural: oturum-içi davranış değişince backup tazelenir; restore sonrası
 | M10 | excluded-kümesi kapatıldı | cousin testi FAIL |
 | M11 | unescape kaldırıldı (kapı bulgusu) | escaped-mapping testi FAIL |
 | M12 | aggregation kaldırıldı (kapı bulgusu) | duplicate testi FAIL |
+| M13 | sıralama tersine çevrildi (kapı bulgusu) | E2E order assertion FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
@@ -119,4 +120,21 @@ tek kopya silinmesi decrease okunuyor — doğru, test duruyor. Pin eklendi
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1205**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: AC-03.1/03.2 CONFIRMED, ledger CONFIRMED; Breaker: 3 REFUTED + 1 körlük→PİN
+
+**Reader:** kapılar temiz.
+
+**Breaker:** E2E mapping-kontrol körlüğü (sinyal-mutantı E2E'yi geçiyor)
+TASK-02 matrisiyle kaplıydı; ayrıca unmapped-warn pini + deterministik
+sıralama eklendi (M13 kırmızı).
+
+**Karar:** TASK-03 KAPANDI.
+
+---
+
+## MR-012 kapanış
+
+Üç görev kapandı (TASK-01…03), 13 mutant kırmızı, `make verify` +
+`make tidy-check` yeşil, 1205 test. MR-013'e devir (Durum bloğundaki gibi):
+bulgu + blocking → gate; suppression listesi → denetim; politika tablosu →
+yapılandırma.

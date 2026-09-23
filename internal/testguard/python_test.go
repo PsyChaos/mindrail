@@ -127,6 +127,9 @@ func TestPythonRemovedAndAddedTests(t *testing.T) {
 	if removed.Findings[0].Signal != testguard.SignalTestDisabled {
 		t.Fatalf("unmapped removal signal = %q", removed.Findings[0].Signal)
 	}
+	if removed.Findings[0].Blocking {
+		t.Fatal("unmapped removal blocks")
+	}
 }
 
 // TestGuardCodeRegistered is TASK-01 AC-01.4 at the registry: the code

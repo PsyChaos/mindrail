@@ -8,6 +8,7 @@ package testguard
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -203,6 +204,17 @@ func (s *Service) Evaluate(ctx context.Context, request Request) (Result, error)
 		result.Findings = append(result.Findings, partial.Findings...)
 		result.Suppressions = append(result.Suppressions, partial.Suppressions...)
 	}
+	// Deterministic output: gate consumers diff and log findings, so map
+	// iteration order must never leak through.
+	sort.Slice(result.Findings, func(i, j int) bool {
+		if result.Findings[i].TestKey != result.Findings[j].TestKey {
+			return result.Findings[i].TestKey < result.Findings[j].TestKey
+		}
+		return result.Findings[i].Signal < result.Findings[j].Signal
+	})
+	sort.Slice(result.Suppressions, func(i, j int) bool {
+		return result.Suppressions[i].TestKey < result.Suppressions[j].TestKey
+	})
 	return result, nil
 }
 

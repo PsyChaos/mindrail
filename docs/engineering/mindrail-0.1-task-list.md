@@ -604,11 +604,33 @@ Assertion/expect kaldırma, assertion sayısı azalması, skip/xfail/disabled ma
 
 #### Kabul kriterleri
 
-- [ ] Assertion kaldırma/azaltma ile skip/xfail/disabled ekleme fixture'ları yakalanır.
-- [ ] Aktif CRITICAL invariant verification testinin kaldırılması blocking bulgu üretir.
-- [ ] Yalnız test dosyasına dokunan değişiklik de guard tarafından değerlendirilir.
-- [ ] Aynı guard reconcile, staged verify ve CI verify yollarında ortak servis olarak kullanılır.
-- [ ] Açıklanabilir false-positive escape hatch/policy davranışı belgelenir ve test edilir.
+- [x] Assertion kaldırma/azaltma ile skip/xfail/disabled ekleme fixture'ları yakalanır.
+- [x] Aktif CRITICAL invariant verification testinin kaldırılması blocking bulgu üretir.
+- [x] Yalnız test dosyasına dokunan değişiklik de guard tarafından değerlendirilir.
+- [x] Aynı guard reconcile, staged verify ve CI verify yollarında ortak servis olarak kullanılır.
+- [x] Açıklanabilir false-positive escape hatch/policy davranışı belgelenir ve test edilir.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01 kapıları temizdi (`test` prefix
+D-171 şerhiyle). TASK-02'de B-4 (kaçış-tırnak) + B-5 (duplicate-maskeleme)
+kapatıldı; M6 ölü-kodu suite-disable ile canlandı. TASK-03'te E2E'nin
+mapping-kontrol körlüğü için unmapped-warn pini + deterministik sıralama
+eklendi (M13).
+
+Sözleşme koda başlanmadan donduruldu
+([mr-012-requirements.md](mr-012-requirements.md),
+[mr-012-design.md](mr-012-design.md), `36c2af5`), kararlar D-170…D-178:
+D-170 saf-servis, D-171 dar-test-kimliği, D-172 çağrıcı-eşlemesi, D-173
+dar-blocking, D-175 kendini-açıklayan-hatch. Kod 44 (tek yeni), göç yok.
+Yeni paket `internal/testguard` + tree-sitter sorguları.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1205
+test (MR-012 başında 1185 idi). 13 guard mutasyonu kırmızı koşuldu
+(M1…M13). Kapıların MR-013'e bıraktıkları: bulgu + blocking (gate girdisi),
+suppression listesi (denetim girdisi), politika tablosu (yapılandırma
+girdisi).
 
 ---
 
