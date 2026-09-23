@@ -562,10 +562,33 @@ Evidence snapshot'ını reconcile edilen mevcut source snapshot ile karşılaşt
 
 #### Kabul kriterleri
 
-- [ ] Değişmemiş snapshot için kanıt current kalır.
-- [ ] Validation sonrasındaki ilgili source edit kanıtı stale yapar.
-- [ ] Stale kanıt completion için required evidence şartını karşılamaz.
-- [ ] Stale nedeni ve yeniden çalıştırılması gereken profil kullanıcıya açıklanır.
+- [x] Değişmemiş snapshot için kanıt current kalır.
+- [x] Validation sonrasındaki ilgili source edit kanıtı stale yapar.
+- [x] Stale kanıt completion için required evidence şartını karşılamaz.
+- [x] Stale nedeni ve yeniden çalıştırılması gereken profil kullanıcıya açıklanır.
+
+#### Durum
+
+**Tamamlandı.** İki görev (TASK-01…02) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01 kapısı sıkıydı: boş gap-gerekçesi,
+AC-01.5 harf-pini, dup-scope/trailing-slash/boş-kapsam divergence'ları
+kapatıldı (M6…M8); AC-01.2 eklenen-dosya alt-davranışı DoD-1 şerhiyle
+kayıtlı. TASK-02'de E2E'nin ilgisiz-edit beati zayıf çıktı — hash-eşitliği
+assertion'ıyla güçlendirildi (kapı-sonrası, kendi koşumla doğrulandı).
+
+Sözleşme koda başlanmadan donduruldu
+([mr-011-requirements.md](mr-011-requirements.md),
+[mr-011-design.md](mr-011-design.md), `5aaaae3`), kararlar D-165…D-169:
+D-165 hesaplanan-staleness, D-166 kapsam-hash-uyumu, D-167 required-caller
++ union-rerun. Göç/kod/config yok (43 kod, 8 göç). Tek dosya
+(`internal/validation/freshness.go`); DB erişimi yok (yapısal salt-okunur).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1185
+test (MR-011 başında 1174 idi). 8 guard mutasyonu kırmızı koşuldu (M1…M8).
+Kapıların MR-012'ye bıraktıkları: verdict + coverage MR-013'ün kapı
+girdisi; re-run listeleri MR-015'in girdisi. Not: bu milestone gate
+uygulamaz, zafiyet profili tanımlamaz — MR-012'nin girdisi verdict
+şeklidir.
 
 ---
 

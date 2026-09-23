@@ -12,9 +12,10 @@ import (
 
 // TestFreshnessLifecycleEndToEnd is TASK-02 AC-02.1. One real tree through
 // the whole lifecycle: run → current; relevant edit → stale with named
-// re-run and required unsatisfied; unrelated edit → current; second run →
-// current again with both rows coexisting (append-only visible in the
-// table, not just in memory).
+// re-run and required unsatisfied; unrelated edit preserves the stale
+// verdict down to its hash (proving the verdict's basis is the row's own
+// scope, not the whole tree); second run → current again with both rows
+// coexisting (append-only visible in the table, not just in memory).
 func TestFreshnessLifecycleEndToEnd(t *testing.T) {
 	fx := newEvidenceFixture(t)
 	runner, err := validation.NewRunner(t.TempDir(), 10*time.Second, 0)
@@ -65,6 +66,7 @@ func TestFreshnessLifecycleEndToEnd(t *testing.T) {
 	if coverage.Satisfied["test"] {
 		t.Fatalf("stale satisfies required: %+v", coverage)
 	}
+	staleHash := verdicts[0].CurrentHash
 
 	if err := os.MkdirAll(filepath.Join(root, "other"), 0o755); err != nil {
 		t.Fatal(err)
@@ -76,6 +78,10 @@ func TestFreshnessLifecycleEndToEnd(t *testing.T) {
 	}
 	if verdicts[0].Status != validation.FreshStale {
 		t.Fatalf("unrelated edit cleared staleness: %+v", verdicts[0])
+	}
+	if verdicts[0].CurrentHash != staleHash {
+		t.Fatalf("unrelated edit moved the verdict hash: %q vs %q",
+			verdicts[0].CurrentHash, staleHash)
 	}
 
 	second, err := service.RunProfile(t.Context(), "test", profile, root, nil, "OP-E2E-2")

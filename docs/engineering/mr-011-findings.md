@@ -72,4 +72,21 @@ dedupe + pin; trailing-slash escape → root-clean + pin; boş-kapsam heutig
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1185**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: AC-02.1/02.2 CONFIRMED, ledger CONFIRMED; Breaker: 3 REFUTED + 1 zayıf-beat→GÜÇLENDİRİLDİ
+
+**Reader:** kapılar temiz; Durum süreci gereği kapı-sonrasıydı.
+
+**Breaker:** E2E'nin ilgisiz-edit beati ayrım yapmıyordu (aynı status).
+Güçlendirme: beat-2 hash'i kaydedilip beat-3'te eşitlik assertion'ı eklendi
+— yanlış-kapsam implementasyonu artık FAIL verir; dosya yorumu düzeltildi.
+Test-only değişiklik, kendi koşumla yeşil doğrulandı.
+
+**Karar:** TASK-02 KAPANDI.
+
+---
+
+## MR-011 kapanış
+
+İki görev kapandı (TASK-01…02, AC-01.2 şerhli), 8 mutant kırmızı, `make
+verify` + `make tidy-check` yeşil, 1185 test. MR-012'ye devir (Durum
+bloğundaki gibi): verdict + coverage → MR-013; re-run listeleri → MR-015.
