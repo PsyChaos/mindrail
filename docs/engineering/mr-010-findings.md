@@ -72,3 +72,34 @@ zayıftı, `ResolvedExe` boşluğu eklenince kızardı).
 yakaladı, biseksiyonla bulunup `git checkout` ile geri alındı. Kural:
 kapı subagent'lerinden sonra `git status` + `git diff` ile *tracked*
 değişiklik doğrulanacak — "restore ettim" beyanı kanıt sayılmayacak.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Canlı env'den exact değerler `[REDACTED]`; boş değer dünyayı redact etmiyor; isimler config gibi doğrulanıyor (`TestRedactExactValues`). |
+| AC-02.2 | Karşılandı | 6 kategori desen scrub'lıyor, orijinal hiçbir yerde yok (`TestRedactDefaultPatterns`). |
+| AC-02.3 | Karşılandı | Aynı ağaç aynı hash; içerik hash'i oynatıyor; kaçış/kayıp/boş kapsam koşmadan reddediliyor (`TestSnapshotScope*`). |
+| AC-02.4 | Karşılandı | 000008 tek tablo + sürüm 8; satır 9 alanı bağlıyor; aynı op+hash replay, farklı hash conflict (`TestEvidenceSchemaVersionGate`, `TestRecordBindsEvidenceRow`, `TestOperationIDReplay`); v7→v8 upgrade satırları koruyor. |
+| AC-02.5 | Karşılandı | Profil→koş→redact→snapshot→store tek akışta; sızan secret satırda redakte; hash ağaçtan üretiliyor; aynı op replay (`TestRunProfileFlowEndToEnd`). |
+
+**Tasarım notları:** op-id profil-çapında komut-başına scope'lanıyor
+(`id#index`) — çok-komutlu profil conflict vermiyor; argv de redact
+ediliyor (argümandaki secret satırda yaşamıyor); structured sanitizer yok
+(D-159, kayıtlı erteleme).
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M6 | boş-değer koruması kaldırıldı | ilk pin yeşil kaldı → unset-değişken testi eklendi, FAIL |
+| M7 | desenlerden ilki atlandı | pattern testi FAIL |
+| M8 | kapsam-kaçış kontrolü kapatıldı | refusal testi FAIL |
+| M9 | op-conflict dalı kapatıldı | replay testi FAIL |
+| M10 | evidence tablosu düşürüldü | gate testi FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0, ikinci koşu — ilki `gofmt` düşürdü, düzeltildi). Test sayısı **1173**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

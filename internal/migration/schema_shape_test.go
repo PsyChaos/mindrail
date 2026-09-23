@@ -52,6 +52,7 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		"change_baselines":            {"task_id", "path", "content_hash", "captured_at"},
 		"change_operations":           {"operation_id", "task_id", "request_hash", "result", "recorded_at"},
 		"scope_attributions":          {"logical_key", "change_id", "decided_by", "reason", "decided_at"},
+		"evidence":                    {"evidence_id", "profile", "type", "command_argv", "status", "exit_code", "output", "snapshot_hash", "provenance", "created_at", "operation_id", "request_hash"},
 	}
 
 	got := map[string][]string{}

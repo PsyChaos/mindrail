@@ -35,9 +35,9 @@ Runtime store
   foreign_keys: 1
   journal_mode: wal
   synchronous: 1
-✓ Schema up to date (version 7)
-  applied: 7
-  current_version: 7
+✓ Schema up to date (version 8)
+  applied: 8
+  current_version: 8
   pending: 0
 
 Knowledge

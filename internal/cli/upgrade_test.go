@@ -219,8 +219,8 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 7 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000007, want 7", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 8 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000008, want 8", data.Runtime.SchemaVersion)
 	}
 
 	listed := run(t, repo, "task", "list", "--json")
@@ -264,8 +264,8 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 7 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000007, want 7", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 8 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000008, want 8", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -292,6 +292,8 @@ func downgradeToSchemaFour(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS evidence`,
+		`DELETE FROM schema_migrations WHERE version = 8`,
 		`DROP TABLE IF EXISTS scope_attributions`,
 		`DELETE FROM schema_migrations WHERE version = 7`,
 		`DROP INDEX IF EXISTS idx_changes_task_unique`,
@@ -347,8 +349,8 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 7 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000006 and 000007, want 7", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 8 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000008, want 8", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -417,8 +419,8 @@ func TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 7 {
-		t.Errorf("schema_version = %d after init re-applied migration 000007, want 7", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 8 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000007 and 000008, want 8", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -432,12 +434,64 @@ func TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges(t *testing.T) {
 	}
 }
 
+// TestAnUpgradedDatabaseGainsEvidenceWithoutLosingChanges is MR-010
+// AC-02.4. Migration 000008 adds one table and touches nothing else: the
+// fixture is a schema-7 database with change rows, and init must bring it
+// to 8 with those rows intact.
+func TestAnUpgradedDatabaseGainsEvidenceWithoutLosingChanges(t *testing.T) {
+	repo := newInitializedRepo(t)
+	run(t, repo, "session", "open", "--json")
+	execOnRuntimeDB(t, repo,
+		`INSERT INTO changes (change_id, created_at, updated_at) VALUES ('CHG-1', '2026-09-23T10:00:00Z', '2026-09-23T10:00:00Z')`)
+	downgradeToSchemaSeven(t, repo)
+
+	applied := run(t, repo, "init", "--json")
+	if applied.code != app.ExitSuccess {
+		t.Fatalf("init exited %d over a schema-7 database: %s", applied.code, applied.stdout)
+	}
+
+	got := run(t, repo, "status", "--json")
+	got.requireExit(t, app.ExitSuccess)
+	var data struct {
+		Runtime struct {
+			SchemaVersion int64 `json:"schema_version"`
+		} `json:"runtime"`
+	}
+	decodeData(t, got.stdout, &data)
+	if data.Runtime.SchemaVersion != 8 {
+		t.Errorf("schema_version = %d after init re-applied migration 000008, want 8", data.Runtime.SchemaVersion)
+	}
+
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var changes int
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM changes`).Scan(&changes); err != nil || changes != 1 {
+		t.Fatalf("changes = %d, %v", changes, err)
+	}
+}
+
+// downgradeToSchemaSeven removes what MR-010's migration created, ledger
+// row included: the database a repository initialised by the MR-008 binary
+// holds, which never saw migration 8.
+func downgradeToSchemaSeven(t *testing.T, repo string) {
+	t.Helper()
+
+	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS evidence`,
+		`DELETE FROM schema_migrations WHERE version = 8`)
+}
+
 // downgradeToSchemaSix removes what MR-008's migration created, ledger row
 // included: the database a repository initialised by the MR-007 binary holds.
 func downgradeToSchemaSix(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS evidence`,
+		`DELETE FROM schema_migrations WHERE version = 8`,
 		`DROP TABLE IF EXISTS scope_attributions`,
 		`DELETE FROM schema_migrations WHERE version = 7`)
 }
@@ -449,6 +503,8 @@ func downgradeToSchemaThree(t *testing.T, repo string) {
 	t.Helper()
 
 	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS evidence`,
+		`DELETE FROM schema_migrations WHERE version = 8`,
 		`DROP TABLE IF EXISTS scope_attributions`,
 		`DELETE FROM schema_migrations WHERE version = 7`,
 		`DROP INDEX IF EXISTS idx_changes_task_unique`,
