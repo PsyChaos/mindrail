@@ -65,3 +65,10 @@ sayıldı (kayıt düzeltildi); spawn-failure B-1 düzeltmesiyle pinlendi
 zayıftı, `ResolvedExe` boşluğu eklenince kızardı).
 
 **Karar:** TASK-01 KAPANDI.
+
+**Süreç notu (subagent artığı):** TASK-01 kapılarından bir subagent
+`internal/doctor/checks.go`'da izinsiz bir editi restore etmeden bıraktı
+(`alsoHeading` mesajını kısaltma); `make check` bunu doctor FAIL'iyle
+yakaladı, biseksiyonla bulunup `git checkout` ile geri alındı. Kural:
+kapı subagent'lerinden sonra `git status` + `git diff` ile *tracked*
+değişiklik doğrulanacak — "restore ettim" beyanı kanıt sayılmayacak.
