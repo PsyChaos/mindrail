@@ -60,3 +60,16 @@ dedupe + pin; trailing-slash escape → root-clean + pin; boş-kapsam heutig
 `TestCheckEmptyScopeNeedsEmptyHash`).
 
 **Karar:** TASK-01 KAPANDI (AC-01.2 şerhli).
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | `TestFreshnessLifecycleEndToEnd`: run→current; ilgili edit→stale + re-run + required-unsatisfied; ilgisiz edit current'liği bozmuyor (stale kalıyor); ikinci run→current, 2 satır tabloda birlikte. |
+| AC-02.2 | Karşılandı | Grep kanıtı: evidence'de UPDATE/DELETE yok; kod 43; migration yok; config dokunulmadı. |
+| AC-02.3 | Karşılandı | M1…M8 defterde, tamamı kırmızı koşuldu. TASK-02 yeni guard eklemiyor (yalnız E2E kanıt testi) — mutasyon borcu yok. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1185**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
