@@ -84,4 +84,16 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1223**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 5/5 CONFIRMED + notlar; Breaker: 5 REFUTED + 1 gözlem-kayıtlı
+
+**Reader:** AC-02.1…AC-02.5 CONFIRMED (mutant koşuları reader-remit dışı —
+defterdeki kayıtlar geçerli).
+
+**Breaker:** 5/6 REFUTED (traversal, yarış-bütünlüğü, bogus-red, readonly
+hepsi temiz). (4) sınırsız metin: tool doğrudan-dosya-yazma yetisini
+yansıtıyor — yeni tehdit yüzeyi yok, ajan zaten dosyayı yazabilir; kayıtlı
+kısıt, takip-işi, kapı-dışı.
+
+**Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı (PENDING)
