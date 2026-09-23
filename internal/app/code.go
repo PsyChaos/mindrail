@@ -252,6 +252,14 @@ const (
 	// restores the guard or records an explicit allowance, and a removed
 	// CRITICAL verification test blocks completion.
 	CodeTestGuardWeakened Code = "TEST_GUARD_WEAKENED"
+
+	// CodeRequiredEvidenceNotCurrent marks a required validation profile
+	// without current evidence: never run, or stale since its scope
+	// changed (decision D-180). It is its own code because completion
+	// without current evidence is the one refusal the whole gate exists
+	// for: the remedy runs the named profile, and the reason tells missing
+	// apart from stale.
+	CodeRequiredEvidenceNotCurrent Code = "REQUIRED_EVIDENCE_NOT_CURRENT"
 )
 
 // allCodes is the registry itself, sorted once at init so RegisteredCodes can
@@ -301,6 +309,7 @@ var allCodes = sortedCodes([]Code{
 	CodeUnregisteredChange,
 	CodeReconcileAmbiguous,
 	CodeTestGuardWeakened,
+	CodeRequiredEvidenceNotCurrent,
 })
 
 var codeSet = indexCodes(allCodes)

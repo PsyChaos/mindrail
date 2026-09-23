@@ -134,6 +134,11 @@ var exitForCode = map[app.Code]int{
 	// a weakened verification test is resolved by restoring the guard or
 	// recording an allowance, never by retrying.
 	app.CodeTestGuardWeakened: app.ExitFailed,
+
+	// MR-013's evidence denial: same class — the request was well formed
+	// and the refusal depends on rows (which required profiles hold current
+	// evidence), resolved by running the named profile, never by retrying.
+	app.CodeRequiredEvidenceNotCurrent: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible
