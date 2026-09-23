@@ -64,4 +64,20 @@ Düzeltme: birebir-aynı denial'lar tekleniyor; pin eklendi (M7 kırmızı).
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1215**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: AC-02.1/02.2 CONFIRMED, ledger CONFIRMED; Breaker: 3 REFUTED + 1 körlük→ARA-BEAT
+
+**Reader:** kapılar temiz.
+
+**Breaker:** kernel ALLOW evidence'a kördü (boş coverage boş ALLOW).
+Düzeltme: stale-DENY ara-beati + warn-scope'lu ALLOW girdisi eklendi;
+test-only değişiklik, kendi koşumla yeşil.
+
+**Karar:** TASK-02 KAPANDI.
+
+---
+
+## MR-013 kapanış
+
+İki görev kapandı (TASK-01…02), 8 mutant kırmızı, `make verify` +
+`make tidy-check` yeşil, 1215 test. MR-014'e devir (Durum bloğundaki gibi):
+karar modeli → tool; denial kodları → CI; coverage-boşlukları → koşul.

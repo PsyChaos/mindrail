@@ -646,11 +646,32 @@ Completion kararını tek bir ALLOW/DENY modeli altında birleştir. Unresolved 
 
 #### Kabul kriterleri
 
-- [ ] Tüm denial nedenleri deterministic reason code, provenance ve çözüm önerisi taşır.
-- [ ] `before_change` çağrılmamış olsa da completion önce reconcile eder.
-- [ ] Gerekli current evidence ve çözümlenmiş invariant olduğunda ALLOW üretir.
-- [ ] Aynı snapshot ve state için karar tekrarlanabilir/idempotent olur.
-- [ ] Birincil uçtan uca kernel senaryosu ALLOW ve her DENY dalı için test edilir.
+- [x] Tüm denial nedenleri deterministic reason code, provenance ve çözüm önerisi taşır.
+- [x] `before_change` çağrılmamış olsa da completion önce reconcile eder.
+- [x] Gerekli current evidence ve çözümlenmiş invariant olduğunda ALLOW üretir.
+- [x] Aynı snapshot ve state için karar tekrarlanabilir/idempotent olur.
+- [x] Birincil uçtan uca kernel senaryosu ALLOW ve her DENY dalı için test edilir.
+
+#### Durum
+
+**Tamamlandı.** İki görev (TASK-01…02) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de boş-bulgu fail-closed'a
+çevrildi (Evaluate error dönüyor), dup-denial tekleniyor, sabitler
+kullanılıyor (M6…M8). TASK-02'de kernel E2E'nin ALLOW kolu evidence'a
+kör çıktı — stale-DENY ara-beati eklendi, warn-scope binding ALLOW
+girdisinde.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-013-requirements.md](mr-013-requirements.md),
+[mr-013-design.md](mr-013-design.md), `eb55e21`), kararlar D-179…D-184:
+D-179 saf-composer, D-180 kod-tekrar-kullanımı + tek evidence kodu, D-181
+guard-ailesi, D-182 damgasız-karar. Kod 45 (tek yeni), göç yok. Yeni paket
+`internal/gate` (depo erişimi yok, yapısal).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1215
+test (MR-013 başında 1205 idi). 8 guard mutasyonu kırmızı koşuldu (M1…M8).
+Kapıların MR-014'e bıraktıkları: karar modeli (tool çıktısı), denial
+kodları (CI çıktısı), coverage-boşlukları (koşul listesi).
 
 ---
 

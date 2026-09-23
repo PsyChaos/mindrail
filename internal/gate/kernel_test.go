@@ -231,6 +231,31 @@ func TestCompletionKernelEndToEnd(t *testing.T) {
 	if verdicts[0].Status != validation.FreshCurrent {
 		t.Fatalf("fresh evidence = %+v", verdicts)
 	}
+	// The evidence leg is load-bearing: editing the scope after the run
+	// must DENY on evidence before any fresh run restores ALLOW.
+	if err := os.WriteFile(filepath.Join(fx.root, "tests", "t.py"), []byte("print(2)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, staleCoverage, err := validation.Check(fx.root, rows, []string{"test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDeny, err := fx.gate.Evaluate(gate.Input{Coverage: staleCoverage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staleDeny.Allow || len(staleDeny.Denials) != 1 ||
+		staleDeny.Denials[0].Code != app.CodeRequiredEvidenceNotCurrent {
+		t.Fatalf("stale evidence = %+v, want evidence DENY", staleDeny)
+	}
+	rows, err = fx.valid.RunProfile(t.Context(), "test", profile, fx.root, nil, "OP-KERNEL-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, coverage, err = validation.Check(fx.root, rows, []string{"test"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	clear, err := fx.changes.EvaluateTask(t.Context(), "TSK-A", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +263,13 @@ func TestCompletionKernelEndToEnd(t *testing.T) {
 	if len(clear) != 0 {
 		t.Fatalf("attribution still blocked: %+v", clear)
 	}
-	allow, err := fx.gate.Evaluate(gate.Input{Coverage: coverage})
+	allow, err := fx.gate.Evaluate(gate.Input{
+		Coverage: coverage,
+		Bindings: []gate.InvariantBlock{{
+			InvariantID: "INV-WARN", UID: "SYM-W", Status: "orphaned",
+			Severity: "MEDIUM", Active: true,
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
