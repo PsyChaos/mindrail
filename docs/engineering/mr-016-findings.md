@@ -99,4 +99,20 @@ stdio 6/13 smoke'tu → 13/13 + wire-dil düzeltmesi; bulgu kaydı güncellendi.
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1241**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: AC-03.1 güven + AC-03.2 CONFIRMED; Breaker: 5 REFUTED
+
+**Reader:** sayı + non-goal + ledger CONFIRMED; verify/tidy güven-notuyla.
+
+**Breaker:** 12 paket yeşil; timing-bağımlılık yok; SDK direct; 13 isim
+birebir; kriterler süreç-doğru bekliyor.
+
+**Karar:** TASK-03 KAPANDI.
+
+---
+
+## MR-016 kapanış
+
+Üç görev kapandı (TASK-01…03), 10 mutant kırmızı, `make verify` +
+`make tidy-check` yeşil, 1241 test. MR-017'ye devir (Durum bloğundaki gibi):
+onüç-tool server → CI; kompozisyon girdileri → staged/CI verify;
+version-error'lar → politika.

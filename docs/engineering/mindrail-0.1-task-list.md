@@ -766,10 +766,30 @@ op-id'ler (retry protokolü).
 
 #### Kabul kriterleri
 
-- [ ] Named profile sonucu mevcut snapshot'a bağlı Evidence üretir.
-- [ ] Missing/stale evidence MCP completion'da CLI ile aynı DENY sonucunu verir.
-- [ ] Budget class/escalation alternative veya managed/signed approval isteği structured version error döndürür.
-- [ ] MCP stdio end-to-end testi 13 aracın tamamını discover edip temel contract'larını doğrular.
+- [x] Named profile sonucu mevcut snapshot'a bağlı Evidence üretir.
+- [x] Missing/stale evidence MCP completion'da CLI ile aynı DENY sonucunu verir.
+- [x] Budget class/escalation alternative veya managed/signed approval isteği structured version error döndürür.
+- [x] MCP stdio end-to-end testi 13 aracın tamamını discover edip temel contract'larını doğrular.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de validate + kompozisyon
+read'leri kapandı. TASK-02'de complete kompozisyonu (ambiguity-beat,
+13/13 smoke, bilinmeyen-görev reddi) kapı bulgularıyla kapatıldı (M9,
+M10). TASK-03 kapıları temizdi (wire-isimleri + SDK-direct Breaker
+doğrulamalı).
+
+Sözleşme koda başlanmadan donduruldu
+([mr-016-requirements.md](mr-016-requirements.md),
+[mr-016-design.md](mr-016-design.md), `c60d0af`), kararlar D-205…D-214:
+D-205 isimli-profil, D-206 beş-aile-kompozisyon, D-208 version-error,
+D-209 subprocess'siz-stdio. Kod 46, göç yok. 13 tool tek server'da.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1241
+test (MR-016 başında 1229 idi). 10 guard mutasyonu kırmızı koşuldu
+(M1…M10). Kapıların MR-017'ye bıraktıkları: onüç-tool server (CI sürer),
+kompozisyon girdileri (staged/CI verify), version-error'lar (politika).
 
 ---
 
