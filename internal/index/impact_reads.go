@@ -3,6 +3,8 @@ package index
 import (
 	"context"
 	"database/sql"
+
+	"github.com/PsyChaos/mindrail/internal/app"
 )
 
 // Referrer is one resolved reference edge into a symbol: who refers, from
@@ -199,6 +201,44 @@ func (s *Store) BindingsForUID(ctx context.Context, uid string) ([]string, error
 			return nil, corruptState(err)
 		}
 		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return out, nil
+}
+
+// BindingsWithStatus lists every binding of one durable identity with its
+// status — bound, ambiguous and orphaned alike. The gate (MR-013 via
+// MR-016's complete) judges hardness from status + severity; this read
+// stays neutral and reports all three (decision D-211).
+func (s *Store) BindingsWithStatus(ctx context.Context, uid string) ([]Binding, error) {
+	if uid == "" {
+		return nil, invalidInput("binding listing needs a symbol uid")
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT invariant_id, symbol_uid, status, reason, updated_at
+		FROM invariant_symbol_bindings WHERE symbol_uid = ? ORDER BY invariant_id`, uid)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	var out []Binding
+	for rows.Next() {
+		var binding Binding
+		var stamped string
+		if err := rows.Scan(&binding.InvariantID, &binding.UID, &binding.Status,
+			&binding.Reason, &stamped); err != nil {
+			return nil, corruptState(err)
+		}
+		parsed, err := app.ParseTime(stamped)
+		if err != nil {
+			return nil, corruptState(err)
+		}
+		binding.UpdatedAt = parsed
+		out = append(out, binding)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, corruptState(err)

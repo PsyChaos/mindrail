@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,7 +20,10 @@ import (
 	"github.com/PsyChaos/mindrail/internal/index/parser"
 	"github.com/PsyChaos/mindrail/internal/index/snapshot"
 	"github.com/PsyChaos/mindrail/internal/mcp"
+	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
+	"github.com/PsyChaos/mindrail/internal/validation"
+	"github.com/PsyChaos/mindrail/migrations"
 )
 
 const (
@@ -166,4 +170,74 @@ func callToolRaw(t *testing.T, server *mcp.Server, clientName string, tool strin
 		return fmt.Errorf("tool errored: %s", raw)
 	}
 	return nil
+}
+
+type indexFixture struct {
+	indexes *index.Store
+	db      *sql.DB
+	unit    index.ProjectUnit
+}
+
+func newIndexFixture(t *testing.T) indexFixture {
+	t.Helper()
+	db, err := storage.Open(t.Context(), storage.Options{Path: filepath.Join(t.TempDir(), "mindrail.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := app.FixedClock{Instant: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)}
+	if _, err := migration.New(db.DB, set, clock).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	indexes := index.NewStore(db.DB, clock)
+	unit, err := indexes.UpsertUnit(t.Context(), t.TempDir(), index.UnitPython)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return indexFixture{indexes: indexes, db: db.DB, unit: unit}
+}
+
+func seedBindingRow(t *testing.T, fx indexFixture, invariant, uid, status string) {
+	t.Helper()
+	if _, err := fx.db.ExecContext(t.Context(), `INSERT OR IGNORE INTO symbol_identities
+		(symbol_uid, project_id, unit_id, language, logical_key, previous_keys, created_at)
+		VALUES (?, 'PRJ-1', ?, 'python', ?, '[]', '2026-09-23T10:00:00Z')`,
+		uid, fx.unit.ID, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.db.ExecContext(t.Context(), `INSERT INTO invariant_symbol_bindings
+		(invariant_id, symbol_uid, status, updated_at)
+		VALUES (?, ?, ?, '2026-09-23T10:00:00Z')`, invariant, uid, status); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type evidenceFixture struct {
+	store *validation.Store
+}
+
+func newEvidenceFixture(t *testing.T) evidenceFixture {
+	t.Helper()
+	db, err := storage.Open(t.Context(), storage.Options{Path: filepath.Join(t.TempDir(), "mindrail.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := app.FixedClock{Instant: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)}
+	if _, err := migration.New(db.DB, set, clock).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store, err := validation.NewStore(db.DB, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evidenceFixture{store: store}
 }

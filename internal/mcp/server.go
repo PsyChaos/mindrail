@@ -14,6 +14,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/index/parser"
 	"github.com/PsyChaos/mindrail/internal/index/snapshot"
 	"github.com/PsyChaos/mindrail/internal/status"
+	"github.com/PsyChaos/mindrail/internal/validation"
 )
 
 // Tool names on the 0.1 wire.
@@ -41,10 +42,16 @@ type Server struct {
 	app      *bootstrap.App
 	changes  *changes.Service
 	store    *changes.Store
+	valid    *validation.Service
 	registry *parser.Registry
 	root     string
 	started  time.Time
 }
+
+// ValidationTimeout bounds one profile run through the tool. Generous by
+// design: profiles run real test suites, and the timeout is a hang guard,
+// never a performance assertion.
+const ValidationTimeout = 10 * time.Minute
 
 // New starts a read-write application over root and registers the tools.
 func New(ctx context.Context, root string) (*Server, error) {
@@ -76,11 +83,27 @@ func New(ctx context.Context, root string) (*Server, error) {
 		registry.Close()
 		return nil, err
 	}
+	runner, err := validation.NewRunner(root, ValidationTimeout, 0)
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
+	evidenceStore, err := validation.NewStore(application.DB(), app.SystemClock{})
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
+	valid, err := validation.NewService(runner, evidenceStore)
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
 	server := &Server{
 		impl:     sdk.NewServer(&sdk.Implementation{Name: "mindrail", Version: "0.1"}, nil),
 		app:      application,
 		changes:  changeService,
 		store:    changeStore,
+		valid:    valid,
 		registry: registry,
 		root:     root,
 		started:  time.Now(),
@@ -88,6 +111,7 @@ func New(ctx context.Context, root string) (*Server, error) {
 	server.registerReads()
 	server.registerLifecycle()
 	server.registerDiscovery()
+	server.registerProving()
 	return server, nil
 }
 

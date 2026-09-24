@@ -244,6 +244,44 @@ func (s *Store) readByOperation(ctx context.Context, operationID string) (Eviden
 	return s.readOne(ctx, `operation_id = ?`, operationID)
 }
 
+// EvidenceForProfile lists one profile's rows newest-first for freshness
+// checks (decision D-210). Read-only shape like every other store read;
+// MR-010's append-only is untouched.
+func (s *Store) EvidenceForProfile(ctx context.Context, profile string) ([]Evidence, error) {
+	if profile == "" {
+		return nil, invalidInput("evidence listing needs a profile")
+	}
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT evidence_id, profile, type, command_argv,
+		status, exit_code, output, snapshot_hash, provenance, created_at, operation_id
+		FROM evidence WHERE profile = ? ORDER BY created_at DESC, rowid DESC`, profile)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	var out []Evidence
+	for rows.Next() {
+		var record Evidence
+		var argvJSON, operation sql.NullString
+		if err := rows.Scan(&record.ID, &record.Profile, &record.Type, &argvJSON, &record.Status,
+			&record.ExitCode, &record.Output, &record.SnapshotHash, &record.Provenance,
+			&record.CreatedAt, &operation); err != nil {
+			return nil, corruptState(err)
+		}
+		record.OperationID = operation.String
+		if err := json.Unmarshal([]byte(argvJSON.String), &record.Argv); err != nil {
+			return nil, corruptState(err)
+		}
+		out = append(out, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return out, nil
+}
+
 func (s *Store) readOne(ctx context.Context, predicate, arg string) (Evidence, error) {
 	var record Evidence
 	var argvJSON, operation sql.NullString
