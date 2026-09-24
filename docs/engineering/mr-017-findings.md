@@ -38,10 +38,15 @@ benzersiz isimli olur; restore sonrası paket-beyanı + tam-suite koşulur.
 | M3 | knowledge fatal-hata dalı kapatıldı | corrupt testi FAIL |
 | M4 | FatalKnown erken-dönüşü kapatıldı | yan-etki pini FAIL |
 | M5 | staged-sync diskten okundu | diferansiyel test FAIL |
+| M6 | staged-drift düşürüldü | drift testi FAIL |
+| M7 | unborn-HEAD eşleşmesi kaldırıldı | unborn testi FAIL (ölü "bad revision" eşleşmesi de temizlendi) |
+| M8 | verify Args-kısıtı kaldırıldı | extra-args testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0, ikinci koşu — ilki yüzey pinini düşürdü,
 D-220 müzakeresiyle güncellendi). Test sayısı **1251**.
+
+`make check` **yeşil** (exit 0). Test sayısı **1254**.
 
 ### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

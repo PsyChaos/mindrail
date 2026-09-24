@@ -23,6 +23,7 @@ func newVerifyCommand(o Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Evaluate staged changes through the shared gates",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVerify(cmd, o)
 		},

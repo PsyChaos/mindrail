@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/changes"
@@ -60,6 +61,8 @@ func New(changeService *changes.Service, indexes *index.Store, guard *testguard.
 // staged discovery reconciled into rows, global attribution, guard over
 // staged test files, bindings with knowledge severity, and the gate.
 // Unstaged worktree edits are invisible by construction (decision D-216).
+// The fixed "verify-staged" operation id converges repeat runs onto one
+// NULL change instead of minting a fresh retroactive row per call.
 func (s *Service) VerifyStaged(ctx context.Context, projectID, root string, runner git.CommandRunner) (Verdict, error) {
 	problems, err := loadProblems(ctx, root)
 	if err != nil {
@@ -126,6 +129,11 @@ func (s *Service) VerifyStaged(ctx context.Context, projectID, root string, runn
 		return Verdict{}, err
 	}
 	input.Guard = guard
+	drifted, err := s.stagedDrift(ctx, result.Change.ID)
+	if err != nil {
+		return Verdict{}, err
+	}
+	input.Attribution = append(input.Attribution, drifted...)
 	decision, err := gate.New().Evaluate(input)
 	if err != nil {
 		return Verdict{}, err
@@ -228,6 +236,36 @@ func anchor(ctx context.Context, indexes *index.Store, knowledge knowledgeScope,
 		}
 	}
 	return "", "", false
+}
+
+// stagedDrift names staged files outside each baselined task's declared
+// scope: the MR-008 drift rule applied to the commit under judgment.
+// Tasks without baselines declare nothing and never drift; the global
+// attribution above covers ownership, this covers scope.
+func (s *Service) stagedDrift(ctx context.Context, changeID string) ([]changes.Finding, error) {
+	scopes, err := s.changes.Store().ReadAllBaselines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	files, err := s.changes.Store().ReadChangeFiles(ctx, changeID)
+	if err != nil {
+		return nil, err
+	}
+	var out []changes.Finding
+	for taskID, scope := range scopes {
+		inScope := map[string]bool{}
+		for _, path := range scope {
+			inScope[path] = true
+		}
+		for _, file := range files {
+			if inScope[file.Path] {
+				continue
+			}
+			out = append(out, changes.ScopeDrift(taskID, changeID, file.Path,
+				file.Kind, "staged outside "+strconv.Itoa(len(scope))+" baseline paths", scope))
+		}
+	}
+	return out, nil
 }
 
 // guardStaged runs the guard over staged test files: before bytes from

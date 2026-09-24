@@ -44,6 +44,14 @@ func TestVerifyBareRefusesMode(t *testing.T) {
 	got.requireExit(t, app.ExitUsage)
 }
 
+// TestVerifyExtraArgsRefused pins exact invocation: stray positionals
+// refuse instead of judging a possibly-mistyped request as clean.
+func TestVerifyExtraArgsRefused(t *testing.T) {
+	repo := newInitializedRepo(t)
+	got := run(t, repo, "verify", "foo", "--staged", "--json")
+	got.requireExit(t, app.ExitUsage)
+}
+
 // TestVerifyStagedJudgesIndexNotWorktree pins decision D-216: staged A
 // with unstaged B on disk judges A twice identically. The worktree desk
 // is invisible (a broken desk is a known index-layer limitation, recorded

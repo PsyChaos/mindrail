@@ -289,3 +289,53 @@ func seedGuardRows(t *testing.T, fx stagedFixture, test, helperUID string) {
 		t.Fatal(err)
 	}
 }
+
+// TestVerifyStagedDriftDenies pins the staged drift rule: a staged file
+// outside a baselined task's scope denies with SCOPE_DRIFT through the
+// shared constructor.
+func TestVerifyStagedDriftDenies(t *testing.T) {
+	fx := newStagedFixture(t)
+	other := filepath.Join(fx.pkg, "b.py")
+	if err := os.WriteFile(other, []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitStage(t, fx.root, "add", "pkg/b.py")
+	if _, err := fx.store.CaptureBaseline(t.Context(), "TSK-A", []string{filepath.Join(fx.pkg, "a.py")}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	verdict, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict.Allow {
+		t.Fatalf("verdict = %+v, want DENY", verdict)
+	}
+	codes := denialCodes(t, verdict)
+	found := false
+	for _, code := range codes {
+		if code == "SCOPE_DRIFT" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("codes = %+v, want drift", codes)
+	}
+}
+
+// TestVerifyStagedUnbornHead pins the no-commit edge: without HEAD, staged
+// files judge against empty before-bytes instead of git errors.
+func TestVerifyStagedUnbornHead(t *testing.T) {
+	fx := newStagedFixture(t)
+	test := filepath.Join(fx.pkg, "test_a.py")
+	if err := os.WriteFile(test, []byte("def test_a():\n    assert x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitStage(t, fx.root, "add", "pkg/test_a.py")
+
+	verdict, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = verdict
+}
