@@ -37,4 +37,16 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1232**.
 
-### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-01 kapı — Reader: 3/3 CONFIRMED; Breaker: 6/6 REFUTED + 1 gözlem
+
+**Reader:** AC-01.1…AC-01.3 CONFIRMED; bulgu kaydı gerçeklikle eşleşiyor.
+
+**Breaker:** 6 sonda REFUTED (argv-redaksiyon, escape, katman-kazananı,
+sıralama-bağı, eksik-binary, boş-budget hepsi tutarlı). Gözlem (kapı-dışı,
+kayıtlı kısıt): runner `ErrText` error-satırlarına taşınmıyor — evidence
+başarısızlığı gerekçesiz kaydediyor; sebep kolonu şema değişimi ister,
+MR-017+ işi.
+
+**Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı (PENDING)
