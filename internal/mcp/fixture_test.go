@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,13 +162,8 @@ func callToolRaw(t *testing.T, server *mcp.Server, clientName string, tool strin
 		return err
 	}
 	if result.IsError {
-		return errCallToolFailed
+		raw, _ := json.Marshal(result.Content)
+		return fmt.Errorf("tool errored: %s", raw)
 	}
 	return nil
 }
-
-var errCallToolFailed = errorString("tool errored")
-
-type errorString string
-
-func (e errorString) Error() string { return string(e) }

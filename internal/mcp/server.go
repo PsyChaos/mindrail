@@ -6,58 +6,95 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
+	"github.com/PsyChaos/mindrail/internal/changes"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
+	"github.com/PsyChaos/mindrail/internal/index"
+	"github.com/PsyChaos/mindrail/internal/index/parser"
+	"github.com/PsyChaos/mindrail/internal/index/snapshot"
 	"github.com/PsyChaos/mindrail/internal/status"
 )
 
 // Tool names on the 0.1 wire.
 const (
-	ToolBootstrap = "mindrail_bootstrap"
-	ToolStatus    = "mindrail_status"
-	ToolSearch    = "mindrail_search"
-	ToolContext   = "mindrail_context"
-	ToolDecide    = "mindrail_decide"
-	ToolInvariant = "mindrail_invariant"
+	ToolBootstrap    = "mindrail_bootstrap"
+	ToolStatus       = "mindrail_status"
+	ToolSearch       = "mindrail_search"
+	ToolContext      = "mindrail_context"
+	ToolDecide       = "mindrail_decide"
+	ToolInvariant    = "mindrail_invariant"
+	ToolClaim        = "mindrail_claim"
+	ToolBeforeChange = "mindrail_before_change"
+	ToolAfterChange  = "mindrail_after_change"
+	ToolReconcile    = "mindrail_reconcile"
+	ToolCheckpoint   = "mindrail_checkpoint"
 )
 
-// Server binds six tools to one read-only application over a repository
-// root. The application starts once at construction — the same startup the
-// CLI runs — and every handler reads from it, so behavior cannot fork
-// (decision D-186). Close shuts the application down.
+// Server binds eleven tools to one read-write application over a
+// repository root. The application starts once at construction in ModeWrite
+// (existing database, no creation or migration) — the same startup the CLI
+// runs — and every handler reads from it, so behavior cannot fork
+// (decision D-186, mode D-195). Close shuts the application down.
 type Server struct {
-	impl    *sdk.Server
-	app     *bootstrap.App
-	root    string
-	started time.Time
+	impl     *sdk.Server
+	app      *bootstrap.App
+	changes  *changes.Service
+	store    *changes.Store
+	registry *parser.Registry
+	root     string
+	started  time.Time
 }
 
-// New starts a read-only application over root and registers all six
-// tools. The four read tools serve; decide and invariant refuse every call
-// until TASK-02 implements them — registered, never silent (decision
-// D-188 applied to the registry itself).
+// New starts a read-write application over root and registers the tools.
 func New(ctx context.Context, root string) (*Server, error) {
 	if root == "" {
 		return nil, Invalid("server needs a repository root")
 	}
 	application := bootstrap.New(bootstrap.Options{
 		StartDir: root,
-		Mode:     bootstrap.ModeReadOnly,
+		Mode:     bootstrap.ModeWrite,
 	})
 	if err := application.Start(ctx); err != nil {
 		return nil, err
 	}
+	registry, err := parser.NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	indexes := index.NewStore(application.DB(), app.SystemClock{})
+	indexer := index.NewIndexer(indexes, registry, snapshot.New(filesystem.RuntimePaths{
+		CacheDir: application.Paths().CacheDir,
+	}))
+	changeStore, err := changes.NewStore(application.DB(), app.SystemClock{})
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
+	changeService, err := changes.New(changeStore, indexes, indexer)
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
 	server := &Server{
-		impl:    sdk.NewServer(&sdk.Implementation{Name: "mindrail", Version: "0.1"}, nil),
-		app:     application,
-		root:    root,
-		started: time.Now(),
+		impl:     sdk.NewServer(&sdk.Implementation{Name: "mindrail", Version: "0.1"}, nil),
+		app:      application,
+		changes:  changeService,
+		store:    changeStore,
+		registry: registry,
+		root:     root,
+		started:  time.Now(),
 	}
 	server.registerReads()
+	server.registerLifecycle()
 	return server, nil
 }
 
-// Close shuts the application down.
+// Close shuts the application down and releases parser resources.
 func (s *Server) Close(ctx context.Context) error {
+	if s.registry != nil {
+		s.registry.Close()
+	}
 	return s.app.Shutdown(ctx)
 }
 
