@@ -60,6 +60,9 @@ func (s *Server) complete(ctx context.Context, _ *sdk.CallToolRequest, in Comple
 	if in.TaskID == "" {
 		return nil, CompleteOut{}, Invalid("complete needs a task")
 	}
+	if _, err := s.projectID(ctx, in.TaskID); err != nil {
+		return nil, CompleteOut{}, err
+	}
 	composed, err := s.compose(ctx, in.TaskID, in.Required)
 	if err != nil {
 		return nil, CompleteOut{}, err

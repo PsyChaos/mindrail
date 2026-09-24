@@ -71,9 +71,19 @@ stdio = subprocess'siz byte-stream (D-209 gerekçesi kayıtta).
 | M6 | boş-denials normalizasyonu kaldırıldı | allows testi FAIL |
 | M7 | guard-ailesi düşürüldü | guard testi FAIL |
 | M8 | complete boş-görev kontrolü kapatıldı | pin eklendi, FAIL |
+| M9 | bilinmeyen-görev çözümlemesi kapatıldı (kapı bulgusu) | refusal testi FAIL |
+| M10 | ambiguity-çapa kaldırıldı (kapı bulgusu) | anchored testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1239**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 2 CONFIRMED + 2 REFUTED-kısmi; Breaker: 6 REFUTED
+
+**Reader bulguları (kapatıldı):** ambiguity-ailesi pinsizdi → beat eklendi;
+stdio 6/13 smoke'tu → 13/13 + wire-dil düzeltmesi; bulgu kaydı güncellendi.
+
+**Breaker:** 6/6 REFUTED; bilinmeyen-görev ALLOW gözlemi fail-closed'a
+çevrildi (projectID çözümlemesi; pin + M9).
+
+**Karar:** TASK-02 KAPANDI.

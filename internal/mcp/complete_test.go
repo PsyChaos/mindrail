@@ -464,3 +464,54 @@ func TestCompleteVersionErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestCompleteDeniesAnchoredAmbiguity is the fifth family beat: an
+// ambiguity anchored to an active CRITICAL invariant denies with the
+// identity code.
+func TestCompleteDeniesAnchoredAmbiguity(t *testing.T) {
+	root := newTestRepo(t)
+	server := newTestServer(t, root)
+	coord, db := coordinationStore(t, root)
+	workspaceID, projectID := workspaceOf(t, db)
+	taskID, _ := openTaskAndSession(t, coord, workspaceID, projectID)
+	registerUnit(t, db, filepath.Join(root, "pkg"))
+	seedIdentity(t, db, "SYM-A-1", "amb-key")
+	seedBinding(t, db, "INV-A", "SYM-A-1", "bound")
+	writeInvariantFile(t, root, "INV-A", "CRITICAL")
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO symbol_identity_ambiguities
+		(unit_id, removed_uid, removed_key, candidate_keys, created_at)
+		SELECT unit_id, 'SYM-A-1', 'amb-key', '["k1","k2"]', '2026-09-23T10:00:00Z'
+		FROM symbol_identities WHERE symbol_uid = 'SYM-A-1'`); err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(root, "pkg", "a.py")
+	callTool(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
+		"task_id": taskID, "paths": []string{abs},
+	})
+	seedChangeRows(t, db, taskID, abs, "amb-key", "SYM-A-1")
+
+	out := callTool(t, server, "probe", mcp.ToolComplete, map[string]any{"task_id": taskID})
+	if allow, ok := out["allow"].(bool); !ok || allow {
+		t.Fatalf("complete = %+v, want DENY", out)
+	}
+	codes := denialCodes(t, out)
+	found := false
+	for _, code := range codes {
+		if code == "SYMBOL_IDENTITY_AMBIGUOUS" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("codes = %+v, want anchored ambiguity", codes)
+	}
+}
+
+// TestCompleteRefusesUnknownTask pins fail-closed composition: completion
+// of a task the repository never held refuses instead of allowing empty.
+func TestCompleteRefusesUnknownTask(t *testing.T) {
+	root := newTestRepo(t)
+	server := newTestServer(t, root)
+	if err := callToolRaw(t, server, "probe", mcp.ToolComplete, map[string]any{"task_id": "TSK-NOPE"}); err == nil {
+		t.Fatal("unknown task allowed")
+	}
+}
