@@ -41,6 +41,13 @@ func contentHash(path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// contentHashBytes hashes bytes already read: the index form of contentHash
+// for staged bytes that never touch the disk.
+func contentHashBytes(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
 // CaptureBaseline replaces one task's baseline with its scope's current
 // hashes (decision D-116): no stacking, so the latest call is the truth
 // about what the agent declared. Scope paths must be clean and absolute;

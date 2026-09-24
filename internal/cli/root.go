@@ -115,6 +115,9 @@ func NewRootWith(o Options) *Root {
 		newTaskCommand(o),
 		newCheckpointCommand(o),
 		newLeaseCommand(o),
+		newVerifyCommand(o),
+		newKnowledgeCommand(o),
+		newHookCommand(o),
 	)
 
 	// A help command of our own, because cobra's prints the whole root help on

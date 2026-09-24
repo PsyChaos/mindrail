@@ -64,6 +64,74 @@ func (s *Store) DiscoverFilesGit(ctx context.Context, runner git.CommandRunner, 
 	return files, nil
 }
 
+// DiscoverFilesStaged reads the index change set: what the next commit
+// would record, never the worktree desk (decision D-216). Hashes and
+// exclusions ride the shared gitFile path; only the entry source and the
+// content bytes differ.
+func (s *Store) DiscoverFilesStaged(ctx context.Context, runner git.CommandRunner, root string) ([]FileChange, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if root == "" {
+		return nil, invalidInput("staged discovery needs a worktree root")
+	}
+	entries, err := git.StagedEntries(ctx, runner, root)
+	if err != nil {
+		return nil, err
+	}
+	var files []FileChange
+	for _, entry := range entries {
+		changed, err := s.stagedFile(ctx, runner, root, entry)
+		if err != nil {
+			return nil, err
+		}
+		if changed != nil {
+			files = append(files, *changed)
+		}
+	}
+	return files, nil
+}
+
+// stagedFile maps one staged entry onto a file delta with index bytes.
+// Deleted paths carry no bytes; everything else hashes what the commit
+// would record, never what the disk holds now.
+func (s *Store) stagedFile(ctx context.Context, runner git.CommandRunner, root string, entry git.StatusEntry) (*FileChange, error) {
+	if entry.Path == "" || strings.Contains(entry.Path, "\\") {
+		return nil, invalidInput("git entry names no usable path")
+	}
+	if excludedPath(entry.Path) {
+		return nil, nil
+	}
+	abs := filepath.Join(root, filepath.FromSlash(entry.Path))
+	if !isBelow(root, abs) {
+		return nil, invalidInput("git entry escapes its worktree root")
+	}
+	kind, oldRel := entryKind(entry)
+	changed := &FileChange{Path: abs, Kind: kind, Via: ViaReconcile}
+	if oldRel != "" {
+		oldAbs := filepath.Join(root, filepath.FromSlash(oldRel))
+		if !isBelow(root, oldAbs) {
+			return nil, invalidInput("git rename source escapes its worktree root")
+		}
+		changed.OldPath = oldAbs
+	}
+	if kind == FileDeleted {
+		return changed, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	content, found, err := git.ShowStaged(ctx, runner, root, entry.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, invalidInput("staged entry has no index bytes: " + entry.Path)
+	}
+	changed.Hash = contentHashBytes(content)
+	return changed, nil
+}
+
 // gitFile maps one porcelain entry onto a file delta, or nil when the entry
 // names excluded machinery. Malformed repository-relative spellings fail the
 // discovery closed rather than joining it half-read.
