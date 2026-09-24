@@ -87,3 +87,16 @@ stdio 6/13 smoke'tu → 13/13 + wire-dil düzeltmesi; bulgu kaydı güncellendi.
 çevrildi (projectID çözümlemesi; pin + M9).
 
 **Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı (kapıda) | `make verify` + `make tidy-check` + sayı aşağıda. |
+| AC-03.2 | Karşılandı | Grep kanıtı: kod 46 (tek yeni yok); 13 tool kaydı (6+3+2+2); CLI komutu yok; mcp'de tablo yok. |
+| AC-03.3 | Karşılandı (kapıda) | M1…M10 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1241**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
