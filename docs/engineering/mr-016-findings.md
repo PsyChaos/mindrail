@@ -50,3 +50,30 @@ MR-017+ işi.
 **Karar:** TASK-01 KAPANDI.
 
 ## TASK-02 kabul kanıtı (PENDING)
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | ALLOW-temiz + attribution/stale/orphaned/guard DENY'leri, hepsi gerçek kompozisyonla (`TestComplete*`). |
+| AC-02.2 | Karşılandı | Stale-evidence tool'dan gate-unit ile aynı kod + profil-remedy (`TestCompleteDeniesStaleEvidence`). |
+| AC-02.3 | Karşılandı | 3 parametre × 2 tool version-error, kodlu + next_action'lı (`TestCompleteVersionErrors` + validate). |
+| AC-02.4 | Karşılandı | Stdio 13-tool discover + smoke-hepsi (`TestStdioDiscoversThirteenTools`; net.Pipe JSON-framed = wire). |
+
+**Tasarım notları:** guard trigger gap-fill (`complete` trigger sabiti);
+stdio = subprocess'siz byte-stream (D-209 gerekçesi kayıtta).
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M5 | budget-kontrolü kapatıldı | version testi FAIL |
+| M6 | boş-denials normalizasyonu kaldırıldı | allows testi FAIL |
+| M7 | guard-ailesi düşürüldü | guard testi FAIL |
+| M8 | complete boş-görev kontrolü kapatıldı | pin eklendi, FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1239**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

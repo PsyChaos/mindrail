@@ -22,6 +22,9 @@ const (
 	TriggerReconcile   = "reconcile"
 	TriggerStaged      = "staged"
 	TriggerCI          = "ci"
+	// TriggerComplete provenances guard findings evaluated inside
+	// completion (MR-016): same analysis, completion as the caller.
+	TriggerComplete = "complete"
 )
 
 // Languages. tsx shares the typescript analyzer.
@@ -188,7 +191,7 @@ func (s *Service) Evaluate(ctx context.Context, request Request) (Result, error)
 		return Result{}, err
 	}
 	switch request.Trigger {
-	case TriggerAfterChange, TriggerReconcile, TriggerStaged, TriggerCI:
+	case TriggerAfterChange, TriggerReconcile, TriggerStaged, TriggerCI, TriggerComplete:
 	default:
 		return Result{}, invalidInput("evaluation needs a known trigger")
 	}

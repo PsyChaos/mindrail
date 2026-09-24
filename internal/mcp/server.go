@@ -14,6 +14,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/index/parser"
 	"github.com/PsyChaos/mindrail/internal/index/snapshot"
 	"github.com/PsyChaos/mindrail/internal/status"
+	"github.com/PsyChaos/mindrail/internal/testguard"
 	"github.com/PsyChaos/mindrail/internal/validation"
 )
 
@@ -43,6 +44,9 @@ type Server struct {
 	changes  *changes.Service
 	store    *changes.Store
 	valid    *validation.Service
+	evidence *validation.Store
+	indexes  *index.Store
+	guard    *testguard.Service
 	registry *parser.Registry
 	root     string
 	started  time.Time
@@ -98,12 +102,20 @@ func New(ctx context.Context, root string) (*Server, error) {
 		registry.Close()
 		return nil, err
 	}
+	guard, err := testguard.New()
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
 	server := &Server{
 		impl:     sdk.NewServer(&sdk.Implementation{Name: "mindrail", Version: "0.1"}, nil),
 		app:      application,
 		changes:  changeService,
 		store:    changeStore,
 		valid:    valid,
+		evidence: evidenceStore,
+		indexes:  indexes,
+		guard:    guard,
 		registry: registry,
 		root:     root,
 		started:  time.Now(),
@@ -115,10 +127,13 @@ func New(ctx context.Context, root string) (*Server, error) {
 	return server, nil
 }
 
-// Close shuts the application down and releases parser resources.
+// Close shuts the application down and releases parser and guard resources.
 func (s *Server) Close(ctx context.Context) error {
 	if s.registry != nil {
 		s.registry.Close()
+	}
+	if s.guard != nil {
+		s.guard.Close()
 	}
 	return s.app.Shutdown(ctx)
 }
