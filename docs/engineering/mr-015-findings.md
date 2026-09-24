@@ -71,4 +71,21 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1229**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 3 CONFIRMED + 1 UNCONFIRMED→KAPANDI; Breaker: 6 REFUTED
+
+**Reader:** AC-02.1/02.2/02.4 CONFIRMED. AC-02.3 state-görünürlük şerhi
+kapatıldı: lifecycle'a twin-overlap pending-beati eklendi.
+
+**Breaker:** 6/6 REFUTED (op-id görev-kapsamlı, boş-read refuse, note-hash
+idempotency, silinmiş-dosya, handoff-sıralama, yakınsama hepsi tutarlı).
+
+**Karar:** TASK-02 KAPANDI.
+
+---
+
+## MR-015 kapanış
+
+Üç görev kapandı (TASK-01…02 + TASK-03 kanıt), 10 mutant kırmızı, `make
+verify` + `make tidy-check` yeşil, 1229 test. MR-016'ya devir (Durum
+bloğundaki gibi): onbir-tool server → validation/completion; handover'lar
+→ CI; op-id'ler → retry.

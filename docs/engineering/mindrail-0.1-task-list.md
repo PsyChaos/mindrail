@@ -728,10 +728,29 @@ refusal-kodları (ajanlara).
 
 #### Kabul kriterleri
 
-- [ ] Beş aracın başarı, idempotent retry, conflict ve ambiguity contract testleri bulunur.
-- [ ] `before_change` opsiyonel optimizasyon, `reconcile` kanonik doğruluk yolu olarak kalır.
-- [ ] Checkpoint farklı AgentSession tarafından okunabilir.
-- [ ] Tool sonuçları pending/partial durumları ve `next_action` taşır.
+- [x] Beş aracın başarı, idempotent retry, conflict ve ambiguity contract testleri bulunur.
+- [x] `before_change` opsiyonel optimizasyon, `reconcile` kanonik doğruluk yolu olarak kalır.
+- [x] Checkpoint farklı AgentSession tarafından okunabilir.
+- [x] Tool sonuçları pending/partial durumları ve `next_action` taşır.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de containment + replay + mesaj
+pinleri kapatıldı (M5, M6). TASK-02'de reconcile/checkpoint/lifecycle
+kapandı; Reader'ın state-görünürlük şerhi twin-overlap beatiyle kapatıldı.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-015-requirements.md](mr-015-requirements.md),
+[mr-015-design.md](mr-015-design.md), `5b42d40`), kararlar D-195…D-204:
+D-195 tek-server-ModeWrite, D-196 servis-bağlama, D-197 opsiyonel-declare,
+D-200 note-var/yok-iki-yön. Kod 46, göç yok. 11 tool tek server'da.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1229
+test (MR-015 başında 1223 idi). 10 guard mutasyonu kırmızı koşuldu
+(M1…M10). Kapıların MR-016'ya bıraktıkları: onbir-tool server
+(validation/completion araçları genişletir), handover'lar (CI okur),
+op-id'ler (retry protokolü).
 
 ---
 

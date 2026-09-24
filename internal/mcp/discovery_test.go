@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/changes"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/mcp"
 )
 
@@ -130,12 +133,67 @@ func TestLifecycleAcrossIdentities(t *testing.T) {
 	callTool(t, server, "agent-1", mcp.ToolBeforeChange, map[string]any{
 		"task_id": taskID, "paths": []string{abs},
 	})
+	// A twin declares the same file: agent-1's after_change carries
+	// pending with remedies, pinning state visibility in the lifecycle.
+	twin, _, err := coord.OpenTask(t.Context(), projectID,
+		coordination.NamedSession(second.ID), "Twin work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callTool(t, server, "agent-2", mcp.ToolBeforeChange, map[string]any{
+		"task_id": twin.ID, "paths": []string{abs},
+	})
 	if err := os.WriteFile(abs, []byte("def helper():\n    return 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	after := callTool(t, server, "agent-1", mcp.ToolAfterChange, map[string]any{"task_id": taskID})
 	if after["change_id"] == "" {
 		t.Fatalf("after = %+v", after)
+	}
+	// Seed the twin's rows from A's lineage (real twin discovery would
+	// consume the shared index — MR-007 lesson): agent-1's next answer
+	// carries pending with remedies, pinning state visibility.
+	changeStore, err := changes.NewStore(db, app.FixedClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeID, _ := after["change_id"].(string)
+	aSymbols, err := changeStore.ReadChangeSymbols(t.Context(), changeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeTwin, err := changeStore.EnsureOpenChange(t.Context(), twin.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := changeStore.UpsertFileRows(t.Context(), changeTwin.ID, []changes.FileChange{
+		{Path: abs, Kind: changes.FileModified, Via: changes.ViaReconcile},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var lineage []changes.SymbolChange
+	for _, symbol := range aSymbols {
+		lineage = append(lineage, changes.SymbolChange{
+			Key: symbol.Key, UID: symbol.UID, Kind: symbol.Kind,
+			Body: symbol.Body, Signature: symbol.Signature, Structure: symbol.Structure,
+			SigHash: symbol.SigHash, BodyHash: symbol.BodyHash, StructHash: symbol.StructHash,
+			Via: changes.ViaReconcile,
+		})
+	}
+	if err := changeStore.UpsertSymbolRows(t.Context(), changeTwin.ID, lineage); err != nil {
+		t.Fatal(err)
+	}
+	pending := callTool(t, server, "agent-1", mcp.ToolAfterChange, map[string]any{"task_id": taskID})
+	if ok, _ := pending["pending"].(bool); !ok {
+		t.Fatalf("after = %+v, want pending with twin overlap", pending)
+	}
+	findings, ok := pending["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("pending = %+v, want findings", pending)
+	}
+	blocked, ok := findings[0].(map[string]any)
+	if !ok || blocked["code"] == "" || blocked["next_action"] == nil {
+		t.Fatalf("finding = %+v, want code + next_action", findings[0])
 	}
 	rediscovered := callTool(t, server, "agent-2", mcp.ToolReconcile, map[string]any{"task_id": taskID})
 	if rediscovered["change_id"] != after["change_id"] {
