@@ -50,6 +50,9 @@ func runKnowledgeValidate(cmd *cobra.Command, o Options) error {
 	defer shutdown(cmd.Context(), application, inv.logger)
 
 	return application.Run(cmd.Context(), func(ctx context.Context, a *bootstrap.App) error {
+		if _, verdict := a.Diagnosis(ctx); verdict != nil {
+			return inv.emit(nil, nil, a.Warnings(), a.Config().Config.Output.Color, verdict)
+		}
 		store := a.Subject().Knowledge
 		type problem struct {
 			Path    string `json:"path"`

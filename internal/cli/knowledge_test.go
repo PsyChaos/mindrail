@@ -27,11 +27,11 @@ func TestKnowledgeValidateClean(t *testing.T) {
 	}
 }
 
-// TestKnowledgeValidateCorruptFailsClosed is TASK-01 AC-01.3: a
+// TestKnowledgeValidateNewerSchemaFailsClosed is TASK-01 AC-01.3: a
 // newer-than-binary record fails the whole validation with its code
-// before any source check. (Malformed JSON is a listed non-fatal problem;
-// an unreadable schema version is fatal.)
-func TestKnowledgeValidateCorruptFailsClosed(t *testing.T) {
+// before any source check. (Malformed JSON is a listed non-fatal problem
+// by loader design — see the AC-01.3 deviation note in findings.)
+func TestKnowledgeValidateNewerSchemaFailsClosed(t *testing.T) {
 	repo := newInitializedRepo(t)
 	dir := filepath.Join(repo, ".mindrail", "knowledge", "decisions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -48,8 +48,23 @@ func TestKnowledgeValidateCorruptFailsClosed(t *testing.T) {
 	}
 }
 
-// TestVerifyStagedKnowledgeFirst pins the D-217 ordering: corrupt knowledge
-// denies verify before any source evaluation runs.
+// TestKnowledgeValidateStoreRootNotDir is Breaker B-3's repro as a pin:
+// a store root that is not a directory fails closed instead of reporting
+// an empty success.
+func TestKnowledgeValidateStoreRootNotDir(t *testing.T) {
+	repo := newInitializedRepo(t)
+	root := filepath.Join(repo, ".mindrail", "knowledge")
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := run(t, repo, "knowledge", "validate", "--json")
+	if got.code == app.ExitSuccess {
+		t.Fatalf("file-root knowledge validated: %s", got.stdout)
+	}
+}
 func TestVerifyStagedKnowledgeFirst(t *testing.T) {
 	repo := newInitializedRepo(t)
 	dir := filepath.Join(repo, ".mindrail", "knowledge", "decisions")
