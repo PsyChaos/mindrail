@@ -73,3 +73,27 @@ bilinen kısıt); symlink içerik-dışı hash'leniyor (zararsız).
 kayıt yanlıştı).
 
 **Karar:** TASK-01 KAPANDI (AC-01.3 şerhli).
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Yoktan-var + yabancı-içerik testleri (`TestHookInstall*`). |
+| AC-02.2 | Karşılandı | İkinci kurulum bayt-aynı + satır-birleşme pini (aynı testler). |
+| AC-02.3 | Karşılandı | Clean/allow/denial (unregistered + guard) gerçek komutlarla (verify + hook testleri). |
+| AC-02.4 | Karşılandı | Blok `verify --staged` çağırıyor + exit taşıyor (`TestHookBlockExecutesVerify`, fixture-binary notuyla). |
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M9 | marker'lar değiştirildi | hook testleri FAIL |
+| M10 | idempotency-kontrolü kapatıldı | append testi FAIL |
+| M11 | blok-gövdesi değiştirildi (`verify` bayraksız) | execution testi FAIL |
+| M12 | newline-birleşimi kaldırıldı | ilk varyant yeşildi (fixture hep newline'lı) → newlinesiz vaka eklendi, FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1260**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
