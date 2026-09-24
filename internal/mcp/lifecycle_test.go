@@ -118,6 +118,25 @@ func TestClaimLifecycle(t *testing.T) {
 	if guarded["state"] != "CLAIMED" {
 		t.Fatalf("guarded claim = %+v", guarded)
 	}
+	// Same operation id twice on a fresh task: first delivery writes,
+	// second replays it without re-executing.
+	third, _, err := coord.OpenTask(t.Context(), projectID,
+		coordination.NamedSession(session), "Third work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed := callTool(t, server, "probe", mcp.ToolClaim, map[string]any{
+		"task_id": third.ID, "session": session, "operation_id": "OP-CLAIM-1",
+	})
+	again := callTool(t, server, "probe", mcp.ToolClaim, map[string]any{
+		"task_id": third.ID, "session": session, "operation_id": "OP-CLAIM-1",
+	})
+	if replayed["state"] != "CLAIMED" || again["state"] != "CLAIMED" {
+		t.Fatalf("replay = %+v / %+v", replayed, again)
+	}
+	if replayed["replayed"] != false || again["replayed"] != true {
+		t.Fatalf("replay flags = %+v / %+v, want false then true", replayed, again)
+	}
 }
 
 // TestBeforeChangeDeclaresScope is TASK-01 AC-01.2: baseline summary with
@@ -127,8 +146,16 @@ func TestBeforeChangeDeclaresScope(t *testing.T) {
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
 	workspaceID, projectID := workspaceOf(t, db)
-	taskID, _ := openTaskAndSession(t, coord, workspaceID, projectID)
+	taskID, session := openTaskAndSession(t, coord, workspaceID, projectID)
 	abs := filepath.Join(root, "pkg", "a.py")
+	// Declaring after a claim works identically: claim is never required,
+	// and never in the way.
+	claimed := callTool(t, server, "probe", mcp.ToolClaim, map[string]any{
+		"task_id": taskID, "session": session,
+	})
+	if claimed["state"] != "CLAIMED" {
+		t.Fatalf("claim = %+v", claimed)
+	}
 
 	declared := callTool(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
 		"task_id": taskID, "paths": []string{abs},
@@ -139,10 +166,24 @@ func TestBeforeChangeDeclaresScope(t *testing.T) {
 	if files, ok := declared["files"].(float64); !ok || files != 1 {
 		t.Fatalf("declare = %+v, want 1 file", declared)
 	}
+	scope, ok := declared["scope"].([]any)
+	if !ok || len(scope) != 1 || scope[0] != abs {
+		t.Fatalf("declare = %+v, want scope listing the path", declared)
+	}
+	if err := callToolRaw(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
+		"task_id": taskID, "paths": []string{"/etc/passwd"},
+	}); err == nil {
+		t.Fatal("out-of-repo scope accepted")
+	}
 	if err := callToolRaw(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
 		"task_id": "", "paths": []string{abs},
 	}); err == nil {
 		t.Fatal("empty task accepted")
+	}
+	if err := callToolRaw(t, server, "probe", mcp.ToolAfterChange, map[string]any{
+		"task_id": "",
+	}); err == nil {
+		t.Fatal("empty after_change task accepted")
 	}
 }
 

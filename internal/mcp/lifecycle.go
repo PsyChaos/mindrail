@@ -2,13 +2,26 @@ package mcp
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/PsyChaos/mindrail/internal/changes"
 	"github.com/PsyChaos/mindrail/internal/coordination"
 )
+
+// insideRoot reports whether an absolute path resolves inside the
+// repository root. Scope declaration is worktree-bound: the change store
+// leaves containment to callers, and this tool is the caller (Breaker B-1).
+func insideRoot(root, path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	clean := filepath.Clean(path)
+	return clean == root || strings.HasPrefix(clean, root+string(filepath.Separator))
+}
 
 func (s *Server) changeStore() *changes.Store {
 	return s.store
@@ -97,6 +110,11 @@ type BeforeChangeOut struct {
 func (s *Server) beforeChange(ctx context.Context, _ *sdk.CallToolRequest, in BeforeChangeIn) (*sdk.CallToolResult, BeforeChangeOut, error) {
 	if in.TaskID == "" || len(in.Paths) == 0 {
 		return nil, BeforeChangeOut{}, Invalid("before_change needs a task and paths")
+	}
+	for _, path := range in.Paths {
+		if !insideRoot(s.root, path) {
+			return nil, BeforeChangeOut{}, Invalid("before_change scope escapes the repository")
+		}
 	}
 	var operationID string
 	if in.OperationID != nil {

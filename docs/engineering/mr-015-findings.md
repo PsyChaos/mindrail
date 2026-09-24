@@ -31,9 +31,20 @@ bayrağı yalnızca yayan serviste (claim), after_change kimlikle kanıtlıyor
 | M2 | pending sabit-false | ilk varyant pinsizdi (yeşil) → twin-ambiguity beati eklendi, FAIL |
 | M3 | claim validasyonu kapatıldı | ilk varyant maskeli (store da reddediyor) → mesaj-pini eklendi, FAIL |
 | M4 | ModeWrite → ReadOnly | claim/after testleri FAIL |
+| M5 | containment kaldırıldı (kapı bulgusu) | escape testi FAIL |
+| M6 | replayed bayrağı düşürüldü (kapı bulgusu) | replay testi FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1226**.
 
-### TASK-01 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-01 kapı — Reader: 4/4 CONFIRMED + gaps; Breaker: 5 REFUTED + 1 GAP→KAPANDI
+
+**Reader gaps (kapatıldı):** claim-replay, scope-içerik, with-claim,
+after-empty, conflict-kod, mesaj-pinleri — tamamı testlere eklendi.
+
+**Breaker B-1 (containment, KAPATILDI):** `/etc/passwd` yakalanıyordu.
+Düzeltme: tool-katmanı worktree-containment (`insideRoot`); pin eklendi
+(M5 kırmızı).
+
+**Karar:** TASK-01 KAPANDI.
