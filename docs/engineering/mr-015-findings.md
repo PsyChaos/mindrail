@@ -48,3 +48,27 @@ Düzeltme: tool-katmanı worktree-containment (`insideRoot`); pin eklendi
 (M5 kırmızı).
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Beyansız reconcile keşfi + replay; mesaj-pinli refuse (`TestReconcileDiscoversUndeclared`). |
+| AC-02.2 | Karşılandı | Session'lar-arası handover; note-var/yok iki yön; bilinmeyen reddi (`TestCheckpointCrossSessionRead`). |
+| AC-02.3 | Karşılandı | İki kimlikli tam yaşam döngüsü + 11-tool kaydı (`TestLifecycleAcrossIdentities`). |
+| AC-02.4 | Karşılandı | Kayıt 11 tool; kod 46; tablo/komut yok (aşağıda). |
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M5 | reconcile boş-görev kontrolü kapatıldı | mesaj-pini eklendi, FAIL |
+| M6 | readable_by boşaltıldı | tip-assertion piniyle FAIL (nil/"" tuzağı atlatıldı) |
+| M7 | reconcile AfterChange'e bağlandı | keşif testi FAIL (kanonik-yol pini) |
+| M8 | checkpoint kaydı silindi | lifecycle/checkpoint testleri FAIL |
+
+Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
+
+`make check` **yeşil** (exit 0). Test sayısı **1229**.
+
+### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)

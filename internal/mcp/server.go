@@ -87,6 +87,7 @@ func New(ctx context.Context, root string) (*Server, error) {
 	}
 	server.registerReads()
 	server.registerLifecycle()
+	server.registerDiscovery()
 	return server, nil
 }
 
