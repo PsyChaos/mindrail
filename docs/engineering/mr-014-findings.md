@@ -97,3 +97,16 @@ kısıt, takip-işi, kapı-dışı.
 **Karar:** TASK-02 KAPANDI.
 
 ## TASK-03 kabul kanıtı (PENDING)
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı (kapıda) | `make verify` + `make tidy-check` + sayı aşağıda. |
+| AC-03.2 | Karşılandı | Grep kanıtı: tek yeni kod (46); 6 tool kaydı; CLI komutu yok; mcp'de tablo yok; diagnostiklerde değer yankısı yok (alanlar yalnızca kayda akar). `mcpCompatibility="none"` bilinçli korunuyor: serving yok (D-191), aggregate cevap hâlâ dürüst. |
+| AC-03.3 | Karşılandı (kapıda) | M1…M10 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1223**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
