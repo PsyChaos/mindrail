@@ -687,11 +687,32 @@ Resmî MCP Go SDK üzerinden `mindrail_bootstrap`, `mindrail_status`, `mindrail_
 
 #### Kabul kriterleri
 
-- [ ] CLI ve MCP aynı application servislerini kullanır; davranış fork'u oluşmaz.
-- [ ] Tool input/output şemaları contract testleriyle sabitlenir.
-- [ ] Ertelenmiş `full`, `impact_group`, cursor/page size veya `candidate` değerleri sessizce düşürülmez.
-- [ ] Desteklenmeyen değer `NOT_IMPLEMENTED_IN_THIS_VERSION` ve `next_action` döndürür.
-- [ ] En az iki farklı MCP client uyumunu simüle eden contract fixture bulunur.
+- [x] CLI ve MCP aynı application servislerini kullanır; davranış fork'u oluşmaz.
+- [x] Tool input/output şemaları contract testleriyle sabitlenir.
+- [x] Ertelenmiş `full`, `impact_group`, cursor/page size veya `candidate` değerleri sessizce düşürülmez.
+- [x] Desteklenmeyen değer `NOT_IMPLEMENTED_IN_THIS_VERSION` ve `next_action` döndürür.
+- [x] En az iki farklı MCP client uyumunu simüle eden contract fixture bulunur.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de altı-tool kaydı + rapor
+eşdeğerliği kapıda kapatıldı. TASK-02'de write araçları + deferred matris
++ iki-client fixture'ı kapandı (M9'da pin güçlendirme). TASK-03 kapıları
+temizdi (wire-isimleri + description'lar Breaker-probe'uyla doğrulandı).
+
+Sözleşme koda başlanmadan donduruldu
+([mr-014-requirements.md](mr-014-requirements.md),
+[mr-014-design.md](mr-014-design.md), `273090a`), kararlar D-185…D-194:
+D-185 resmi-SDK, D-186 bağla-çatallama, D-188 yüksek-sesli-ret, D-190
+sınırlı-arama, D-191 komutsuz-sunucusuz. Kod 46 (tek yeni), göç yok. Yeni
+paket `internal/mcp` (6 tool, tipli handler'lar).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1223
+test (MR-014 başında 1215 idi). 10 guard mutasyonu kırmızı koşuldu
+(M1…M10). Kapıların MR-015'e bıraktıkları: tool yüzeyi (koordinasyon/
+değişiklik araçları aynı server'a), kayıt dosyaları (CI okur),
+refusal-kodları (ajanlara).
 
 ---
 

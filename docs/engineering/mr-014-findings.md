@@ -109,4 +109,21 @@ kısıt, takip-işi, kapı-dışı.
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1223**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: AC-03.1 UNCONFIRMED-güven + AC-03.2 CONFIRMED; Breaker: 5 REFUTED
+
+**Reader:** sayı + non-goal + ledger CONFIRMED; verify/tidy güven-notuyla
+(kapı-remiti gereği koşulmadı — bulgu kaydı geçerli).
+
+**Breaker:** tüm suitler yeşil; SDK v1.8.0 sabit; wire-isimleri birebir 6;
+description'lar dolu; kriterler süreç-doğru bekliyor.
+
+**Karar:** TASK-03 KAPANDI.
+
+---
+
+## MR-014 kapanış
+
+Üç görev kapandı (TASK-01…03), 10 mutant kırmızı, `make verify` +
+`make tidy-check` yeşil, 1223 test. MR-015'e devir (Durum bloğundaki gibi):
+tool yüzeyi → koordinasyon/değişiklik; kayıt dosyaları → CI;
+refusal-kodları → ajanlar.
