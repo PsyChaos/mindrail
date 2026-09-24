@@ -1,22 +1,21 @@
 # Graph Report - Mindrail  (2026-09-24)
 
 ## Corpus Check
-- 471 files · ~778,824 words
+- 478 files · ~785,309 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 6040 nodes · 16036 edges · 332 communities (302 shown, 21 thin omitted)
-- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 2485 edges (avg confidence: 0.85)
+- 6120 nodes · 16231 edges · 326 communities (296 shown, 20 thin omitted)
+- Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 2522 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `6ffbdf8c`
+- Built from commit: `d5586f29`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - MINDRAIL PROTOCOL Managed Section
-- mindrail-0.1-task-list.md
 - mindrail-tech-stack.md
 - mindrail-technical-specification-1.0.md
 - 129. Acceptance criteria
@@ -31,19 +30,19 @@
 - ADR-0001 — Primary language and CLI stack
 - github.com/PsyChaos/mindrail
 - coordination_agreement_test.go
-- Config
+- config/loader.go
 - MR-011 — Design
-- Server
+- changesFixtureDB
 - newInitializedRepo
 - New
 - New
 - status/render_test.go
 - 2. Decisions
 - checks.go
-- KnowledgeCheck
+- healthySubject
 - NewAdapter
 - What You Must Do When Invoked
-- newImpactFixture
+- invalidInput
 - 2. Decisions
 - RuntimePathCheck
 - initReportOf
@@ -51,7 +50,7 @@
 - Build
 - validate.py
 - Phase 3 — Doc ↔ Code consistency
-- Check
+- subject
 - status/render.go
 - Final report
 - properties
@@ -74,7 +73,7 @@
 - changeset.py
 - test_inventory.py
 - 2. Decisions
-- runWith
+- agreement_hostilefs_linux_test.go
 - inventory.py
 - Reconciliation — Refutation, Not Agreement
 - Planning (Phases 0–7)
@@ -84,7 +83,7 @@
 - State
 - Reader Protocol — Conformance
 - graphify reference: extra exports and benchmark
-- shippedValidator
+- Check
 - required
 - Documentation ↔ Codebase Consistency & Integrity Auditor
 - Evidence (Phases 8–13)
@@ -105,7 +104,7 @@
 - graphify reference: add a URL and watch a folder
 - graphify reference: commit hook and native CLAUDE.md integration
 - graphify reference: incremental update and cluster-only
-- Probe
+- .search
 - created_at
 - decision
 - id
@@ -117,7 +116,7 @@
 - CLAUDE.md
 - .claude/CLAUDE.md
 - extraction-spec.md
-- Subject
+- Component
 - 128. Hedef implementation workstream'leri
 - impacted_tests.py
 - 4. The confirmed defects
@@ -129,17 +128,17 @@
 - NamedSession
 - MR-005 — Bulgular ve kapı kaydı
 - 2. Requirements
-- cli/arch_test.go
+- errorStore
 - Root
-- Migrator
+- context.Context
 - WriteFailure
 - Open
 - Facts
 - NewRootWith
 - testguard.go
-- NewError
+- newFixture
 - mindrail-0.1-kernel-scope.md
-- index/store.go
+- 2. Decisions
 - writable.go
 - refuseUnrepresentableJSON
 - record/errors.go
@@ -152,10 +151,10 @@
 - 1. Decisions this document freezes
 - NewRoot
 - 95. Knowledge schema ve CI doğrulama pipeline'ı
-- changesFixtureDB
+- newTestRepo
 - MR-004 — design: leases, idempotent mutations and optimistic revision
-- newFixture
-- gate.go
+- New
+- cli/arch_test.go
 - MR-003 — design: sequential agent handover
 - pathsAt
 - MR-002 — audit package
@@ -166,7 +165,7 @@
 - 121. Failure modes
 - 1. Decisions this document freezes
 - MEDIUM
-- TestBrokenGitFileDetectionDoesNotOverFire
+- TestDanglingGitFileIsNotDiagnosedAsAnAbsentRepository
 - 2. Implementation Principles
 - 24. Durable symbol identity, rename ve orphan protection
 - 57. Candidate invariant trigger'ları
@@ -180,24 +179,24 @@
 - 20. Confidence artık global tek sayı değildir
 - 61. Multi-agent çalışma modları
 - 7. Data plane ayrımı
-- errorStore
+- record_internal_test.go
 - created_at
 - indexerFixture
 - git/adapter.go
-- Check
+- Subject
 - .Record
 - 2. Decisions
-- TestAStepsMessageCarriesTheFactsItsRemedyNeeds
-- coherence_test.go
-- 3. IN Scope
-- Warning
+- writability_test.go
 - agreement_test.go
-- Verdict
+- 3. IN Scope
+- coherence_test.go
+- Config
+- Check
 - States
-- NewRunner
+- newRefreshFixture
 - MR-004 — Findings and per-task record
 - MR-003 — findings
-- newEvidenceFixture
+- arrange
 - 103. Test weakening ve false-green guard
 - 28. Interactive performance contract
 - 159. First Implementation Milestone
@@ -207,14 +206,14 @@
 - 36. Impact explosion ve drill-down modeli
 - 3. Mindrail ne değildir?
 - NewRegistry
-- newRefreshFixture
+- Invariant
 - .recordedID
 - Discover
 - ProbeWriteAccess
-- .search
+- columns.go
 - audit_scope.py
-- Tracker
-- newStore
+- MR-015 — Design
+- Clock
 - MR-006 — Design
 - smoke_test.go
 - runner_test.go
@@ -226,59 +225,59 @@
 - TASK-06 bootstrap/doctor/status wiring
 - TASK-07 CLI classifier + agreement matrix
 - TASK-08 independent mutation sweep
-- .invariant
-- MR-008 — Design
-- Store
+- github.com/modelcontextprotocol/go-sdk/mcp.CallToolResult
+- MR-008 — Bulgular ve kapı kaydı
+- MR-009 — Design
 - MR-002 audit package — appendix: implementer self-reports
-- Store
+- CauseOf
 - 5. Test plan
-- New
-- FormatTime
+- Scope
+- time.Time
 - Migrations
 - TestTheOwnershipRuleAgreesWithAnIndependentOracleOverEveryStore
 - database/sql.Tx
 - Audit scoping — making audit cost follow risk, not task count
 - index/identity_test.go
 - MR-002 — Versioned Decision/Invariant knowledge lifecycle
-- writability_test.go
+- PayloadOf
 - fulldisk_linux_test.go
 - goldenReport
 - MR-006 — Bulgular ve kapı kaydı
-- arrange
-- builder
-- MR-011 — Frozen requirements and acceptance criteria
-- database/sql.DB
-- .recordedID
-- .recordedID
-- .recordedID
+- Audit round 2
 - app.go
+- MR-011 — Frozen requirements and acceptance criteria
+- shutdown
+- .recordedID
+- .recordedID
+- .recordedID
+- Checkpoint
 - MR-005 — Design
-- MR-012 — Bulgular ve kapı kaydı
+- MR-012 — Design
 - MR-014 — Bulgular ve kapı kaydı
 - [x] MR-004 — Güvenli lease, idempotency ve optimistic revision
 - [ ] MR-009 — Sınırlı ve açıklanabilir STRUCTURAL etki analizi
 - FreeSpace
 - Mindrail 0.1 — Uygulama Görev Listesi
 - time.Duration
-- MR-012 — Design
-- healthySubject
-- context.Context
-- .SyncFileSymbols
-- DomainError
+- MR-014 — Design
+- DefaultChecks
+- Store
+- Code
+- coordination/lease.go
 - [ ] MR-012 — Kritik doğrulama testini zayıflatma guard'ı
 - MR-010 — Design
 - 2. Decisions
 - [ ] MR-014 — MCP bilgi ve bağlam araçları
 - [x] MR-001 — Yerel repository bootstrap ve tanılama yolu
 - [ ] MR-008 — Scope drift ve unregistered change ambiguity
-- NewRegistry
+- Indexer
 - [x] MR-003 — Session, Task ve Checkpoint ile sıralı ajan devri
-- PayloadOf
-- [ ] MR-020 — 0.1 çıkış koşulu kabul incelemesi
-- ExitCode
+- migratedChangesSchema
+- Görevler
+- exit.go
 - .recordedID
 - pythonAnalyzer
-- RuntimePaths
+- Probe
 - newInvocation
 - Supersede
 - MR-007 — Design
@@ -286,8 +285,8 @@
 - [ ] MR-010 — Güvenli validation runner ve snapshot'a bağlı evidence
 - [x] MR-002 — Sürümlü Decision/Invariant bilgi yaşam döngüsü
 - Lease
-- Step
-- check_test.go
+- TestStartupStepOrderMatchesSpec
+- .invariant
 - NewID
 - [x] MR-006 — Dayanıklı `symbol_uid` tahsisi ve rename/move koruması
 - [x] MR-007 — Reconcile-first gerçek değişiklik keşfi
@@ -295,55 +294,49 @@
 - Check
 - ClassifyRefusal
 - [ ] MR-011 — Kaynak değişince evidence geçersizleştirme
-- initialize
+- Server
 - TestWriteModeMigratesNothingAndRegistersNothing
-- MR-014 — Design
+- github.com/spf13/cobra.Command
 - .RoundTrip
 - MR-009 — Bulgular ve kapı kaydı
-- github.com/spf13/cobra.Command
-- MR-007 — Bulgular ve kapı kaydı
-- Görevler
-- .evaluateOwnerless
-- TestEveryStartFailureReachesTheVerdict
-- newGuardService
-- MR-009 — Design
-- task.go
-- scaffold_hostilefs_linux_test.go
-- MR-013 — Design
-- driver.go
-- readiness
 - migratedIndexSchema
-- version.go
-- newKernelFixture
-- TaskAttribution
-- runCoordination
-- [ ] MR-013 — Yerel completion evidence gate
-- time.Time
-- [ ] MR-016 — MCP validation ve completion araçları
-- [ ] MR-018 — Hook bypass'a dayanıklı CI verification
-- MR-005 — Frozen requirements and acceptance criteria
-- ProjectUnit
-- loadStore
+- MR-007 — Bulgular ve kapı kaydı
+- [ ] MR-015 — MCP koordinasyon ve değişiklik araçları
+- Symbol
 - MR-011 — Bulgular ve kapı kaydı
-- MR-013 — Bulgular ve kapı kaydı
-- readonlyfs_linux_test.go
-- 3. Requirements and acceptance criteria
-- .replay
-- subjectWithoutRepository
-- TASK-05 — structural extraction and the incremental path (implementation evidence)
-- TASK-06 — scheduler, preemption ve readiness (implementation evidence)
+- newGuardService
+- newLeaseHolderCommand
+- runCoordination
+- loadStore
+- MR-013 — Design
+- lifecycle_lease_test.go
+- RootContext
+- database/sql.DB
+- MR-012 — Bulgular ve kapı kaydı
+- TestStepSevenIsExemptFromTheSuppression
+- TestNoTransactionOpenDuringGitOrFilesystemWork
+- newCheckpointWriteCommand
+- [ ] MR-013 — Yerel completion evidence gate
+- MR-008 — Design
+- [ ] MR-016 — MCP validation ve completion araçları
+- FakeRunner
+- scaffold_hostilefs_linux_test.go
+- ProjectUnit
+- schemaOnlyDatabase
+- NewError
+- MR-010 — Bulgular ve kapı kaydı
+- version.go
+- runWith
+- [ ] MR-017 — Staged değişiklik için yerel Git enforcement
 - status/knowledge_findings_test.go
-- TASK-07 — kanıt, non-goal'lar ve kayıt (implementation evidence)
-- runStatus
-- TASK-04 — content-addressed snapshot cache (implementation evidence)
-- TASK-02 Breaker giderimi
 - .insertCheckpoint
+- NewStore
 
 ## God Nodes (most connected - your core abstractions)
 1. `PayloadOf()` - 165 edges
 2. `NewError()` - 148 edges
 3. `run()` - 106 edges
-4. `Open()` - 97 edges
+4. `Open()` - 98 edges
 5. `Check()` - 92 edges
 6. `newInitializedRepo()` - 83 edges
 7. `New()` - 82 edges
@@ -352,6 +345,8 @@
 10. `Load()` - 71 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `main()` --calls--> `ExitCode()`  [EXTRACTED]
+  cmd/mindrail/main.go → internal/app/exit.go
 - `migratedChangesSchema()` --calls--> `Load()`  [EXTRACTED]
   migrations/changes_constraints_test.go → internal/migration/load.go
 - `migratedIndexSchema()` --calls--> `Load()`  [EXTRACTED]
@@ -360,13 +355,11 @@
   migrations/changes_constraints_test.go → internal/migration/migrator.go
 - `migratedIndexSchema()` --calls--> `New()`  [EXTRACTED]
   migrations/index_constraints_test.go → internal/migration/migrator.go
-- `migratedChangesSchema()` --calls--> `Open()`  [EXTRACTED]
-  migrations/changes_constraints_test.go → internal/storage/db.go
 
 ## Import Cycles
 - None detected.
 
-## Communities (332 total, 21 thin omitted)
+## Communities (326 total, 20 thin omitted)
 
 ### Community 0 - "MINDRAIL PROTOCOL Managed Section"
 Cohesion: 0.33
@@ -393,8 +386,8 @@ Cohesion: 0.10
 Nodes (21): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, D-185 — official SDK v1.8.0, pinned in go.mod (+13 more)
 
 ### Community 7 - "newFixture"
-Cohesion: 0.13
-Nodes (31): TestACheckpointIsStampedUnderTheWriteLock(), Task, State, TestAPreconditionReadThatFailsIsReportedAsAReadOfThatRow(), TestAMintedSessionStartsNoLaterThanTheRowItAttributes(), NewStore(), fixture, ids() (+23 more)
+Cohesion: 0.17
+Nodes (26): stepClock, Task, State, TestAPreconditionReadThatFailsIsReportedAsAReadOfThatRow(), fixture, ids(), newFixture(), newStepClock() (+18 more)
 
 ### Community 8 - "MR-002 — findings"
 Cohesion: 0.05
@@ -406,7 +399,7 @@ Nodes (30): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decision
 
 ### Community 10 - "run"
 Cohesion: 0.09
-Nodes (56): result, TestAnOccupiedCacheDirectoryIsNotAnObstruction(), TestAPopulatedNonWALDatabaseIsNotCalledUninitialised(), TestEveryUninitialisedSpellingExitsZero(), TestHealthyRepositoryIsUntouchedByRemedyCoherence(), addWorktree(), assertGolden(), assertNoErrorEnvelope() (+48 more)
+Nodes (58): result, TestAnOccupiedCacheDirectoryIsNotAnObstruction(), TestAPopulatedNonWALDatabaseIsNotCalledUninitialised(), TestEveryUninitialisedSpellingExitsZero(), TestHealthyRepositoryIsUntouchedByRemedyCoherence(), addWorktree(), assertGolden(), assertNoErrorEnvelope() (+50 more)
 
 ### Community 11 - "ResolveRuntimePaths"
 Cohesion: 0.14
@@ -421,32 +414,32 @@ Cohesion: 0.40
 Nodes (4): ADR-0001 — Primary language and CLI stack, Consequences, Context, Decision
 
 ### Community 15 - "coordination_agreement_test.go"
-Cohesion: 0.16
-Nodes (20): coordinationRefusal, semanticDamageRow, assertFourErrorKeys(), isEmptyValue(), assertPublishedFailureHasACode(), commandName(), coordinationCommands(), coordinationRefusals() (+12 more)
+Cohesion: 0.18
+Nodes (19): coordinationRefusal, semanticDamageRow, assertFourErrorKeys(), isEmptyValue(), assertPublishedFailureHasACode(), commandName(), coordinationCommands(), coordinationRefusals() (+11 more)
 
-### Community 16 - "Config"
-Cohesion: 0.09
-Nodes (37): fileConfig, fileOutput, fileProject, fileSecrets, fileValidation, Loader, LoaderOptions, OutputConfig (+29 more)
+### Community 16 - "config/loader.go"
+Cohesion: 0.16
+Nodes (17): fileConfig, fileOutput, fileProject, fileSecrets, fileValidation, Loader, LoaderOptions, Provenance (+9 more)
 
 ### Community 17 - "MR-011 — Design"
 Cohesion: 0.18
 Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Evaluation flows, 7. Secret inputs (+3 more)
 
-### Community 18 - "Server"
-Cohesion: 0.16
-Nodes (20): github.com/modelcontextprotocol/go-sdk/mcp.Server, TestTwoClientsAgree(), callTool(), callToolRaw(), indexTestFile(), newTestRepo(), newTestServer(), Server (+12 more)
+### Community 18 - "changesFixtureDB"
+Cohesion: 0.20
+Nodes (26): changesFixture(), changesFixtureDB(), seedTaskChain(), shaOf(), TestBaselineClearingDiscipline(), TestCaptureBaselineEmptyHashForMissingAndNonRegular(), TestCaptureBaselineRefusesUnknownTask(), TestCaptureBaselineReplacesWithoutStacking() (+18 more)
 
 ### Community 19 - "newInitializedRepo"
-Cohesion: 0.09
-Nodes (72): child, racedTask, io.WriteCloser, execOnRuntimeDB(), decodeData(), newInitializedRepo(), runtimeDBPath(), taskStateOf() (+64 more)
+Cohesion: 0.08
+Nodes (74): child, racedTask, io.WriteCloser, execOnRuntimeDB(), decodeData(), newInitializedRepo(), runtimeDBPath(), semanticDamageRows() (+66 more)
 
 ### Community 20 - "New"
-Cohesion: 0.06
-Nodes (106): testing/fstest.MapFS, testing.M, TestChangesSchemaVersionNamesItsCreatingMigration(), queryPlan(), schemaOnlyDatabase(), TestTheNewestCheckpointQueryDoesNotSortTheProject(), TestIndexSchemaVersionNamesItsCreatingMigration(), TestStoreDistinguishesNeverInitializedFromMissingLedger() (+98 more)
+Cohesion: 0.07
+Nodes (90): testing/fstest.MapFS, testing.M, TestChangesSchemaVersionNamesItsCreatingMigration(), TestIndexSchemaVersionNamesItsCreatingMigration(), TestStoreDistinguishesNeverInitializedFromMissingLedger(), TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation(), appliedCount(), assertLedgerAppliedOnce() (+82 more)
 
 ### Community 21 - "New"
-Cohesion: 0.21
-Nodes (29): New(), assertNoRuntimeState(), exists(), itoa(), newGitRepo(), options(), productDirUnder(), requireGit() (+21 more)
+Cohesion: 0.16
+Nodes (38): New(), assertNoRuntimeState(), corruptDatabase(), exists(), initialize(), itoa(), newGitRepo(), options() (+30 more)
 
 ### Community 22 - "status/render_test.go"
 Cohesion: 0.20
@@ -457,44 +450,44 @@ Cohesion: 0.10
 Nodes (20): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, D-170 — pure service over before/after bytes, trigger as provenance (+12 more)
 
 ### Community 24 - "checks.go"
-Cohesion: 0.16
-Nodes (34): allEscapeRoot(), alsoHeading(), degradedAccount(), degradedImpact(), degradedSummary(), describeBounded(), describeFindings(), describeProblems() (+26 more)
+Cohesion: 0.11
+Nodes (55): allEscapeRoot(), alsoHeading(), ConfigCheck(), configResult(), degradedAccount(), degradedImpact(), degradedSummary(), describeBounded() (+47 more)
 
-### Community 25 - "KnowledgeCheck"
-Cohesion: 0.10
-Nodes (53): tail, KnowledgeCheck(), assertActionable(), assertDiagnosable(), Result, TestSchemaUnsupportedRemediesAreActions(), TestUnreadableRecordRemediesNameTheFiles(), accountsIn() (+45 more)
+### Community 25 - "healthySubject"
+Cohesion: 0.11
+Nodes (55): tail, KnowledgeCheck(), assertDiagnosable(), Result, healthySubject(), TestAnUnusableKnowledgeDirectoryIsReportedAsAPathCondition(), TestGitCheckBranches(), TestKnowledgeCheckAbsentTreeIsOK() (+47 more)
 
 ### Community 26 - "NewAdapter"
 Cohesion: 0.16
-Nodes (52): ErrorPayload, NewAdapter(), assertPayloadIsActionable(), assertRemedyDestinationsAreReal(), changeIntoDestinations(), fixtureContext(), isolateGitConfig(), newRepoFixture() (+44 more)
+Nodes (54): ErrorPayload, NewAdapter(), assertPayloadIsActionable(), assertRemedyDestinationsAreReal(), changeIntoDestinations(), TestUnusableWorkingDirectorySurvivesTheAdapter(), TestWorkingDirectoryDetectionDoesNotOverFire(), fixtureContext() (+46 more)
 
 ### Community 27 - "What You Must Do When Invoked"
 Cohesion: 0.08
 Nodes (24): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+16 more)
 
-### Community 28 - "newImpactFixture"
-Cohesion: 0.25
-Nodes (20): impactFixture, containsString(), TestAnalyzeDirectOnlySkipsFallbacks(), TestAnalyzeFileFallbackReportsFloor(), TestAnalyzeListsBoundInvariants(), TestAnalyzeNameMatchFallback(), TestAnalyzeOverrideSurvivesFallback(), TestAnalyzeSameKeyAcrossUnitsKeepsBoth() (+12 more)
+### Community 28 - "invalidInput"
+Cohesion: 0.11
+Nodes (13): Ambiguity, Binding, Identity, identityRowQuerier, NamedSymbol, Referrer, Store, Symbol (+5 more)
 
 ### Community 29 - "2. Decisions"
 Cohesion: 0.10
 Nodes (21): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, D-155 — evidence lives in the runtime database, not in knowledge (+13 more)
 
 ### Community 30 - "RuntimePathCheck"
-Cohesion: 0.27
-Nodes (14): refusalCause, RuntimePathCheck(), Subject, refuseRepoConfig(), TestAnUnreadRepositoryConfigDirectoryIsNotAFinding(), TestAnUnusableCacheDirectoryStillOutranksNothing(), TestAnUnwritableRepositoryConfigDirectoryBlocksTheReport(), TestAnUnwritableRepositoryConfigDirectorySupersedesTheInitRemedy() (+6 more)
+Cohesion: 0.26
+Nodes (15): refusalCause, RuntimePathCheck(), Subject, refuseRepoConfig(), TestAnUnreadRepositoryConfigDirectoryIsNotAFinding(), TestAnUnusableCacheDirectoryStillOutranksNothing(), TestAnUnwritableRepositoryConfigDirectoryBlocksTheReport(), TestAnUnwritableRepositoryConfigDirectorySupersedesTheInitRemedy() (+7 more)
 
 ### Community 31 - "initReportOf"
-Cohesion: 0.20
-Nodes (14): blockingSummary(), Options, initReportOf(), initVerdict(), newInitCommand(), runInit(), schemaIsCurrent(), TestInitVerdictPrefersTheChecksAndKeepsWhatTheyCannotSee() (+6 more)
+Cohesion: 0.18
+Nodes (15): blockingSummary(), Options, initReportOf(), initVerdict(), newInitCommand(), runInit(), schemaIsCurrent(), TestInitVerdictPrefersTheChecksAndKeepsWhatTheyCannotSee() (+7 more)
 
 ### Community 32 - "newLoader"
-Cohesion: 0.06
-Nodes (79): operationRecord, encoding/json.RawMessage, io/fs.DirEntry, reflect.Type, testing.B, Session, decisionRef(), decodeObjects() (+71 more)
+Cohesion: 0.07
+Nodes (76): operationRecord, encoding/json.RawMessage, io/fs.DirEntry, reflect.Type, testing.B, Session, decisionRef(), decodeObjects() (+68 more)
 
 ### Community 33 - "Build"
-Cohesion: 0.14
-Nodes (36): findingOn(), TestACycleBlocksAndAnInvalidRecordDoesNot(), TestBlockingComponentIsStillNamedWhenOneWasInspected(), TestHealthyReportNamesNoBlockingComponent(), TestRepositoryBlockIsObservedOnAHealthyRepository(), TestRepositoryBlockSurvivesALaterStepFailing(), TestHumanReportCarriesTheObservationMarker(), TestHumanReportOmitsTheObservationMarkerWhenItLooked() (+28 more)
+Cohesion: 0.13
+Nodes (40): Subject, TestBlockingComponentIsNeverOneNobodyInspected(), TestBlockingComponentIsStillNamedWhenOneWasInspected(), TestHealthyReportNamesNoBlockingComponent(), TestRepositoryBlockIsMarkedWhenDiscoveryDidNotAnswer(), TestRepositoryBlockIsMarkedWhenGitIsUnavailable(), TestRepositoryBlockIsObservedOnAHealthyRepository(), TestRepositoryBlockSurvivesALaterStepFailing() (+32 more)
 
 ### Community 34 - "validate.py"
 Cohesion: 0.29
@@ -504,13 +497,13 @@ Nodes (19): _cmd(), compare(), detect(), detect_go(), detect_jvm(), detect_node(
 Cohesion: 0.11
 Nodes (18): A. Documentation index, A. Features, Audit Phases — Detailed Checklists, B. APIs, B. Codebase index, C. Configuration, D. Architecture, E. Database & data model (+10 more)
 
-### Community 36 - "Check"
-Cohesion: 0.12
-Nodes (34): Validator, compareNodes(), ids(), newGraph(), expectedPath(), idFromPath(), activeSubjects(), Step (+26 more)
+### Community 36 - "subject"
+Cohesion: 0.13
+Nodes (28): compareNodes(), ids(), newGraph(), expectedPath(), idFromPath(), activeSubjects(), Step, invalid() (+20 more)
 
 ### Community 37 - "status/render.go"
-Cohesion: 0.17
-Nodes (17): strings.Builder, Report, Result, State, paint(), writeBlock(), writeResult(), Report (+9 more)
+Cohesion: 0.16
+Nodes (18): strings.Builder, Report, Result, State, paint(), writeBlock(), writeResult(), Report (+10 more)
 
 ### Community 38 - "Final report"
 Cohesion: 0.11
@@ -533,8 +526,8 @@ Cohesion: 0.20
 Nodes (31): TestAConstructorNamesThePositionOfANilOption(), TestOptionsThatAreNotNilAreStillApplied(), Decision, NewDecision(), NewInvariant(), stampedTime(), invariantProperties(), propertyOf() (+23 more)
 
 ### Community 43 - "RootKind"
-Cohesion: 0.19
-Nodes (17): os.FileInfo, probeRepositoryDir(), TestRepositoryRootIsItsOwnKind(), ensureDir(), unwritableError(), dangling(), root, RootKind (+9 more)
+Cohesion: 0.18
+Nodes (17): knowledgeDirRefusal(), probeRepositoryDir(), TestRepositoryRootIsItsOwnKind(), TestRootKindOfStillRefusesWhatItDoesNotKnow(), ensureDir(), unwritableError(), dangling(), root (+9 more)
 
 ### Community 44 - "Breaker Protocol — Falsification"
 Cohesion: 0.13
@@ -596,9 +589,9 @@ Nodes (10): build(), detect_framework(), extract_tests(), looks_like_test_path()
 Cohesion: 0.10
 Nodes (20): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, D-146 — the graph is designed with the D-90 constraint, not around it (+12 more)
 
-### Community 59 - "runWith"
-Cohesion: 0.12
-Nodes (32): answer, brokenSetup, hostileCondition, agreeingHostileCommands(), assertTheLoopTerminates(), emptyHostileMount(), fillHostileMount(), fillHostileMountTo() (+24 more)
+### Community 59 - "agreement_hostilefs_linux_test.go"
+Cohesion: 0.21
+Nodes (22): hostileCondition, agreeingHostileCommands(), assertTheLoopTerminates(), emptyHostileMount(), fillHostileMount(), fillHostileMountTo(), hostileAvailableBytes(), hostileConditions() (+14 more)
 
 ### Community 60 - "inventory.py"
 Cohesion: 0.47
@@ -625,8 +618,8 @@ Cohesion: 0.20
 Nodes (9): Completion bar, Core stance, Deletion is never automatic, Flaky tests, Getting started, Output, Scoping the expensive measurements, Test Suite Audit & Redundancy Elimination (+1 more)
 
 ### Community 66 - "State"
-Cohesion: 0.21
-Nodes (7): Report, State, severity(), States(), TestStateEnumIsExactlyFiveValues(), TestStateUnmarshalRejectsUnknown(), TestStateUnmarshalRejectsUnknownInsideAResult()
+Cohesion: 0.29
+Nodes (5): Report, State, severity(), States(), TestStateEnumIsExactlyFiveValues()
 
 ### Community 67 - "Reader Protocol — Conformance"
 Cohesion: 0.22
@@ -636,9 +629,9 @@ Nodes (8): R1 — Task normalization, R2 — Requirement verdicts, R3 — Scope 
 Cohesion: 0.22
 Nodes (8): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7a - FalkorDB export (only if --falkordb or --falkordb-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000)
 
-### Community 69 - "shippedValidator"
-Cohesion: 0.15
-Nodes (58): TestACycleMessageIsTrueOfEveryFileItIsAttachedTo(), TestADraftCarryingAValidRecordsIdDoesNotManufactureAFatalCycle(), TestADraftCarryingAValidRecordsIdDoesNotMergeTwoLineages(), TestAnIdNoFileIsNamedAfterSuppliesNoEdges(), TestARejectedRecordIsStillTheOnlyAccountOfAnIdNobodyElseCarries(), TestAValidStoreIsStillSilentWithAStrayDraftBesideIt(), TestRoundThreesMisfiledVoucherDoesNotDeleteTheCycle(), TestTwoMisfiledRecordsReportTheirCycleOnceTheyAreRenamed() (+50 more)
+### Community 69 - "Check"
+Cohesion: 0.17
+Nodes (60): TestOnlyAByteIdenticalFileNameOwnsAnId(), TestACycleMessageIsTrueOfEveryFileItIsAttachedTo(), TestADecisionAndAnInvariantNeverShareAGraphNode(), TestADraftCarryingAValidRecordsIdDoesNotManufactureAFatalCycle(), TestADraftCarryingAValidRecordsIdDoesNotMergeTwoLineages(), TestAnIdNoFileIsNamedAfterSuppliesNoEdges(), TestARejectedRecordIsStillTheOnlyAccountOfAnIdNobodyElseCarries(), TestAValidStoreIsStillSilentWithAStrayDraftBesideIt() (+52 more)
 
 ### Community 70 - "required"
 Cohesion: 0.22
@@ -661,8 +654,8 @@ Cohesion: 0.25
 Nodes (8): decision, title, created_at, id, kind, schema_version, status, required
 
 ### Community 75 - "shadowedNames"
-Cohesion: 0.12
-Nodes (28): github.com/tree-sitter/go-tree-sitter.Query, Import, adapter, textField(), unquoteModule(), bindingExtent(), bindingNames(), bindingsContain() (+20 more)
+Cohesion: 0.13
+Nodes (27): Import, adapter, textField(), unquoteModule(), bindingExtent(), bindingNames(), bindingsContain(), evaluationScope() (+19 more)
 
 ### Community 76 - "decision.v1.schema.json"
 Cohesion: 0.29
@@ -697,8 +690,8 @@ Cohesion: 0.12
 Nodes (16): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, D-179 — the gate composes values; reconcile-first is composition (+8 more)
 
 ### Community 84 - "registryForTest"
-Cohesion: 0.13
-Nodes (33): Extract(), LocalKey(), extractForTest(), TestAnonymousAndLocalBindingsDoNotInventTargets(), TestBareMethodCallUsesLexicalScopeAndAmbiguityStaysUnresolved(), TestCompletePackageExtraction(), TestExtractionFailureAndCancellationCloseSnapshots(), TestExtractPreservesPartialFactsAndCancellation() (+25 more)
+Cohesion: 0.08
+Nodes (40): unsafe.Pointer, LocalKey(), extractForTest(), TestAnonymousAndLocalBindingsDoNotInventTargets(), TestBareMethodCallUsesLexicalScopeAndAmbiguityStaysUnresolved(), TestCompletePackageExtraction(), TestExtractionFailureAndCancellationCloseSnapshots(), TestExtractPreservesPartialFactsAndCancellation() (+32 more)
 
 ### Community 85 - "status"
 Cohesion: 0.33
@@ -720,9 +713,9 @@ Nodes (3): For git commit hook, For native CLAUDE.md integration, graphify refer
 Cohesion: 0.50
 Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
 
-### Community 90 - "Probe"
-Cohesion: 0.23
-Nodes (14): SQLiteCheck(), noSpaceRefusal(), TestAFullFilesystemIsNotReportedAsAHealthyDatabase(), TestAFullFilesystemSupersedesTheInitRemedyEverywhere(), TestAHealthyDatabaseIsUnaffectedByTheSpaceReading(), TestARuntimeDirectoryRefusalIsNotClaimedAsADatabaseRefusal(), TestTheSpaceRemedyDoesNotPrescribeAChmodWithoutAPayload(), Subject (+6 more)
+### Community 90 - ".search"
+Cohesion: 0.28
+Nodes (9): excerptOf(), firstNonEmpty(), Server, ContextIn, ContextOut, recordText, SearchHit, SearchIn (+1 more)
 
 ### Community 91 - "created_at"
 Cohesion: 0.40
@@ -748,9 +741,9 @@ Nodes (4): description, pattern, type, id
 Cohesion: 0.50
 Nodes (4): schema_version, const, description, type
 
-### Community 107 - "Subject"
-Cohesion: 0.13
-Nodes (17): Subject, Components(), ComponentName, Readiness, intPtr(), Readinesses(), TestComponentsMapHasExactlySixKeys(), TestReadinessEnumIsExactlyFourValues() (+9 more)
+### Community 107 - "Component"
+Cohesion: 0.16
+Nodes (15): Components(), ComponentName, Readiness, intPtr(), Readinesses(), TestComponentsMapHasExactlySixKeys(), TestReadinessEnumIsExactlyFourValues(), TestReadinessUnmarshalRejectsUnknown() (+7 more)
 
 ### Community 108 - "128. Hedef implementation workstream'leri"
 Cohesion: 0.18
@@ -761,156 +754,156 @@ Cohesion: 0.22
 Nodes (20): changed_files(), git(), is_e2e(), is_test(), js_imports(), load_coverage_contexts(), load_explicit_map(), main() (+12 more)
 
 ### Community 110 - "4. The confirmed defects"
-Cohesion: 0.08
-Nodes (26): 1. The verdict, 2. The base rate, which is why this round exists, 3. The three deviations, graded, 4.10 — LOW. §4's corrected F17 bullet credits the fix to a test that does not contain it, 4.11 — LOW. The F48 figure attaches the 1,000-task measurement to 20,000 tasks, 4.12 — LOW. A minted session now starts after the row it attributes, 4.13 — LOW. The `EXISTS` rewrite degrades to a full checkpoint scan for a project with no checkpoints, 4.14 — LOW. Item 11 is recorded as "(test only)" but its commit changes production behaviour (+18 more)
+Cohesion: 0.11
+Nodes (18): 4.10 — LOW. §4's corrected F17 bullet credits the fix to a test that does not contain it, 4.11 — LOW. The F48 figure attaches the 1,000-task measurement to 20,000 tasks, 4.12 — LOW. A minted session now starts after the row it attributes, 4.13 — LOW. The `EXISTS` rewrite degrades to a full checkpoint scan for a project with no checkpoints, 4.14 — LOW. Item 11 is recorded as "(test only)" but its commit changes production behaviour, 4.15 — LOW. AC-04.6's amendment claims all six constructors carry the id in `why`, 4.16 — LOW. The task list records fifteen commits for the remediation; there are thirteen, 4.17 — LOW. The wrong `.sql` comment stays wrong, with no marker reachable from the file (+10 more)
 
 ### Community 111 - "invalidInput"
-Cohesion: 0.08
-Nodes (28): BaselineSummary, DivergenceEntry, FileChange, ReconcileResult, Service, Store, contentHash(), Change (+20 more)
+Cohesion: 0.06
+Nodes (41): BaselineSummary, DivergenceEntry, FileChange, LeaseView, ReconcileResult, SymbolChange, RenameEntry, Store (+33 more)
 
 ### Community 112 - "report.go"
 Cohesion: 0.27
 Nodes (13): coordinationInfo(), Report, observationOf(), repositoryObservation(), stateRank(), stoppedAtStep(), worst(), CoordinationInfo (+5 more)
 
 ### Community 113 - "WriteIfAbsent"
-Cohesion: 0.15
-Nodes (23): loadAt(), payload(), TestARegularFileAtTheRepoConfigDirIsOneConditionWithOneRemedy(), TestRepoConfigDirObstructionDoesNotOverFire(), TestScaffoldRemedyNamesTheDirectoryThatCarriesThePermission(), requireEmptyTree(), requireEscape(), requireModeEnforcement() (+15 more)
+Cohesion: 0.13
+Nodes (26): TestLoadAcceptsRepoConfigThroughAnInsideSymlink(), TestLoadInAnOrdinaryRepositoryIsUnaffected(), TestLoadRefusesRepoConfigThroughAnEscapingSymlink(), loadAt(), payload(), TestARegularFileAtTheRepoConfigDirIsOneConditionWithOneRemedy(), TestRepoConfigDirObstructionDoesNotOverFire(), TestScaffoldRemedyNamesTheDirectoryThatCarriesThePermission() (+18 more)
 
 ### Community 114 - "SyntaxSnapshot"
 Cohesion: 0.10
-Nodes (14): github.com/tree-sitter/go-tree-sitter.Language, github.com/tree-sitter/go-tree-sitter.Tree, sync.RWMutex, timedAdapter, Import, adapter, Reference, Symbol (+6 more)
+Nodes (15): github.com/tree-sitter/go-tree-sitter.Language, github.com/tree-sitter/go-tree-sitter.Query, github.com/tree-sitter/go-tree-sitter.Tree, sync.RWMutex, timedAdapter, Import, adapter, Reference (+7 more)
 
 ### Community 115 - "47. Human approval kimlik ve yetkilendirme modeli"
 Cohesion: 0.18
 Nodes (11): 47. Human approval kimlik ve yetkilendirme modeli, Approval assurance seviyeleri, Approval payload, Audit, Authorization, EXTERNAL_VERIFIED, LOCAL_INTERACTIVE, MANAGED_IDENTITY (+3 more)
 
 ### Community 116 - "NamedSession"
-Cohesion: 0.16
-Nodes (40): settableClock, fixture, leaseFixture(), mustFile(), newSettableClock(), readLeaseRow(), requireCode(), sameRow() (+32 more)
+Cohesion: 0.26
+Nodes (23): settableClock, leaseFixture(), mustFile(), newSettableClock(), requireCode(), TestAcquiringOverAnExpiredTenureClosesItAndSaysSo(), TestAnAcquisitionByTheHolderRenewsUnderTheSameID(), TestARemedyNamingAKeyIsACommandLineThatRuns() (+15 more)
 
 ### Community 117 - "MR-005 — Bulgular ve kapı kaydı"
-Cohesion: 0.12
-Nodes (16): AC evidence and RED/GREEN, Başlangıç ve çalışma ağacı, D-89 — referans hedefi silinince `ON DELETE SET NULL`, Deliberate guard mutations (all restored), Denetim artefaktları, MR-005 — Bulgular ve kapı kaydı, Mutasyon kapsamı, Official dependency evidence (+8 more)
+Cohesion: 0.05
+Nodes (38): AC evidence and RED/GREEN, Başlangıç ve çalışma ağacı, D-89 — referans hedefi silinince `ON DELETE SET NULL`, D-90 — cross-file çözümleme dosya-kapsamlıdır, birim-kapsamlı değil, D-91 — TASK-06 scheduler'ı sürmez, readiness'i bağlar, D-92 — süreç-ölçeği kanıtı yeniden-açılan handle'lardır, Deliberate guard mutations (all restored), Denetim artefaktları (+30 more)
 
 ### Community 118 - "2. Requirements"
 Cohesion: 0.06
 Nodes (36): 0. Baseline evidence, 1. Decisions this document freezes, 2. Requirements, 3. Traceability to the task list's five acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, D-42 — findings reach the report layers through `doctor.Subject`, never by recomputation, D-43 — a Finding gets its own codes, because D-38 says it is not a Problem (+28 more)
 
-### Community 119 - "cli/arch_test.go"
-Cohesion: 0.11
-Nodes (34): firstPartyPackage, go/ast.ImportSpec, moduleRoot(), TestTheKnowledgePipelineHasExactlyOneCallSite(), assertMainDeclaresOnlyMain(), assertNoNetworkInLinkedPackages(), fileImports(), firstPartyPackages() (+26 more)
+### Community 119 - "errorStore"
+Cohesion: 0.14
+Nodes (21): database/sql/driver.Conn, database/sql/driver.Driver, database/sql/driver.NamedValue, database/sql/driver.Result, database/sql/driver.Rows, database/sql/driver.Tx, database/sql/driver.TxOptions, database/sql/driver.Value (+13 more)
 
 ### Community 120 - "Root"
-Cohesion: 0.22
-Nodes (8): Modes, os.FileMode, canonicalize(), canonicalizeHop(), escapeError(), Root, isAbsoluteInput(), PrivateModes()
+Cohesion: 0.20
+Nodes (9): Modes, os.FileMode, TestPrivateModesAreTheOwnerOnlyDefaults(), canonicalize(), canonicalizeHop(), escapeError(), Root, isAbsoluteInput() (+1 more)
 
-### Community 121 - "Migrator"
-Cohesion: 0.16
-Nodes (11): Migration, bookkeepingCreateFailure(), checksumFailure(), Applied, Migrator, highestVersion(), namesAbsentFrom(), namesPresentIn() (+3 more)
+### Community 121 - "context.Context"
+Cohesion: 0.18
+Nodes (12): context.Context, Migration, bookkeepingCreateFailure(), checksumFailure(), Applied, Migrator, highestVersion(), namesAbsentFrom() (+4 more)
 
 ### Community 122 - "WriteFailure"
-Cohesion: 0.23
-Nodes (19): TestMigrationThreeLeavesTheObjectsTheDesignNames(), TestTheDatabaseRefusesASecondActiveLeaseOnOneTarget(), IsBusy(), IsDiskFull(), IsReadOnly(), assertRetryablePayload(), contendedWriteError(), openForTest() (+11 more)
+Cohesion: 0.13
+Nodes (30): DomainError, TestMigrationThreeLeavesTheObjectsTheDesignNames(), TestTheDatabaseRefusesASecondActiveLeaseOnOneTarget(), busyFailure(), describeDatabaseFile(), describeRefusedPaths(), diskFullFailure(), IsBusy() (+22 more)
 
 ### Community 123 - "Open"
-Cohesion: 0.07
-Nodes (47): TestAMoveIsStampedUnderTheWriteLock(), TestStoreCancellationOnUninitializedDatabaseRetainsClassification(), IsUnwritten(), Open(), openTemp(), TestCloseIsIdempotent(), TestExpectedPragmasHonoursBusyTimeout(), TestForeignKeysAreEnforced() (+39 more)
+Cohesion: 0.09
+Nodes (38): IsUnwritten(), Open(), openTemp(), TestCloseIsIdempotent(), TestExpectedPragmasHonoursBusyTimeout(), TestForeignKeysAreEnforced(), TestOpenAppliesPragmasOnConcurrentConnections(), TestOpenAppliesPragmasOnEveryConnection() (+30 more)
 
 ### Community 124 - "Facts"
-Cohesion: 0.25
-Nodes (16): Facts, Range, decodeExact(), Cache, Computer, readEntry(), sha256Hex(), validFacts() (+8 more)
+Cohesion: 0.23
+Nodes (17): Facts, Range, decodeExact(), Cache, Computer, readEntry(), sha256Hex(), validFacts() (+9 more)
 
 ### Community 125 - "NewRootWith"
 Cohesion: 0.15
 Nodes (13): classifiedArgs, Root, github.com/spf13/cobra.Completion, github.com/spf13/cobra.PositionalArgs, github.com/spf13/cobra.ShellCompDirective, Execute(), helpTopics(), NewRoot() (+5 more)
 
 ### Community 126 - "testguard.go"
-Cohesion: 0.24
-Nodes (14): addedMarkers(), blocks(), code(), Finding, Result, invalidInput(), mappedFindings(), mappingsFor() (+6 more)
+Cohesion: 0.20
+Nodes (19): addedMarkers(), blocks(), code(), FileDelta, Finding, Request, Result, Service (+11 more)
 
-### Community 127 - "NewError"
-Cohesion: 0.09
-Nodes (38): Code, indexCodes(), IsRegistered(), RegisteredCodes(), sortedCodes(), parseDeclaredCodes(), TestCodeRegistryIsUniqueAndExhaustive(), TestRegisteredCodesIsNotAliased() (+30 more)
+### Community 127 - "newFixture"
+Cohesion: 0.28
+Nodes (21): mkunit(), newFixture(), seedPending(), TestEnqueueP0PromotesQueuedPath(), TestEnqueueRejectsRelativeAndUncleanPaths(), TestEvictedPathsRefillAfterPrioritize(), TestFillColdOrdersByPathAndReportsMore(), TestPrioritizeEnqueuesUnqueuedUnitFiles() (+13 more)
 
 ### Community 128 - "mindrail-0.1-kernel-scope.md"
 Cohesion: 0.12
 Nodes (14): 1. Goal, 2. Primary End-to-End Scenario, 4. OUT of Scope for 0.1, 5. 0.1 Performance Targets, 6. 0.1 Acceptance Criteria, 7. Non-Goals, 8. Exit Condition, Mindrail 0.1 — Kernel Scope (+6 more)
 
-### Community 129 - "index/store.go"
-Cohesion: 0.08
-Nodes (40): database/sql.NullString, FileFacts, FileIndexState, fileScanner, FileStateObservation, fileStateToken, Import, IndexResult (+32 more)
+### Community 129 - "2. Decisions"
+Cohesion: 0.10
+Nodes (21): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's four acceptance criteria, D-195 — one server, ModeWrite, eleven tools (+13 more)
 
 ### Community 130 - "writable.go"
-Cohesion: 0.18
-Nodes (14): Probes, fallbackWriteRemedy(), TestConditionBlockerLetsTheConditionOverrideThePartItMet(), TestReadOnlyMediaKeepsBothSentinels(), noSpaceDatabaseError(), noSpaceRefusal(), readOnlyMediaDatabaseError(), conditionBlocker() (+6 more)
+Cohesion: 0.19
+Nodes (13): fallbackWriteRemedy(), TestConditionBlockerLetsTheConditionOverrideThePartItMet(), TestReadOnlyMediaKeepsBothSentinels(), noSpaceDatabaseError(), noSpaceRefusal(), readOnlyMediaDatabaseError(), conditionBlocker(), WriteAccess (+5 more)
 
 ### Community 131 - "refuseUnrepresentableJSON"
-Cohesion: 0.20
-Nodes (12): offender, reflect.StructField, reflect.Value, invocation, firstUnrepresentable(), memberName(), refuseUnrepresentableJSON(), TestRefusalFindsTheOffenderWhereverItIs() (+4 more)
+Cohesion: 0.24
+Nodes (11): offender, reflect.StructField, reflect.Value, firstUnrepresentable(), memberName(), refuseUnrepresentableJSON(), TestRefusalFindsTheOffenderWhereverItIs(), TestRefusalReadsTheErrorPayloadToo() (+3 more)
 
 ### Community 132 - "record/errors.go"
 Cohesion: 0.20
 Nodes (3): DuplicateItemError, EmptyFieldError, OptionKindError
 
 ### Community 133 - "NewLoader"
-Cohesion: 0.20
-Nodes (18): TestLoadAcceptsRepoConfigThroughAnInsideSymlink(), TestLoadInAnOrdinaryRepositoryIsUnaffected(), TestLoadRefusesRepoConfigThroughAnEscapingSymlink(), NewLoader(), TestEmbeddedTemplateLoadsStrictly(), TestInvalidColorValueIsRejected(), TestLoadWithNoFilesUsesDefaults(), TestMalformedTOMLIsAUsageError() (+10 more)
+Cohesion: 0.27
+Nodes (15): NewLoader(), TestEmbeddedTemplateLoadsStrictly(), TestInvalidColorValueIsRejected(), TestLoadWithNoFilesUsesDefaults(), TestMalformedTOMLIsAUsageError(), TestPrecedenceAcrossFiveLayers(), TestProvenanceReportsSourceLayer(), TestStrictDecodeRejectsUnknownKey() (+7 more)
 
 ### Community 134 - "git/runner.go"
-Cohesion: 0.14
-Nodes (12): ExecRunner, os/exec.Cmd, stderrSummary(), hasAnyPrefix(), SanitizedEnv(), timeoutError(), unavailableError(), underlyingError() (+4 more)
+Cohesion: 0.13
+Nodes (14): ExecRunner, os/exec.Cmd, stderrSummary(), TestAdapterPropagatesRunnerFailures(), directoryEntryFault(), hasAnyPrefix(), SanitizedEnv(), timeoutError() (+6 more)
 
 ### Community 135 - "validate_test.go"
-Cohesion: 0.11
-Nodes (23): RecordKind, RecordRef, Store, TestFindingsAreSortedByPathThenStep(), suppressions(), TestAnUnreadableRecordSuppressesTheClaimItWouldHaveDecided(), TestEveryCrossRecordStepThatCanBeSuppressedIsGuarded(), TestStepSevenIsExemptFromTheSuppression() (+15 more)
+Cohesion: 0.13
+Nodes (18): RecordKind, RecordRef, Store, facts(), TestAStepsMessageCarriesTheFactsItsRemedyNeeds(), TestEveryStepsMessageIsCovered(), TestFindingsAreSortedByPathThenStep(), everyConditionStore() (+10 more)
 
 ### Community 136 - "storage/access_other.go"
 Cohesion: 0.83
 Nodes (3): accessWritableDir(), accessWritableFile(), accessWritableMode()
 
 ### Community 139 - "DB"
-Cohesion: 0.31
-Nodes (11): busyBudget(), classifyPragmaMismatch(), DB, Options, notWALFailure(), openFailure(), openOnce(), openWithinBusyBudget() (+3 more)
+Cohesion: 0.12
+Nodes (27): busyBudget(), classifyOpenError(), classifyPragmaMismatch(), corruptFailure(), diskFullOpenFailure(), DB, Options, notWALFailure() (+19 more)
 
 ### Community 140 - "Probe"
-Cohesion: 0.20
-Nodes (18): io/fs.FileInfo, io/fs.FileMode, absentFailure(), classify(), describeMode(), Presence, nonDirectoryAncestor(), Probe() (+10 more)
+Cohesion: 0.16
+Nodes (21): Probes, io/fs.FileInfo, io/fs.FileMode, absentFailure(), classify(), describeMode(), Presence, nonDirectoryAncestor() (+13 more)
 
 ### Community 141 - "1. Decisions this document freezes"
 Cohesion: 0.06
 Nodes (35): 0. Baseline evidence, 1. Decisions this document freezes, 2. Requirements, 3. Traceability to the task list's five acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, D-64 — one `leases` table for every target kind, one row per tenure, inside `internal/coordination`, D-65 — active means unreleased and unexpired by the store's clock, judged in Go, and expiry is lazy (+27 more)
 
 ### Community 142 - "NewRoot"
-Cohesion: 0.18
-Nodes (17): TestEnsureDirModeCreatesWithTheGivenModeAndReportsIt(), TestMachineLocalRootsStillOfferTheirOverride(), TestModeVariantsStillRefuseAnEscape(), TestPrivateModesAreTheOwnerOnlyDefaults(), TestRootKindOfStillRefusesWhatItDoesNotKnow(), TestWriteFileIfAbsentModeUsesTheGivenModes(), NewRoot(), Normalize() (+9 more)
+Cohesion: 0.21
+Nodes (15): TestEnsureDirModeCreatesWithTheGivenModeAndReportsIt(), TestMachineLocalRootsStillOfferTheirOverride(), TestModeVariantsStillRefuseAnEscape(), TestWriteFileIfAbsentModeUsesTheGivenModes(), NewRoot(), Normalize(), newTestRoot(), requireSymlinks() (+7 more)
 
 ### Community 143 - "95. Knowledge schema ve CI doğrulama pipeline'ı"
 Cohesion: 0.20
 Nodes (10): 95. Knowledge schema ve CI doğrulama pipeline'ı, Bulk migration, CI order, Feature capability, Knowledge doctor, Lazy per-record upgrade, Minimum Mindrail version, Reader-compatible schema window (+2 more)
 
-### Community 144 - "changesFixtureDB"
-Cohesion: 0.20
-Nodes (26): changesFixture(), changesFixtureDB(), seedTaskChain(), shaOf(), TestBaselineClearingDiscipline(), TestCaptureBaselineEmptyHashForMissingAndNonRegular(), TestCaptureBaselineRefusesUnknownTask(), TestCaptureBaselineReplacesWithoutStacking() (+18 more)
+### Community 144 - "newTestRepo"
+Cohesion: 0.21
+Nodes (25): TestTwoClientsAgree(), gitCommitFile(), TestCheckpointCrossSessionRead(), TestLifecycleAcrossIdentities(), TestReconcileDiscoversUndeclared(), callTool(), callToolRaw(), newTestRepo() (+17 more)
 
 ### Community 145 - "MR-004 — design: leases, idempotent mutations and optimistic revision"
 Cohesion: 0.13
 Nodes (15): 10. Command surface, 11. Status integration, 12. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000003_lease_idempotency.sql` (+7 more)
 
-### Community 146 - "newFixture"
-Cohesion: 0.28
-Nodes (21): mkunit(), newFixture(), seedPending(), TestEnqueueP0PromotesQueuedPath(), TestEnqueueRejectsRelativeAndUncleanPaths(), TestEvictedPathsRefillAfterPrioritize(), TestFillColdOrdersByPathAndReportsMore(), TestPrioritizeEnqueuesUnqueuedUnitFiles() (+13 more)
+### Community 146 - "New"
+Cohesion: 0.35
+Nodes (20): New(), cachePaths(), entryFiles(), fixtureFacts(), pythonInfo(), runFIFOProbe(), TestCanceledContextBypassesDiskAndCompute(), TestComputeErrorAndCancellationAreNeverMasked() (+12 more)
 
-### Community 147 - "gate.go"
-Cohesion: 0.19
-Nodes (24): Ambiguity, Denial, InvariantBlock, ambiguityDenials(), attributionDenials(), dedupe(), evidenceDenials(), Decision (+16 more)
+### Community 147 - "cli/arch_test.go"
+Cohesion: 0.10
+Nodes (37): firstPartyPackage, go/ast.ImportSpec, moduleRoot(), TestTheKnowledgePipelineHasExactlyOneCallSite(), assertMainDeclaresOnlyMain(), assertNoNetworkInLinkedPackages(), fileImports(), firstPartyPackages() (+29 more)
 
 ### Community 148 - "MR-003 — design: sequential agent handover"
 Cohesion: 0.17
 Nodes (12): 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000002_coordination.sql`, 6. The state table, 7. Command surface, 8. Status integration (+4 more)
 
 ### Community 149 - "pathsAt"
-Cohesion: 0.21
-Nodes (21): TestOnlyAByteIdenticalFileNameOwnsAnId(), TestADecisionAndAnInvariantNeverShareAGraphNode(), TestAFileInTheInvariantsDirectoryCannotCloseALineageOfDecisions(), TestAnInvariantCycleIsFatalAndNamesOnlyInvariants(), TestAnInvariantThatSupersedesItselfIsCountedAsOneRecord(), TestASupersedeTargetInTheOtherKindsDirectoryIsNotAnEdge(), TestTheDecisionsAreStillSilentWhenOnlyTheInvariantsClose(), detections() (+13 more)
+Cohesion: 0.20
+Nodes (23): TestAFileInTheInvariantsDirectoryCannotCloseALineageOfDecisions(), TestAnInvariantCycleIsFatalAndNamesOnlyInvariants(), TestAnInvariantThatSupersedesItselfIsCountedAsOneRecord(), TestASupersedeTargetInTheOtherKindsDirectoryIsNotAnEdge(), TestTheDecisionsAreStillSilentWhenOnlyTheInvariantsClose(), detections(), overFires(), TestAKindThatDisagreesWithItsDirectoryIsReportedByStepFive() (+15 more)
 
 ### Community 150 - "MR-002 — audit package"
 Cohesion: 0.15
@@ -925,12 +918,12 @@ Cohesion: 0.25
 Nodes (8): 11. SQLite concurrency ve interactive write fairness, Cold-index write fairness, Idempotency key, Immutable/content-addressed rows, Neden global write broker yok?, Optimistic revision, Process-local writer scheduling, WAL + bounded busy retry
 
 ### Community 153 - "newServiceFixture"
-Cohesion: 0.09
-Nodes (47): serviceFixture, RenameEntry, attributionSetup(), taskChangeID(), TestAttributeTaskDriftFiresPerFile(), TestAttributeTaskNeverInventsPaths(), TestAttributeTaskSingleCandidateAttributes(), TestAttributeTaskTwoCandidatesIsAmbiguous() (+39 more)
+Cohesion: 0.06
+Nodes (74): serviceFixture, Breadth, Entry, impactFixture, Input, Request, Result, targetFact (+66 more)
 
 ### Community 154 - "App"
-Cohesion: 0.11
-Nodes (7): InitResult, txProbe, sync/atomic.Bool, sync/atomic.Int64, AdoptCause(), asRepositoryError(), App
+Cohesion: 0.13
+Nodes (3): InitResult, asRepositoryError(), App
 
 ### Community 155 - "121. Failure modes"
 Cohesion: 0.25
@@ -944,9 +937,9 @@ Nodes (29): 0. Baseline evidence, 1. Decisions this document freezes, 2. Require
 Cohesion: 0.08
 Nodes (25): F01 — `mindrail init` reported READY over a repository the next command refused, F02 — an unopenable `config.toml` was remedied as a malformed one, F03 — a size limit was reported as a full disk, F04, F08 — a rejected command line exited 1 and wrote no envelope, F05 — the agreement matrix never read the remedy it claimed to carry out, F06 — no matrix row for a `config.toml` that cannot be opened, F07 — the linked-worktree cross-check compared two fields of four, F09 — the read-only-media sentinel had no row in the classifier's table (+17 more)
 
-### Community 158 - "TestBrokenGitFileDetectionDoesNotOverFire"
-Cohesion: 0.18
-Nodes (20): gitFileFault, joinStderr(), brokenGitFileFault(), danglingGitFileError(), decorate(), findDanglingGitFile(), gitReportedBrokenIndirection(), inspectGitEntry() (+12 more)
+### Community 158 - "TestDanglingGitFileIsNotDiagnosedAsAnAbsentRepository"
+Cohesion: 0.17
+Nodes (20): gitFileFault, joinStderr(), linkedWorktreeOfAdminDir(), brokenGitFileFault(), danglingGitFileError(), decorate(), findDanglingGitFile(), gitReportedBrokenIndirection() (+12 more)
 
 ### Community 159 - "2. Implementation Principles"
 Cohesion: 0.33
@@ -969,12 +962,12 @@ Cohesion: 0.40
 Nodes (5): 2.1 Context kaybı, 2.2 Semantic conflict, 2.3 Intent kaybı, 2.4 Kanıtsız tamamlanma, 2. Mindrail'in temel problemi
 
 ### Community 164 - "hostilefs_linux_test.go"
-Cohesion: 0.25
-Nodes (14): availableBytes(), checkReadOnlyRemedy(), checkSpaceRemedy(), fillToZero(), hostileRootScenario(), leaveFree(), remountReadOnly(), remountReadWrite() (+6 more)
+Cohesion: 0.18
+Nodes (15): availableBytes(), checkReadOnlyRemedy(), checkSpaceRemedy(), fillToZero(), hostileRootScenario(), leaveFree(), remountReadOnly(), remountReadWrite() (+7 more)
 
 ### Community 165 - "testing.T"
-Cohesion: 0.04
-Nodes (93): testing.T, importsOf(), modulePath(), packageFiles(), TestAppPackageIsALeaf(), TestAppUsesOnlyPermittedStdlib(), TestFixedClockSatisfiesClock(), TestFormatTimeIsUTCRFC3339() (+85 more)
+Cohesion: 0.05
+Nodes (77): testing.T, importsOf(), modulePath(), packageFiles(), TestAppPackageIsALeaf(), TestAppUsesOnlyPermittedStdlib(), TestFixedClockSatisfiesClock(), TestParseTimeRejectsMalformedInput() (+69 more)
 
 ### Community 166 - "122. Dynamic dispatch ve validation budget"
 Cohesion: 0.50
@@ -1000,25 +993,25 @@ Nodes (4): 61. Multi-agent çalışma modları, Mode A — Same workspace, seque
 Cohesion: 0.50
 Nodes (4): 7.1 Engineering Knowledge, 7.2 Runtime Coordination, 7.3 Proof, 7. Data plane ayrımı
 
-### Community 172 - "errorStore"
-Cohesion: 0.14
-Nodes (20): database/sql/driver.Conn, database/sql/driver.Driver, database/sql/driver.NamedValue, database/sql/driver.Result, database/sql/driver.Rows, database/sql/driver.Tx, database/sql/driver.TxOptions, database/sql/driver.Value (+12 more)
+### Community 172 - "record_internal_test.go"
+Cohesion: 0.38
+Nodes (12): jsonTagsOf(), shippedDocument(), stringAt(), stringsAt(), TestConstructorsStampTheVersionTheDocumentsAndTheRegistryAgreeOn(), TestIDPatternsAreTheOnesTheSchemaDocumentsDeclare(), TestKindConstantsAgreeWithTheDocumentsTheLoaderAndTheSchemaPackage(), TestScopeLevelsAreTheOnesTheSchemaDocumentsDeclare() (+4 more)
 
 ### Community 173 - "created_at"
 Cohesion: 0.40
 Nodes (5): description, format, pattern, type, created_at
 
 ### Community 174 - "indexerFixture"
-Cohesion: 0.21
-Nodes (26): sourceStillMatches(), indexerFixture(), semanticFileFacts(), sourceFile(), TestIndexFileCancellationLeavesTargetPendingAndRetries(), TestIndexFileCannotStealChildOwnedIndexedFile(), TestIndexFileChangedReplacesOnlyOwnFacts(), TestIndexFileFailedSameHashRetriesAndClassifiesParseFailure() (+18 more)
+Cohesion: 0.20
+Nodes (28): sourceStillMatches(), indexerFixture(), semanticFileFacts(), sourceFile(), TestIndexFileCancellationLeavesTargetPendingAndRetries(), TestIndexFileCannotStealChildOwnedIndexedFile(), TestIndexFileChangedReplacesOnlyOwnFacts(), TestIndexFileFailedSameHashRetriesAndClassifiesParseFailure() (+20 more)
 
 ### Community 175 - "git/adapter.go"
-Cohesion: 0.13
+Cohesion: 0.12
 Nodes (27): Adapter, standpoint, worktreeLinkage, bareRepositoryError(), detachedWorktreeError(), firstLine(), foreignRelinkCaveat(), foreignWorktreeError() (+19 more)
 
-### Community 176 - "Check"
-Cohesion: 0.12
-Nodes (28): Check, diagnosis, halt, step, ConfigCheck(), configResult(), describePath(), describeUninitializedDB() (+20 more)
+### Community 176 - "Subject"
+Cohesion: 0.20
+Nodes (7): diagnosis, halt, step, codeOf(), Subject, Result, unwritableDatabaseSummary()
 
 ### Community 177 - ".Record"
 Cohesion: 0.27
@@ -1028,37 +1021,37 @@ Nodes (9): corruptState(), Result, Evidence, Store, NewStore(), operationConflic
 Cohesion: 0.06
 Nodes (32): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's four acceptance criteria, D-100 — backfill mints, never migrates (+24 more)
 
-### Community 179 - "TestAStepsMessageCarriesTheFactsItsRemedyNeeds"
-Cohesion: 0.70
-Nodes (4): facts(), TestAStepsMessageCarriesTheFactsItsRemedyNeeds(), TestEveryStepsMessageIsCovered(), fact
+### Community 179 - "writability_test.go"
+Cohesion: 0.30
+Nodes (13): chmodForTest(), assertReportsAnUnwritableDatabase(), assertRepositoryWorksAgain(), carryOutWriteRemedy(), checkNamed(), newRepoUnderAnUnrepresentablePath(), TestAHealthyDatabaseReportsThatItsWritabilityWasChecked(), TestANonUTF8RepositoryPathIsRefusedRatherThanMangled() (+5 more)
 
-### Community 180 - "coherence_test.go"
-Cohesion: 0.21
-Nodes (17): remedy, remedyClass, agreementRemedyClass(), TestEveryRemedyThatNamesAPathIsClassified(), absolutePathsIn(), assertDocumentIsCoherent(), classOf(), contradictionsBetween() (+9 more)
+### Community 180 - "agreement_test.go"
+Cohesion: 0.18
+Nodes (30): answer, condition, agreeingCommands(), agreementConditions(), answerFrom(), answerOf(), assertExemptionsAreStillEarned(), assertRemedyIsWhatTheRowExpects() (+22 more)
 
 ### Community 181 - "3. IN Scope"
 Cohesion: 0.12
 Nodes (16): 3. IN Scope, Basic impact, Change discovery, Completion gate, Coordination, Core executable, Diagnostics, Engineering knowledge (+8 more)
 
-### Community 182 - "Warning"
+### Community 182 - "coherence_test.go"
 Cohesion: 0.21
-Nodes (13): Envelope, os.File, ColorEnabled(), Warning, hasEnvKey(), isTerminal(), openCharDevice(), regularFile() (+5 more)
+Nodes (17): remedy, remedyClass, agreementRemedyClass(), TestEveryRemedyThatNamesAPathIsClassified(), absolutePathsIn(), assertDocumentIsCoherent(), classOf(), contradictionsBetween() (+9 more)
 
-### Community 183 - "agreement_test.go"
-Cohesion: 0.09
-Nodes (60): condition, envelopeScenario, strictEnvelope, agreeingCommands(), agreementConditions(), assertRemedyIsWhatTheRowExpects(), chmodForRemedy(), discoveryConditions() (+52 more)
+### Community 183 - "Config"
+Cohesion: 0.17
+Nodes (20): OutputConfig, ProjectConfig, RuntimeConfig, SecretsConfig, Defaults(), Config, ValidationProfile, quote() (+12 more)
 
-### Community 184 - "Verdict"
-Cohesion: 0.23
-Nodes (10): CheckFunc, errorFrom(), Report, Result, Runner, State, Subject, haltError() (+2 more)
+### Community 184 - "Check"
+Cohesion: 0.13
+Nodes (23): Check, CheckFunc, errorFrom(), Report, Result, Runner, State, Subject (+15 more)
 
 ### Community 185 - "States"
-Cohesion: 0.16
-Nodes (17): State, transitionNotAvailable(), TestTheTableIsUnchangedByTheLease(), lifecycleLiteralsOutsideThisPackage(), moduleRoot(), CanTransition(), State, ParseState() (+9 more)
+Cohesion: 0.24
+Nodes (12): TestTheTableIsUnchangedByTheLease(), CanTransition(), State, ParseState(), States(), TestARefusalCanSayWhatIsAvailableInstead(), TestATaskNeverMovesToTheStateItIsAlreadyIn(), TestEveryOrderedPairOfStatesGetsTheAnswerTheSpecificationGives() (+4 more)
 
-### Community 186 - "NewRunner"
-Cohesion: 0.16
-Nodes (17): Runner, invalidInput(), NewRunner(), newTestRunner(), TestHelperProcess(), TestRunnerBoundsOutput(), TestRunnerRefusesBeforeSpawn(), TestRunnerRefusesUnresolvableBinary() (+9 more)
+### Community 186 - "newRefreshFixture"
+Cohesion: 0.30
+Nodes (18): activeInvariant(), newRefreshFixture(), symbolPackageDir(), TestAmbiguousTwinsBlockBySeverity(), TestEndToEndProtectRenameAmbiguousDelete(), TestOrphanBlocksOnCritical(), TestOutsideUnitTargetIsOrphaned(), TestRefreshBindingsWritesBoundRows() (+10 more)
 
 ### Community 187 - "MR-004 — Findings and per-task record"
 Cohesion: 0.04
@@ -1068,9 +1061,9 @@ Nodes (46): 1. TASK-01 — the bounded wait, named and measured, 2. TASK-02 — 
 Cohesion: 0.10
 Nodes (21): 1. What the milestone does now, 2. Two defects the implementation found in itself, 3. Mutations run, and what each turned red, 4. What an audit should look at first, 5. Audit round 1, 6. The round-1 remediation, 7. The round-2 remediation, MR-003 — findings (+13 more)
 
-### Community 189 - "newEvidenceFixture"
-Cohesion: 0.23
-Nodes (12): NewRedactor(), TestRedactDefaultPatterns(), TestRedactExactValues(), validSecretName(), newEvidenceFixture(), TestEvidenceSchemaVersionGate(), TestOperationIDReplay(), TestRecordBindsEvidenceRow() (+4 more)
+### Community 189 - "arrange"
+Cohesion: 0.18
+Nodes (15): sessionResult, idempotentWriter, Session, arrange(), countRows(), fixture, TestAnOperationIDMustBeAnIdentifier(), TestARecordThatNamesNoEntityIsDamageNotAFreshMint() (+7 more)
 
 ### Community 190 - "103. Test weakening ve false-green guard"
 Cohesion: 0.67
@@ -1081,36 +1074,36 @@ Cohesion: 0.67
 Nodes (3): 28. Interactive performance contract, Interactive vs deep path, Latency telemetry
 
 ### Community 198 - "NewRegistry"
-Cohesion: 0.07
-Nodes (60): NewRegistry(), mustReadEmbedded(), TestEmbeddedSchemaDocumentIsACopy(), TestEmbeddedSchemasPresent(), TestNewRegistryAcceptsExtraDocuments(), TestNewRegistryRejectsIncompleteOrCorruptFS(), TestSupportsRejectsNewerVersion(), TestVersionWindowIsWriteOneReadableOne() (+52 more)
+Cohesion: 0.06
+Nodes (66): Registry, NewRegistry(), mustReadEmbedded(), TestEmbeddedSchemaDocumentIsACopy(), TestEmbeddedSchemasPresent(), TestNewRegistryAcceptsExtraDocuments(), TestNewRegistryRejectsIncompleteOrCorruptFS(), TestSupportsRejectsNewerVersion() (+58 more)
 
-### Community 199 - "newRefreshFixture"
+### Community 199 - "Invariant"
 Cohesion: 0.32
-Nodes (17): activeInvariant(), newRefreshFixture(), symbolPackageDir(), TestAmbiguousTwinsBlockBySeverity(), TestEndToEndProtectRenameAmbiguousDelete(), TestOrphanBlocksOnCritical(), TestOutsideUnitTargetIsOrphaned(), TestRefreshBindingsWritesBoundRows() (+9 more)
+Nodes (7): blocks(), Service, Decision, Invariant, Status, Outcome, Report
 
 ### Community 201 - "Discover"
-Cohesion: 0.13
-Nodes (24): Files(), File, TestFilesCancellationBeforeWalk(), TestFilesDeterministicallyAssignsNestedUnitsAndSkipsUnsafePaths(), CanonicalRoot(), contains(), Discover(), isLinkedWorktreeRoot() (+16 more)
+Cohesion: 0.15
+Nodes (23): Files(), TestFilesCancellationBeforeWalk(), TestFilesDeterministicallyAssignsNestedUnitsAndSkipsUnsafePaths(), CanonicalRoot(), contains(), Discover(), isLinkedWorktreeRoot(), Owner() (+15 more)
 
 ### Community 202 - "ProbeWriteAccess"
 Cohesion: 0.29
 Nodes (21): ProbeWriteAccess(), assertProbeMatchesSQLite(), assertUnwritablePayload(), chmodForTest(), dirEntryNames(), initialisedDatabase(), requireModeBitsAreEnforced(), TestProbeWriteAccessAgreesWithSQLite() (+13 more)
 
-### Community 203 - ".search"
-Cohesion: 0.28
-Nodes (9): excerptOf(), firstNonEmpty(), Server, ContextIn, ContextOut, recordText, SearchHit, SearchIn (+1 more)
+### Community 203 - "columns.go"
+Cohesion: 0.25
+Nodes (13): addedColumn(), alterations(), columnList(), columnName(), firstToken(), nextToken(), stripComments(), tableColumns() (+5 more)
 
 ### Community 204 - "audit_scope.py"
 Cohesion: 0.32
 Nodes (12): assign_cluster(), build_plan(), changed_files(), classify(), diff_lines(), git(), load_tasks(), main() (+4 more)
 
-### Community 205 - "Tracker"
-Cohesion: 0.17
-Nodes (8): unsafe.Pointer, Install(), TestCanceledAfterParseClosesTree(), TestEveryEmbeddedQueryCompilesAndGrammarABIIsCompatible(), TestNativeResourcesReturnToBaselineAfter1000CyclesPerLanguage(), TestRegistryConstructionFailureClosesEarlierQueries(), Tracker, canceledAfterEntry
+### Community 205 - "MR-015 — Design"
+Cohesion: 0.09
+Nodes (20): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Tool flows, 7. Session attribution (+12 more)
 
-### Community 206 - "newStore"
-Cohesion: 0.32
-Nodes (14): newStepClock(), newStore(), newStoreAt(), registration(), TestEmptyStoreListsNothing(), TestFindByRootReportsUnregisteredWorkspace(), TestRegisteredIDsAreOpaqueAndPrefixed(), TestRegisterIsIdempotent() (+6 more)
+### Community 206 - "Clock"
+Cohesion: 0.15
+Nodes (25): Clock, Registration, Store, Workspace, NewStore(), scanWorkspace(), newStepClock(), newStore() (+17 more)
 
 ### Community 207 - "MR-006 — Design"
 Cohesion: 0.18
@@ -1125,8 +1118,8 @@ Cohesion: 0.24
 Nodes (13): countEnv(), helperArgv(), helperRunner(), lookupEnv(), processAlive(), readPID(), TestDefaultTimeoutIsBounded(), TestExecRunnerCancellationKillsChild() (+5 more)
 
 ### Community 210 - "github.com/tree-sitter/go-tree-sitter.Node"
-Cohesion: 0.18
-Nodes (21): github.com/tree-sitter/go-tree-sitter.Node, callbackArg(), enclosesNode(), hasMarker(), insideAny(), isTrivialCallback(), jsUnescape(), newEcmaAnalyzer() (+13 more)
+Cohesion: 0.22
+Nodes (18): github.com/tree-sitter/go-tree-sitter.Node, callbackArg(), enclosesNode(), hasMarker(), insideAny(), isTrivialCallback(), jsUnescape(), newEcmaAnalyzer() (+10 more)
 
 ### Community 211 - "TASK-01 dependency + schema.Validator"
 Cohesion: 0.29
@@ -1156,33 +1149,33 @@ Nodes (7): AC coverage claimed, Deviations from the frozen requirements, as repo
 Cohesion: 0.29
 Nodes (7): AC coverage claimed, Deviations from the frozen requirements, as reported, Files, Mutations the implementer claims to have performed, Risks flagged, TASK-08 independent mutation sweep, Tests added
 
-### Community 218 - ".invariant"
+### Community 218 - "github.com/modelcontextprotocol/go-sdk/mcp.CallToolResult"
+Cohesion: 0.13
+Nodes (16): github.com/modelcontextprotocol/go-sdk/mcp.CallToolRequest, github.com/modelcontextprotocol/go-sdk/mcp.CallToolResult, Server, Server, insideRoot(), Invalid(), AfterChangeIn, AfterChangeOut (+8 more)
+
+### Community 219 - "MR-008 — Bulgular ve kapı kaydı"
+Cohesion: 0.13
+Nodes (15): Başlangıç ve çalışma ağacı, MR-008 — Bulgular ve kapı kaydı, MR-008 kapanış, Reader / Breaker bulguları ve giderim — TASK-01 kapısı, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: TEMİZ (5/5 AC CONFIRMED); Breaker: 1 MİNÖR + 1 GAP, TASK-02 guard mutasyon defteri (tamamı geri alındı) (+7 more)
+
+### Community 220 - "MR-009 — Design"
 Cohesion: 0.18
-Nodes (14): github.com/modelcontextprotocol/go-sdk/mcp.CallToolRequest, github.com/modelcontextprotocol/go-sdk/mcp.CallToolResult, regexp.Regexp, Invalid(), NotImplemented(), allocateID(), Server, persistRecord() (+6 more)
+Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Analysis flows, 7. Lease/scope inputs (+3 more)
 
-### Community 219 - "MR-008 — Design"
-Cohesion: 0.07
-Nodes (26): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000007_scope_attribution.sql`, 6. Evaluation flows, 7. Lease guidance input (+18 more)
-
-### Community 220 - "Store"
-Cohesion: 0.29
-Nodes (10): Registration, Store, Workspace, NewStore(), scanWorkspace(), upsertProject(), upsertWorkspace(), validateRegistration() (+2 more)
-
-### Community 222 - "Store"
-Cohesion: 0.22
-Nodes (14): Breadth, Entry, Input, Request, Result, targetFact, Via, Service (+6 more)
+### Community 222 - "CauseOf"
+Cohesion: 0.19
+Nodes (13): AdoptCause(), CauseOf(), detailLines(), RenderError(), renderSection(), TestAdoptCauseNeverOverwritesAnExistingCause(), TestCauseOfReachesThroughTheWrapChain(), TestDomainErrorWrappingSurvivesErrorsIsAndAs() (+5 more)
 
 ### Community 223 - "5. Test plan"
 Cohesion: 0.04
 Nodes (47): 0. Citation audit, 1.1 Why `internal/status` is added to §7, 1. Package plan, 2.10 `internal/doctor` — Unit D, 2.11 `internal/status` — Unit D, 2.12 `internal/bootstrap` — Unit E, 2.13 `internal/cli` — Unit E, 2.1 `internal/app` — Unit D (+39 more)
 
-### Community 224 - "New"
-Cohesion: 0.35
-Nodes (20): New(), cachePaths(), entryFiles(), fixtureFacts(), pythonInfo(), runFIFOProbe(), TestCanceledContextBypassesDiskAndCompute(), TestComputeErrorAndCancellationAreNeverMasked() (+12 more)
+### Community 224 - "Scope"
+Cohesion: 0.43
+Nodes (5): checkRepoRelative(), ScopeLevel, isScopeLevel(), isWindowsDriveRooted(), Scope
 
-### Community 225 - "FormatTime"
+### Community 225 - "time.Time"
 Cohesion: 0.08
-Nodes (47): Acquisition, Operation, recorded, rowScanner, FormatTime(), blockedReasonMissing(), Lease, Task (+39 more)
+Nodes (50): Acquisition, FixedClock, SystemClock, Operation, recorded, rowScanner, time.Time, FormatTime() (+42 more)
 
 ### Community 228 - "TestTheOwnershipRuleAgreesWithAnIndependentOracleOverEveryStore"
 Cohesion: 0.25
@@ -1197,20 +1190,20 @@ Cohesion: 0.20
 Nodes (9): Audit scoping — making audit cost follow risk, not task count, Rule 1 — One audit per delivery, never one per task, Rule 2 — Depth is set per cluster by risk, Rule 3 — Mutation runs targeted tests, the full suite runs once, Rule 4 — Checkpoint audits hide audit time behind implementation time, Rule 5 — Re-audits are delta-only, The audit plan artifact, The problem this solves (+1 more)
 
 ### Community 231 - "index/identity_test.go"
-Cohesion: 0.19
+Cohesion: 0.20
 Nodes (32): allocDatabase(), allocWorker(), ambiguityRows(), identityCount(), identityFixture(), identityUnit(), migrationFixture(), sourceFile() (+24 more)
 
 ### Community 232 - "MR-002 — Versioned Decision/Invariant knowledge lifecycle"
 Cohesion: 0.22
 Nodes (9): 0. What MR-001 left here, exactly, 1. Scope decision: no CLI write surface, 2. Package plan, 3. Frozen signatures, 4. Decisions, 5. Test plan, 6. Explicit non-goals, 7. Acceptance criteria traceability (+1 more)
 
-### Community 233 - "writability_test.go"
-Cohesion: 0.27
-Nodes (14): assertReportsAnUnwritableDatabase(), assertRepositoryWorksAgain(), carryOutWriteRemedy(), checkNamed(), initGitRepo(), newRepoUnderAnUnrepresentablePath(), TestAHealthyDatabaseReportsThatItsWritabilityWasChecked(), TestANonUTF8RepositoryPathIsRefusedRatherThanMangled() (+6 more)
+### Community 233 - "PayloadOf"
+Cohesion: 0.12
+Nodes (29): PayloadOf(), ExitCode(), TestProbeWritableLeavesAHealthyRepositoryAlone(), TestUnwritablePathPrescribesTheRemedyThatClearsEachCondition(), TestUnwritablePathStillNamesTheObstructionsItAlreadyNamed(), notARepositoryError(), fakeAsked(), healthyResponses() (+21 more)
 
 ### Community 234 - "fulldisk_linux_test.go"
-Cohesion: 0.22
-Nodes (16): afterTheRemedy(), availableBytes(), checkRemedy(), directoryContents(), fillToZero(), fullDiskChild(), fullDiskScenario(), initialiseOnDisk() (+8 more)
+Cohesion: 0.15
+Nodes (24): afterTheRemedy(), availableBytes(), checkRemedy(), directoryContents(), fillToZero(), fullDiskChild(), fullDiskScenario(), initialiseOnDisk() (+16 more)
 
 ### Community 235 - "goldenReport"
 Cohesion: 0.42
@@ -1220,33 +1213,33 @@ Nodes (8): assertGolden(), Report, goldenReport(), stripANSI(), TestRenderHumanC
 Cohesion: 0.05
 Nodes (41): Başlangıç ve çalışma ağacı, D-112 — eşleştirme transaction içinde Store metodudur (D-93 arıtması), D-113 — ata kümesi dosya+ihattur, global tarama yok, MR-006 — Bulgular ve kapı kaydı, Reader / Breaker bulguları ve giderim, Reader / Breaker bulguları ve giderim — TASK-01 kapısı, Reader / Breaker bulguları ve giderim — TASK-02 kapısı, Reader / Breaker bulguları ve giderim — TASK-02 kapısı (+33 more)
 
-### Community 237 - "arrange"
-Cohesion: 0.42
-Nodes (9): idempotentWriter, Session, arrange(), countRows(), fixture, TestARecordThatNamesNoEntityIsDamageNotAFreshMint(), TestTheSameOperationTwiceIsOneWriteAndOneRecord(), TestTwoDeliveriesOfOneOperationSerialise() (+1 more)
+### Community 237 - "Audit round 2"
+Cohesion: 0.15
+Nodes (9): Remediation brief, 1. The verdict, 2. The base rate, which is why this round exists, 3. The three deviations, graded, 5. What was refuted, and why, 6. What this round did not look at, 7. What generalises, 8. Remediation brief for round 2 (+1 more)
 
-### Community 238 - "builder"
-Cohesion: 0.20
-Nodes (9): Decision, Severity, checkRepoRelative(), ScopeLevel, isScopeLevel(), isWindowsDriveRooted(), builder, Scope (+1 more)
+### Community 238 - "app.go"
+Cohesion: 0.17
+Nodes (12): io/fs.FS, asKnowledgeError(), asMigrationError(), asMigrationSetError(), asRuntimePathError(), asWorkspaceError(), domainize(), Mode (+4 more)
 
 ### Community 239 - "MR-011 — Frozen requirements and acceptance criteria"
 Cohesion: 0.13
 Nodes (15): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's four acceptance criteria, D-165 — staleness is computed, never stored (+7 more)
 
-### Community 240 - "database/sql.DB"
-Cohesion: 0.18
-Nodes (21): database/sql.Conn, database/sql.DB, boundCheckpointWait(), Checkpoint(), checkpointFailure(), checkpointOutcome(), fileSize(), TestAFailedCheckpointIsReportedAsOne() (+13 more)
+### Community 240 - "shutdown"
+Cohesion: 0.22
+Nodes (10): log/slog.Logger, Options, newDoctorCommand(), runDoctor(), invocation, shutdown(), Options, newStatusCommand() (+2 more)
 
-### Community 244 - "app.go"
-Cohesion: 0.17
-Nodes (12): io/fs.FS, asKnowledgeError(), asMigrationError(), asMigrationSetError(), asRuntimePathError(), asWorkspaceError(), domainize(), Mode (+4 more)
+### Community 244 - "Checkpoint"
+Cohesion: 0.27
+Nodes (11): database/sql.Conn, boundCheckpointWait(), Checkpoint(), checkpointFailure(), checkpointOutcome(), fileSize(), TestAFailedCheckpointIsReportedAsOne(), TestCheckpointGivesUpOnAHeldDatabaseRatherThanWaitingForIt() (+3 more)
 
 ### Community 245 - "MR-005 — Design"
 Cohesion: 0.18
 Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000004_index.sql`, 6. Parsing rules, 7. Incremental reindex and resume (+3 more)
 
-### Community 246 - "MR-012 — Bulgular ve kapı kaydı"
+### Community 246 - "MR-012 — Design"
 Cohesion: 0.18
-Nodes (11): Başlangıç ve çalışma ağacı, MR-012 — Bulgular ve kapı kaydı, MR-012 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 5/5 CONFIRMED + 3 gözlem; Breaker: 6/6 REFUTED, TASK-02 guard mutasyon defteri (tamamı geri alındı), TASK-02 kabul kanıtı (+3 more)
+Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Analysis flows, 7. Secret inputs (+3 more)
 
 ### Community 247 - "MR-014 — Bulgular ve kapı kaydı"
 Cohesion: 0.17
@@ -1262,47 +1255,47 @@ Nodes (4): Durum, Kabul kriterleri, [ ] MR-009 — Sınırlı ve açıklanabilir
 
 ### Community 250 - "FreeSpace"
 Cohesion: 0.13
-Nodes (18): FreeSpace, TestFreeSpaceExhaustedOnlyWhenTheAnswerIsKnownAndZero(), TestNoSpaceRefusalNamesTheConditionItFound(), TestNoSpaceRefusalSaysNothingAboutAPathItCannotStat(), TestNoSpaceRefusalStaysSilentWhereThereIsRoom(), NoSpaceRefusal(), statFreeSpace(), ProbeFreeSpace() (+10 more)
+Nodes (16): FreeSpace, TestFreeSpaceExhaustedOnlyWhenTheAnswerIsKnownAndZero(), TestNoSpaceRefusalNamesTheConditionItFound(), TestNoSpaceRefusalSaysNothingAboutAPathItCannotStat(), TestNoSpaceRefusalStaysSilentWhereThereIsRoom(), NoSpaceRefusal(), statFreeSpace(), ProbeFreeSpace() (+8 more)
 
 ### Community 251 - "Mindrail 0.1 — Uygulama Görev Listesi"
 Cohesion: 0.40
 Nodes (5): 0.1 Dışında Tutulacak Backlog, 0.1 Kabul Kriteri İzlenebilirlik Matrisi, Bağımlılık Dalgaları, Kullanım, Mindrail 0.1 — Uygulama Görev Listesi
 
 ### Community 252 - "time.Duration"
+Cohesion: 0.19
+Nodes (17): time.Duration, genuineBusyError(), TestABusyOpenIsNamedOnce(), TestAnOpenRefusedForTheWholeBudgetIsRetryable(), TestAnOpenThatIsNotContendedIsNotRewritten(), TestTheLadderStepsByTheSpecsExample(), TestWaitBusyReturnsSuccessAndPermanentFailuresAtOnce(), TestWaitBusySleepsByTheLadderAndStopsAtTheBudget() (+9 more)
+
+### Community 253 - "MR-014 — Design"
 Cohesion: 0.18
-Nodes (19): time.Duration, genuineBusyError(), TestABusyOpenIsNamedOnce(), TestAnOpenRefusedForTheWholeBudgetIsRetryable(), TestAnOpenThatIsNotContendedIsNotRewritten(), TestTheLadderStepsByTheSpecsExample(), TestWaitBusyReturnsSuccessAndPermanentFailuresAtOnce(), TestWaitBusySleepsByTheLadderAndStopsAtTheBudget() (+11 more)
+Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Tool flows, 7. Client identities (+3 more)
 
-### Community 253 - "MR-012 — Design"
-Cohesion: 0.18
-Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Analysis flows, 7. Secret inputs (+3 more)
+### Community 254 - "DefaultChecks"
+Cohesion: 0.14
+Nodes (30): App, NewRunner(), TestRunnerRespectsContextCancellation(), DefaultChecks(), assertActionable(), Subject, haltedSubject(), TestBrokenConfigDoesNotUnresolveTheRepository() (+22 more)
 
-### Community 254 - "healthySubject"
-Cohesion: 0.15
-Nodes (33): App, NewRunner(), TestRunnerRespectsContextCancellation(), DefaultChecks(), Subject, haltedSubject(), healthySubject(), TestAnUnusableKnowledgeDirectoryIsReportedAsAPathCondition() (+25 more)
+### Community 255 - "Store"
+Cohesion: 0.08
+Nodes (43): database/sql.NullString, os.FileInfo, FileFacts, FileIndexState, fileScanner, FileStateObservation, fileStateToken, Import (+35 more)
 
-### Community 255 - "context.Context"
-Cohesion: 0.13
-Nodes (15): context.Context, Identity, identityRowQuerier, NamedSymbol, Referrer, ParseTime(), Store, Symbol (+7 more)
+### Community 256 - "Code"
+Cohesion: 0.06
+Nodes (59): Envelope, Provenance, SymbolAttribution, TaskAttribution, Ambiguity, Denial, InvariantBlock, os.File (+51 more)
 
-### Community 256 - ".SyncFileSymbols"
-Cohesion: 0.24
-Nodes (9): SymbolChange, boolInt(), diffSymbols(), Service, Store, Store, New(), removedSymbols() (+1 more)
-
-### Community 257 - "DomainError"
-Cohesion: 0.26
-Nodes (10): DomainError, busyFailure(), describeDatabaseFile(), describeRefusedPaths(), diskFullFailure(), MainDatabaseFile(), mainDatabaseFile(), readOnlyMediaWriteFailure() (+2 more)
+### Community 257 - "coordination/lease.go"
+Cohesion: 0.20
+Nodes (13): TargetKind, leaseTargetFlags(), FileTarget(), fileTargetInvalid(), Acquisition, Target, Task, isASCIILetter() (+5 more)
 
 ### Community 258 - "[ ] MR-012 — Kritik doğrulama testini zayıflatma guard'ı"
 Cohesion: 0.50
 Nodes (4): Durum, Kabul kriterleri, [ ] MR-012 — Kritik doğrulama testini zayıflatma guard'ı, Ne yapılacak
 
 ### Community 259 - "MR-010 — Design"
-Cohesion: 0.08
-Nodes (22): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000008_evidence.sql`, 6. Execution flows, 7. Secret inputs (+14 more)
+Cohesion: 0.18
+Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000008_evidence.sql`, 6. Execution flows, 7. Secret inputs (+3 more)
 
 ### Community 260 - "2. Decisions"
-Cohesion: 0.20
-Nodes (10): 2. Decisions, D-80 — the index lands in `internal/index/`, and the deviation from §7's tree is named once, D-81 — unsupported is a terminal state, not pending; a partial parse is DEGRADED, D-82 — snapshots on disk beside the database; facts in SQLite, D-83 — `logical_key` is an index, not an identity, D-84 — the queue is P0 and P4; P1–P3 are constants, not scaffolding, D-85 — the parser schema version is a constant in `internal/index/parser`, not the migration ledger, D-86 — parse and extract timings are collected and never reach the wire (+2 more)
+Cohesion: 0.08
+Nodes (24): 0. Baseline evidence, 1. The scenario, in one paragraph, 2. Decisions, 3. Requirements and acceptance criteria, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, D-80 — the index lands in `internal/index/`, and the deviation from §7's tree is named once (+16 more)
 
 ### Community 261 - "[ ] MR-014 — MCP bilgi ve bağlam araçları"
 Cohesion: 0.50
@@ -1316,37 +1309,37 @@ Nodes (4): Durum, Kabul kriterleri, Ne yapılacak, [x] MR-001 — Yerel reposito
 Cohesion: 0.50
 Nodes (4): Durum, Kabul kriterleri, [ ] MR-008 — Scope drift ve unregistered change ambiguity, Ne yapılacak
 
-### Community 264 - "NewRegistry"
-Cohesion: 0.24
-Nodes (9): helperKey(), TestAnalyzeRealRepositoryEndToEnd(), Store, NewIndexer(), TestProcessRestartResumesRemainderOnly(), adapter, Registry, NewRegistry() (+1 more)
+### Community 264 - "Indexer"
+Cohesion: 0.19
+Nodes (17): Indexer, Store, NewIndexer(), adapter, Registry, NewRegistry(), newRegistry(), SyntaxAdapter (+9 more)
 
 ### Community 265 - "[x] MR-003 — Session, Task ve Checkpoint ile sıralı ajan devri"
 Cohesion: 0.50
 Nodes (4): Durum, Kabul kriterleri, Ne yapılacak, [x] MR-003 — Session, Task ve Checkpoint ile sıralı ajan devri
 
-### Community 266 - "PayloadOf"
+### Community 266 - "migratedChangesSchema"
+Cohesion: 0.51
+Nodes (9): migratedChangesSchema(), mustChangesSQL(), seedTaskChain(), TestBaselineGrainIsPerTaskPath(), TestChangeRowsEnforceForeignKeys(), TestChangeRowVocabularies(), TestChangeSymbolGrainIsPerKey(), TestOneOpenChangePerTask() (+1 more)
+
+### Community 268 - "Görevler"
+Cohesion: 0.20
+Nodes (10): Görevler, Kabul kriterleri, Kabul kriterleri, Kabul kriterleri, [ ] MR-018 — Hook bypass'a dayanıklı CI verification, [ ] MR-019 — Warm-path SLO, pending state ve release kalite kapısı, [ ] MR-020 — 0.1 çıkış koşulu kabul incelemesi, Ne yapılacak (+2 more)
+
+### Community 269 - "exit.go"
 Cohesion: 0.19
-Nodes (19): PayloadOf(), TestProbeWritableLeavesAHealthyRepositoryAlone(), TestUnwritablePathPrescribesTheRemedyThatClearsEachCondition(), TestUnwritablePathStillNamesTheObstructionsItAlreadyNamed(), exit128(), mentionsGitInit(), requirePermissionsAreEnforced(), TestExit128IsClassifiedByWhatGitSaid() (+11 more)
-
-### Community 268 - "[ ] MR-020 — 0.1 çıkış koşulu kabul incelemesi"
-Cohesion: 0.67
-Nodes (3): Kabul kriterleri, [ ] MR-020 — 0.1 çıkış koşulu kabul incelemesi, Ne yapılacak
-
-### Community 269 - "ExitCode"
-Cohesion: 0.08
-Nodes (29): Error, main(), FakeResponse, Invocation, context.CancelFunc, RootContext(), Denied(), ExitCode() (+21 more)
+Nodes (12): Error, TestDomainErrorCarriesFiveFields(), Denied(), exitCodeForKind(), Failed(), Kind, TestErrorMessageUsesCause(), TestErrorUnwrapsToCause() (+4 more)
 
 ### Community 271 - "pythonAnalyzer"
-Cohesion: 0.25
-Nodes (8): github.com/tree-sitter/go-tree-sitter.Parser, encloses(), isTestName(), isTrivialBody(), newPythonAnalyzer(), normalizeDecorator(), pythonAnalyzer, pythonFunction
+Cohesion: 0.23
+Nodes (9): github.com/tree-sitter/go-tree-sitter.Parser, allowedAbove(), encloses(), isTestName(), isTrivialBody(), newPythonAnalyzer(), normalizeDecorator(), pythonAnalyzer (+1 more)
 
-### Community 272 - "RuntimePaths"
-Cohesion: 0.26
-Nodes (10): RuntimePaths, SyntaxAdapter, gitCommand(), openIndexStore(), parseFacts(), pythonAdapter(), realWorktreePaths(), storedFacts() (+2 more)
+### Community 272 - "Probe"
+Cohesion: 0.23
+Nodes (14): SQLiteCheck(), noSpaceRefusal(), TestAFullFilesystemIsNotReportedAsAHealthyDatabase(), TestAFullFilesystemSupersedesTheInitRemedyEverywhere(), TestAHealthyDatabaseIsUnaffectedByTheSpaceReading(), TestARuntimeDirectoryRefusalIsNotClaimedAsADatabaseRefusal(), TestTheSpaceRemedyDoesNotPrescribeAChmodWithoutAPayload(), Subject (+6 more)
 
 ### Community 273 - "newInvocation"
-Cohesion: 0.17
-Nodes (14): globalFlags, humanRenderer, log/slog.Logger, Options, newDoctorCommand(), runDoctor(), blockedReason(), globalFlagsOf() (+6 more)
+Cohesion: 0.28
+Nodes (8): globalFlags, humanRenderer, globalFlagsOf(), invocation, Options, newInvocation(), resolveStartDir(), startDirError()
 
 ### Community 274 - "Supersede"
 Cohesion: 0.23
@@ -1369,16 +1362,16 @@ Cohesion: 0.50
 Nodes (4): Durum, Kabul kriterleri, Ne yapılacak, [x] MR-002 — Sürümlü Decision/Invariant bilgi yaşam döngüsü
 
 ### Community 279 - "Lease"
-Cohesion: 0.09
-Nodes (21): attributed, checkpointResult, leaseListResult, leaseResult, sessionResult, taskListResult, taskResult, LeaseStatus (+13 more)
+Cohesion: 0.14
+Nodes (13): attributed, checkpointResult, handoverResult, leaseListResult, leaseResult, taskListResult, taskResult, LeaseStatus (+5 more)
 
-### Community 280 - "Step"
-Cohesion: 0.31
-Nodes (5): Recorder, stepRecorder, App, Step, Steps()
+### Community 280 - "TestStartupStepOrderMatchesSpec"
+Cohesion: 0.25
+Nodes (7): Recorder, stepRecorder, TestStartupDiscoversInventoryAtTheExistingIndexStateStep(), TestStartupStepOrderMatchesSpec(), App, Step, Steps()
 
-### Community 281 - "check_test.go"
-Cohesion: 0.26
-Nodes (12): State, okCheck(), stateCheck(), stateCheckIn(), TestCheckFuncFillsItsOwnIdentity(), TestCheckFuncWithoutFunctionIsNotSilent(), TestHaltErrorPointsAtTheCheckThatExplainsTheHalt(), TestReportErrExitCodeFollowsTheFailureClass() (+4 more)
+### Community 281 - ".invariant"
+Cohesion: 0.16
+Nodes (13): regexp.Regexp, Severity, NotImplemented(), allocateID(), Server, persistRecord(), BootstrapOut, DecideIn (+5 more)
 
 ### Community 282 - "NewID"
 Cohesion: 0.27
@@ -1397,8 +1390,8 @@ Cohesion: 0.25
 Nodes (13): createdAtOf(), describe(), encode(), findingsFor(), readGolden(), requireValid(), shippedValidator(), TestConstructorsSerializeCreatedAtAsUTCRFC3339() (+5 more)
 
 ### Community 286 - "Check"
-Cohesion: 0.14
-Nodes (27): TestFreshnessLifecycleEndToEnd(), Check(), Coverage, provenanceScope(), rehashScope(), shortHash(), evidenceRow(), provenanceForTest() (+19 more)
+Cohesion: 0.05
+Nodes (60): readiness, bytes.Buffer, sync.Once, TestFreshnessLifecycleEndToEnd(), Check(), Coverage, provenanceScope(), rehashScope() (+52 more)
 
 ### Community 287 - "ClassifyRefusal"
 Cohesion: 0.23
@@ -1408,17 +1401,17 @@ Nodes (8): Barrier, ClassifyRefusal(), platformBarrier(), platformBarrier(), Tes
 Cohesion: 0.50
 Nodes (4): Durum, Kabul kriterleri, [ ] MR-011 — Kaynak değişince evidence geçersizleştirme, Ne yapılacak
 
-### Community 289 - "initialize"
-Cohesion: 0.57
-Nodes (6): initialize(), TestAHealthyStoreProducesNoFindings(), TestInvalidRecordsAreFindingsAndDoNotHaltStartup(), TestSchemasThisBinaryCannotCompileAreADefectInTheBinary(), uncompilableSchemas(), writeRecord()
+### Community 289 - "Server"
+Cohesion: 0.48
+Nodes (3): github.com/modelcontextprotocol/go-sdk/mcp.Server, Server, New()
 
 ### Community 290 - "TestWriteModeMigratesNothingAndRegistersNothing"
-Cohesion: 0.67
-Nodes (5): countRows(), execOnDB(), takeTheSchemaBackOneMigration(), TestWriteModeMigratesNothingAndRegistersNothing(), unregisterEveryWorktree()
+Cohesion: 0.52
+Nodes (6): countRows(), execOnDB(), takeTheSchemaBackOneMigration(), TestWriteModeCreatesNothing(), TestWriteModeMigratesNothingAndRegistersNothing(), unregisterEveryWorktree()
 
-### Community 291 - "MR-014 — Design"
-Cohesion: 0.18
-Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Tool flows, 7. Client identities (+3 more)
+### Community 291 - "github.com/spf13/cobra.Command"
+Cohesion: 0.47
+Nodes (11): github.com/spf13/cobra.Command, requireFlagText(), expectRevisionFlag(), Options, newTaskCommand(), newTaskListCommand(), newTaskOpenCommand(), newTaskShowCommand() (+3 more)
 
 ### Community 292 - ".RoundTrip"
 Cohesion: 0.50
@@ -1428,167 +1421,143 @@ Nodes (3): refusingTransport, net/http.Request, net/http.Response
 Cohesion: 0.17
 Nodes (12): Başlangıç ve çalışma ağacı, MR-009 — Bulgular ve kapı kaydı, MR-009 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 4/4 CONFIRMED + 1 gap; Breaker: 5/6 REFUTED + 1 BROKEN→KAPANDI, TASK-02 guard mutasyon defteri (tamamı geri alındı), TASK-02 kabul kanıtı (+4 more)
 
-### Community 294 - "github.com/spf13/cobra.Command"
-Cohesion: 0.50
-Nodes (11): github.com/spf13/cobra.Command, expectRevisionFlag(), Options, leaseTargetFlags(), newLeaseAcquireCommand(), newLeaseCommand(), newLeaseHolderCommand(), newLeaseListCommand() (+3 more)
+### Community 294 - "migratedIndexSchema"
+Cohesion: 0.49
+Nodes (9): migratedIndexSchema(), mustIndexSQL(), seedIndexConstraintRows(), TestIdentityAllocationKeyIsUniquePerProjectUnitLanguageKey(), TestIdentityBindingStatusAndSymbolUidAreConstrained(), TestIdentityContainerUidRejectsDanglingParent(), TestIndexStateCheckRejectsUnknownValue(), TestIndexTablesDeclarePrimaryKeys() (+1 more)
 
 ### Community 295 - "MR-007 — Bulgular ve kapı kaydı"
 Cohesion: 0.06
 Nodes (35): Başlangıç ve çalışma ağacı, D-131 — yakınsama bağımsız keşifler üzerinedir (AC-05.1 açıklaması), Ek pinler (bu tur), MR-007 — Bulgular ve kapı kaydı, Reader / Breaker bulguları ve giderim — TASK-01 kapısı, Reader / Breaker bulguları ve giderim — TASK-02 kapısı, Reader / Breaker bulguları ve giderim — TASK-02 kapısı, Reader / Breaker bulguları ve giderim — TASK-03 kapısı (+27 more)
 
-### Community 296 - "Görevler"
-Cohesion: 0.20
-Nodes (10): Görevler, Kabul kriterleri, Kabul kriterleri, Kabul kriterleri, [ ] MR-015 — MCP koordinasyon ve değişiklik araçları, [ ] MR-017 — Staged değişiklik için yerel Git enforcement, [ ] MR-019 — Warm-path SLO, pending state ve release kalite kapısı, Ne yapılacak (+2 more)
+### Community 296 - "[ ] MR-015 — MCP koordinasyon ve değişiklik araçları"
+Cohesion: 0.50
+Nodes (4): Durum, Kabul kriterleri, [ ] MR-015 — MCP koordinasyon ve değişiklik araçları, Ne yapılacak
 
-### Community 297 - ".evaluateOwnerless"
-Cohesion: 0.21
-Nodes (11): LeaseView, Provenance, Service, Finding, withLeaseGuidance(), AmbiguousAttribution(), Finding, Provenance (+3 more)
+### Community 297 - "Symbol"
+Cohesion: 0.38
+Nodes (6): Symbol, bindFileUIDs(), Service, splitTarget(), Resolution, Verdict
 
-### Community 298 - "TestEveryStartFailureReachesTheVerdict"
-Cohesion: 0.31
-Nodes (10): corruptDatabase(), blockAccess(), blockCacheCreation(), createUnmigratedDatabase(), TestConcurrentFirstRunIsNotAWorkspaceFailure(), TestDiagnosisIsTheOnlyVerdict(), TestEveryStartFailureReachesTheVerdict(), TestInitFinishesWhenOnlyTheCacheDirectoryIsUnusable() (+2 more)
+### Community 298 - "MR-011 — Bulgular ve kapı kaydı"
+Cohesion: 0.22
+Nodes (8): Başlangıç ve çalışma ağacı, MR-011 — Bulgular ve kapı kaydı, MR-011 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 2 CONFIRMED + 2 REFUTED(harf) + 1 tension; Breaker: 3 BROKEN→KAPANDI + 3 REFUTED, TASK-02 kabul kanıtı, TASK-02 kapı — Reader: AC-02.1/02.2 CONFIRMED, ledger CONFIRMED; Breaker: 3 REFUTED + 1 zayıf-beat→GÜÇLENDİRİLDİ
 
 ### Community 299 - "newGuardService"
-Cohesion: 0.17
-Nodes (28): TestWeakeningScenarioEndToEnd(), ecmaDelta(), TestEcmaAddedOnlyQuiet(), TestEcmaDuplicateNamesAggregate(), TestEcmaEscapedNamesMap(), TestEcmaExpectDecrease(), TestEcmaExpectRemovedAndTestRemoved(), TestEcmaHatchSuppressesLoudly() (+20 more)
-
-### Community 300 - "MR-009 — Design"
 Cohesion: 0.18
-Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Analysis flows, 7. Lease/scope inputs (+3 more)
+Nodes (26): TestWeakeningScenarioEndToEnd(), ecmaDelta(), TestEcmaAddedOnlyQuiet(), TestEcmaDuplicateNamesAggregate(), TestEcmaEscapedNamesMap(), TestEcmaExpectDecrease(), TestEcmaExpectRemovedAndTestRemoved(), TestEcmaHatchSuppressesLoudly() (+18 more)
 
-### Community 301 - "task.go"
+### Community 300 - "newLeaseHolderCommand"
 Cohesion: 0.58
-Nodes (8): Options, newTaskCommand(), newTaskListCommand(), newTaskOpenCommand(), newTaskShowCommand(), newTaskStateCommand(), parseStateFlag(), stateList()
+Nodes (8): Options, newLeaseAcquireCommand(), newLeaseCommand(), newLeaseHolderCommand(), newLeaseListCommand(), newLeaseReleaseCommand(), newLeaseRenewCommand(), operationIDFlag()
 
-### Community 302 - "scaffold_hostilefs_linux_test.go"
-Cohesion: 0.39
-Nodes (8): availableBytes(), fillToZero(), hostileScaffoldScenario(), runHostileChild(), scaffoldOnAFullFilesystem(), TestMain(), TestTheScaffoldNamesTheConditionThatStoppedIt(), userNamespacesWork()
+### Community 301 - "runCoordination"
+Cohesion: 0.27
+Nodes (11): scope, coordinationScope(), coordinationUnavailable(), invocation, Options, newestAppliedMigration(), newSessionCommand(), newSessionOpenCommand() (+3 more)
+
+### Community 302 - "loadStore"
+Cohesion: 0.44
+Nodes (7): TestAtMostOneRecordCanBeCanonicalForAnId(), TestOwnershipFollowsTheNameTheDirectoryHolds(), assertSameRefs(), loadStore(), TestTheFixtureStoreIsTheOneTheLoaderProduces(), TestTheRecordsTheLoaderIgnoresAreTheOnesTheValidatorFinds(), writeKnowledgeRecord()
 
 ### Community 303 - "MR-013 — Design"
+Cohesion: 0.09
+Nodes (19): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Evaluation flows, 7. Secret inputs (+11 more)
+
+### Community 304 - "lifecycle_lease_test.go"
+Cohesion: 0.40
+Nodes (10): fixture, readLeaseRow(), activeTaskLease(), assertInvariant(), fixture, TestAHoldersCheckpointRenewsAndAHandoffReleases(), TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination(), TestEveryDestinationHasItsLeaseEffect() (+2 more)
+
+### Community 305 - "RootContext"
+Cohesion: 0.40
+Nodes (3): main(), context.CancelFunc, RootContext()
+
+### Community 306 - "database/sql.DB"
+Cohesion: 0.26
+Nodes (11): kernelFixture, database/sql.DB, Store, NewStore(), TestNewStoreRefusesNilHandle(), containsBoth(), fakeStatusRunner(), newKernelFixture() (+3 more)
+
+### Community 307 - "MR-012 — Bulgular ve kapı kaydı"
 Cohesion: 0.18
-Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema, 6. Evaluation flows, 7. Secret inputs (+3 more)
+Nodes (11): Başlangıç ve çalışma ağacı, MR-012 — Bulgular ve kapı kaydı, MR-012 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 5/5 CONFIRMED + 3 gözlem; Breaker: 6/6 REFUTED, TASK-02 guard mutasyon defteri (tamamı geri alındı), TASK-02 kabul kanıtı (+3 more)
 
-### Community 304 - "driver.go"
-Cohesion: 0.27
-Nodes (9): diskFullCode(), driverResultCode(), dsn(), Options, hasPrimaryCode(), isCorruptError(), isDiskFullError(), isReadOnlyError() (+1 more)
+### Community 308 - "TestStepSevenIsExemptFromTheSuppression"
+Cohesion: 0.43
+Nodes (7): suppressions(), TestAnUnreadableRecordSuppressesTheClaimItWouldHaveDecided(), TestEveryCrossRecordStepThatCanBeSuppressedIsGuarded(), TestStepSevenIsExemptFromTheSuppression(), TestSuppressionKeysOnTheFileTheReferencedIdWouldOccupy(), problemAt(), suppression
 
-### Community 305 - "readiness"
-Cohesion: 0.25
-Nodes (4): readiness, bytes.Buffer, sync.Once, boundedBuffer
+### Community 309 - "TestNoTransactionOpenDuringGitOrFilesystemWork"
+Cohesion: 0.33
+Nodes (6): txProbe, sync/atomic.Bool, sync/atomic.Int64, TestFlushIsQuietWhenThereIsNothingToWrite(), TestNoTransactionOpenDuringGitOrFilesystemWork(), TxActive()
 
-### Community 306 - "migratedIndexSchema"
-Cohesion: 0.49
-Nodes (9): migratedIndexSchema(), mustIndexSQL(), seedIndexConstraintRows(), TestIdentityAllocationKeyIsUniquePerProjectUnitLanguageKey(), TestIdentityBindingStatusAndSymbolUidAreConstrained(), TestIdentityContainerUidRejectsDanglingParent(), TestIndexStateCheckRejectsUnknownValue(), TestIndexTablesDeclarePrimaryKeys() (+1 more)
-
-### Community 307 - "version.go"
-Cohesion: 0.48
-Nodes (5): versionInfo, buildVersionInfo(), joinInts(), newVersionCommand(), resolveCommit()
-
-### Community 308 - "newKernelFixture"
-Cohesion: 0.24
-Nodes (11): kernelFixture, Clock, Store, NewStore(), TestNewStoreRefusesNilHandle(), containsBoth(), fakeStatusRunner(), newKernelFixture() (+3 more)
-
-### Community 309 - "TaskAttribution"
+### Community 310 - "newCheckpointWriteCommand"
 Cohesion: 0.83
-Nodes (3): SymbolAttribution, TaskAttribution, Finding
-
-### Community 310 - "runCoordination"
-Cohesion: 0.20
-Nodes (15): scope, Options, newCheckpointCommand(), newCheckpointWriteCommand(), coordinationScope(), coordinationUnavailable(), invocation, Options (+7 more)
+Nodes (3): Options, newCheckpointCommand(), newCheckpointWriteCommand()
 
 ### Community 311 - "[ ] MR-013 — Yerel completion evidence gate"
 Cohesion: 0.50
 Nodes (4): Durum, Kabul kriterleri, [ ] MR-013 — Yerel completion evidence gate, Ne yapılacak
 
-### Community 312 - "time.Time"
-Cohesion: 0.11
-Nodes (16): FixedClock, SystemClock, handoverResult, lockProbingClock, stepClock, sync.Mutex, time.Time, Ambiguity (+8 more)
+### Community 312 - "MR-008 — Design"
+Cohesion: 0.18
+Nodes (11): 10. Test plan, 1. What the milestone is, in one paragraph, 2. What it is not, 3. Package plan, 4. Entity model, 5. Runtime schema — `migrations/000007_scope_attribution.sql`, 6. Evaluation flows, 7. Lease guidance input (+3 more)
 
 ### Community 313 - "[ ] MR-016 — MCP validation ve completion araçları"
 Cohesion: 0.67
 Nodes (3): Kabul kriterleri, [ ] MR-016 — MCP validation ve completion araçları, Ne yapılacak
 
-### Community 314 - "[ ] MR-018 — Hook bypass'a dayanıklı CI verification"
-Cohesion: 0.67
-Nodes (3): Kabul kriterleri, [ ] MR-018 — Hook bypass'a dayanıklı CI verification, Ne yapılacak
+### Community 314 - "FakeRunner"
+Cohesion: 0.19
+Nodes (11): FakeResponse, Invocation, FakeRunner, renameRunner(), TestDiffRenamesFailureIsEmptySignal(), TestDiffRenamesParsesREntries(), TestDiffRenamesReadsARealStagedRename(), statusRunner() (+3 more)
 
-### Community 315 - "MR-005 — Frozen requirements and acceptance criteria"
-Cohesion: 0.22
-Nodes (6): 0. Baseline evidence, 1. The scenario, in one paragraph, 4. Work breakdown and dependency order, 5. Definition of done, 6. Traceability to the task list's five acceptance criteria, MR-005 — Frozen requirements and acceptance criteria
+### Community 315 - "scaffold_hostilefs_linux_test.go"
+Cohesion: 0.39
+Nodes (8): availableBytes(), fillToZero(), hostileScaffoldScenario(), runHostileChild(), scaffoldOnAFullFilesystem(), TestMain(), TestTheScaffoldNamesTheConditionThatStoppedIt(), userNamespacesWork()
 
 ### Community 316 - "ProjectUnit"
-Cohesion: 0.13
-Nodes (14): Scheduler, ProjectUnit, blocks(), Service, bindFileUIDs(), Service, splitTarget(), Invariant (+6 more)
+Cohesion: 0.16
+Nodes (7): File, Scheduler, New(), ProjectUnit, Service, Job, Priority
 
-### Community 317 - "loadStore"
-Cohesion: 0.44
-Nodes (7): TestAtMostOneRecordCanBeCanonicalForAnId(), TestOwnershipFollowsTheNameTheDirectoryHolds(), assertSameRefs(), loadStore(), TestTheFixtureStoreIsTheOneTheLoaderProduces(), TestTheRecordsTheLoaderIgnoresAreTheOnesTheValidatorFinds(), writeKnowledgeRecord()
+### Community 317 - "schemaOnlyDatabase"
+Cohesion: 0.83
+Nodes (3): queryPlan(), schemaOnlyDatabase(), TestTheNewestCheckpointQueryDoesNotSortTheProject()
 
-### Community 318 - "MR-011 — Bulgular ve kapı kaydı"
-Cohesion: 0.22
-Nodes (8): Başlangıç ve çalışma ağacı, MR-011 — Bulgular ve kapı kaydı, MR-011 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 2 CONFIRMED + 2 REFUTED(harf) + 1 tension; Breaker: 3 BROKEN→KAPANDI + 3 REFUTED, TASK-02 kabul kanıtı, TASK-02 kapı — Reader: AC-02.1/02.2 CONFIRMED, ledger CONFIRMED; Breaker: 3 REFUTED + 1 zayıf-beat→GÜÇLENDİRİLDİ
+### Community 319 - "NewError"
+Cohesion: 0.10
+Nodes (26): NewError(), blockedReasonMissing(), checkpointNotFound(), State, Task, noProject(), operationConflict(), revisionConflict() (+18 more)
 
-### Community 319 - "MR-013 — Bulgular ve kapı kaydı"
-Cohesion: 0.22
-Nodes (8): Başlangıç ve çalışma ağacı, MR-013 — Bulgular ve kapı kaydı, MR-013 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 5/5 CONFIRMED + gaps; Breaker: 3 REFUTED + 3 BROKEN→KAPANDI, TASK-02 kabul kanıtı, TASK-02 kapı — Reader: AC-02.1/02.2 CONFIRMED, ledger CONFIRMED; Breaker: 3 REFUTED + 1 körlük→ARA-BEAT
+### Community 320 - "MR-010 — Bulgular ve kapı kaydı"
+Cohesion: 0.18
+Nodes (11): Başlangıç ve çalışma ağacı, MR-010 — Bulgular ve kapı kaydı, MR-010 kapanış, TASK-01 guard mutasyon defteri (tamamı geri alındı), TASK-01 kabul kanıtı, TASK-01 kapı — Reader: 3 temiz + 2 pin-eksikli; Breaker: 2 BROKEN→KAPANDI + 4 REFUTED, TASK-02 guard mutasyon defteri (tamamı geri alındı), TASK-02 kabul kanıtı (+3 more)
 
-### Community 320 - "readonlyfs_linux_test.go"
-Cohesion: 0.44
-Nodes (8): checkReadOnlyRemedy(), openOnAReadOnlyFilesystem(), probeOnAReadOnlyFilesystem(), readOnlyChild(), readOnlyScenario(), remountReadOnly(), remountReadWrite(), runReadOnlyChild()
+### Community 321 - "version.go"
+Cohesion: 0.48
+Nodes (5): versionInfo, buildVersionInfo(), joinInts(), newVersionCommand(), resolveCommit()
 
-### Community 321 - "3. Requirements and acceptance criteria"
-Cohesion: 0.25
-Nodes (8): 3. Requirements and acceptance criteria, TASK-01 — migration 000004 and the index store, TASK-02 — ProjectUnit discovery, TASK-03 — the language registry and adapters, TASK-04 — the snapshot cache, TASK-05 — structural extraction and the incremental path, TASK-06 — the scheduler, preemption and readiness, TASK-07 — the proof, the non-goals and the record
+### Community 322 - "runWith"
+Cohesion: 0.11
+Nodes (37): brokenSetup, envelopeScenario, strictEnvelope, newNonRepositoryDir(), TestAReaderStaysCoherentWhileTheStoreIsRewritten(), TestTwoCommandsReadOneStoreAtTheSameTime(), withoutTimings(), writeInvariantRecord() (+29 more)
 
-### Community 322 - ".replay"
-Cohesion: 0.29
-Nodes (3): operationConflict(), Lease, Store
-
-### Community 323 - "subjectWithoutRepository"
-Cohesion: 0.47
-Nodes (5): TestBlockingComponentIsNeverOneNobodyInspected(), TestRepositoryBlockIsMarkedWhenDiscoveryDidNotAnswer(), TestRepositoryBlockIsMarkedWhenGitIsUnavailable(), observationNote(), subjectWithoutRepository()
-
-### Community 324 - "TASK-05 — structural extraction and the incremental path (implementation evidence)"
-Cohesion: 0.40
-Nodes (5): D-90 — cross-file çözümleme dosya-kapsamlıdır, birim-kapsamlı değil, TASK-05 guard mutasyon defteri (tamamı geri alındı), TASK-05 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası), TASK-05 — structural extraction and the incremental path (implementation evidence), TASK-06'ya devir (Breaker F3, LOW)
-
-### Community 325 - "TASK-06 — scheduler, preemption ve readiness (implementation evidence)"
-Cohesion: 0.40
-Nodes (5): D-91 — TASK-06 scheduler'ı sürmez, readiness'i bağlar, TASK-06 guard mutasyon defteri (tamamı geri alındı), TASK-06 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası), TASK-06 — scheduler, preemption ve readiness (implementation evidence), TASK-07'ye devir — unsupported-only census fazı
+### Community 323 - "[ ] MR-017 — Staged değişiklik için yerel Git enforcement"
+Cohesion: 0.67
+Nodes (3): Kabul kriterleri, [ ] MR-017 — Staged değişiklik için yerel Git enforcement, Ne yapılacak
 
 ### Community 326 - "status/knowledge_findings_test.go"
-Cohesion: 0.67
-Nodes (3): rowValue(), TestStatusBuildsNoValidatorOfItsOwn(), TestTheFindingsCountIsQualifiedByObservation()
+Cohesion: 0.47
+Nodes (5): findingOn(), rowValue(), TestACycleBlocksAndAnInvalidRecordDoesNot(), TestStatusBuildsNoValidatorOfItsOwn(), TestTheFindingsCountIsQualifiedByObservation()
 
-### Community 327 - "TASK-07 — kanıt, non-goal'lar ve kayıt (implementation evidence)"
-Cohesion: 0.40
-Nodes (5): D-92 — süreç-ölçeği kanıtı yeniden-açılan handle'lardır, Gerçek bug: `reindex` bayat map girdisi bırakıyordu, TASK-07 guard mutasyon defteri (tamamı geri alındı), TASK-07 — kanıt, non-goal'lar ve kayıt (implementation evidence), TASK-07 kapı — Reader PASS, Breaker VERIFIED (remediasyon sonrası)
-
-### Community 328 - "runStatus"
-Cohesion: 0.70
-Nodes (4): Options, newStatusCommand(), readinessOf(), runStatus()
-
-### Community 329 - "TASK-04 — content-addressed snapshot cache (implementation evidence)"
-Cohesion: 0.50
-Nodes (4): TASK-04 Breaker delta — nonregular cache entries, TASK-04 — content-addressed snapshot cache (implementation evidence), TASK-04 final gate, TASK-04 guard mutation ledger (all restored)
-
-### Community 330 - "TASK-02 Breaker giderimi"
-Cohesion: 0.67
-Nodes (3): TASK-02 Breaker giderimi, TASK-02 final delta — filesystem root kapsamı, TASK-02 final kapı
+### Community 337 - "NewStore"
+Cohesion: 0.22
+Nodes (8): lockProbingClock, sync.Mutex, TestACheckpointIsStampedUnderTheWriteLock(), NewStore(), TestAMoveIsStampedUnderTheWriteLock(), refuseWrites(), restrict(), TestAFailedWriteIsNamedByTheStorageLayerFirst()
 
 ## Knowledge Gaps
-- **1688 isolated node(s):** `github.com/PsyChaos/mindrail`, `App`, `Provenance`, `invocation`, `invocation` (+1683 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1921 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **1723 isolated node(s):** `github.com/PsyChaos/mindrail`, `App`, `Provenance`, `invocation`, `invocation` (+1718 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1957 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **20 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `NewError()` connect `NewError` to `DomainError`, `writable.go`, `refuseUnrepresentableJSON`, `git/runner.go`, `DB`, `Probe`, `ExitCode`, `Config`, `newInvocation`, `gate.go`, `New`, `Lease`, `App`, `RuntimePathCheck`, `TestBrokenGitFileDetectionDoesNotOverFire`, `newLoader`, `Build`, `github.com/spf13/cobra.Command`, `TestEveryStartFailureReachesTheVerdict`, `RootKind`, `task.go`, `git/adapter.go`, `.Record`, `runCoordination`, `Warning`, `agreement_test.go`, `time.Time`, `States`, `Verdict`, `NewRunner`, `.replay`, `subjectWithoutRepository`, `Probe`, `.invariant`, `Store`, `FormatTime`, `testguard.go`, `database/sql.Tx`, `invalidInput`, `database/sql.DB`, `app.go`, `Root`, `Migrator`, `FreeSpace`, `time.Duration`, `NewRootWith`, `healthySubject`, `context.Context`?**
-  _High betweenness centrality (0.041) - this node is a cross-community bridge._
-- **Why does `SyntaxSnapshot` connect `SyntaxSnapshot` to `time.Time`, `shadowedNames`, `Facts`?**
+- **Why does `NewError()` connect `NewError` to `Code`, `coordination/lease.go`, `writable.go`, `refuseUnrepresentableJSON`, `git/runner.go`, `DB`, `Probe`, `exit.go`, `config/loader.go`, `newInvocation`, `Probe`, `New`, `healthySubject`, `App`, `invalidInput`, `RuntimePathCheck`, `TestDanglingGitFileIsNotDiagnosedAsAnAbsentRepository`, `newLoader`, `Build`, `Check`, `github.com/spf13/cobra.Command`, `RootKind`, `newLeaseHolderCommand`, `runCoordination`, `git/adapter.go`, `.Record`, `Config`, `Check`, `runWith`, `Clock`, `github.com/modelcontextprotocol/go-sdk/mcp.CallToolResult`, `CauseOf`, `time.Time`, `testguard.go`, `database/sql.Tx`, `PayloadOf`, `app.go`, `invalidInput`, `Checkpoint`, `Root`, `context.Context`, `WriteFailure`, `time.Duration`, `NewRootWith`, `DefaultChecks`?**
+  _High betweenness centrality (0.039) - this node is a cross-community bridge._
+- **Why does `SyntaxSnapshot` connect `SyntaxSnapshot` to `NewStore`, `shadowedNames`, `Facts`?**
   _High betweenness centrality (0.015) - this node is a cross-community bridge._
-- **Why does `FormatTime()` connect `FormatTime` to `index/store.go`, `Migrator`, `database/sql.Tx`, `testing.T`, `newFixture`, `.insertCheckpoint`, `newStore`, `invalidInput`, `.Record`, `newInitializedRepo`, `NamedSession`, `New`, `Lease`, `time.Time`, `agreement_test.go`, `Store`, `context.Context`?**
+- **Why does `FormatTime()` connect `time.Time` to `runWith`, `database/sql.Tx`, `newFixture`, `.insertCheckpoint`, `Clock`, `invalidInput`, `lifecycle_lease_test.go`, `.Record`, `newInitializedRepo`, `NamedSession`, `New`, `Lease`, `context.Context`, `invalidInput`, `Store`?**
   _High betweenness centrality (0.011) - this node is a cross-community bridge._
 - **Are the 2 inferred relationships involving `PayloadOf()` (e.g. with `TestDomainErrorWrappingSurvivesErrorsIsAndAs()` and `WriteJSON()`) actually correct?**
   _`PayloadOf()` has 2 INFERRED edges - model-reasoned connections that need verification._
@@ -1597,4 +1566,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Are the 78 inferred relationships involving `run()` (e.g. with `realGitRepo()` and `assertTheLoopTerminates()`) actually correct?**
   _`run()` has 78 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `github.com/PsyChaos/mindrail`, `App`, `Provenance` to the rest of the system?**
-  _1688 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _1723 weakly-connected nodes found - possible documentation gaps or missing edges._
