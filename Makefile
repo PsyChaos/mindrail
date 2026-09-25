@@ -84,14 +84,72 @@ tidy-check: ## Fail if go.mod or go.sum are not tidy
 .PHONY: check
 check: fmt-check vet test ## Local quality gate (fast: runs on every save)
 
+# Release stamping (tech-stack §103). Dirty detection is fail-open toward
+# honesty: anything but a clean tree stamps "dirty", and a tree git cannot
+# read stamps "unknown" rather than claiming clean.
+RELEASE_VERSION ?= 0.1.0
+RELEASE_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+RELEASE_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
+RELEASE_DIRTY := $(shell git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null && echo clean || echo dirty)
+LDSTAMP := -X github.com/PsyChaos/mindrail/internal/cli.version=$(RELEASE_VERSION) \
+	-X github.com/PsyChaos/mindrail/internal/cli.commit=$(RELEASE_COMMIT) \
+	-X github.com/PsyChaos/mindrail/internal/cli.buildDate=$(RELEASE_DATE) \
+	-X github.com/PsyChaos/mindrail/internal/cli.dirty=$(RELEASE_DIRTY)
+
 # The gate that has to be green before a change is proposed. `check` stays fast
 # enough to run continuously; `verify` adds the two suites that are too slow for
 # that but too load-bearing to leave to a human's memory — the race detector and
 # the clean-binary smoke tests, which are the only thing that exercises the
-# compiled binary as a subprocess. A CI workflow that runs this belongs to
-# MR-018/MR-019; until then this target is the gate.
+# compiled binary as a subprocess. `gate` (MR-019) enumerates the same ground
+# by test category so each cut is re-runnable by hand.
 .PHONY: verify
 verify: check race smoke ## Full quality gate: check + race detector + smoke tests
+
+# Release automation (MR-019, tech-stack §106 rule): stamp, build the
+# platform matrix, publish checksums, smoke the native binary. Each matrix
+# target ends built or not-built-with-reason in dist/MATRIX.txt; only
+# build+smoke-proven targets are advertised, which in 0.1 is linux/amd64
+# (cross C toolchains are absent — the reasons are on record, not silent).
+.PHONY: release
+release: ## Stamp, build the platform matrix, checksums, native smoke
+	@mkdir -p dist
+	@rm -f dist/MATRIX.txt
+	GOOS=linux GOARCH=amd64 go build $(GOFLAGS_TAGS) -ldflags "$(LDSTAMP)" -o dist/mindrail-linux-amd64 $(CMD)
+	@echo "linux/amd64: built" | tee -a dist/MATRIX.txt
+	@for target in "linux arm64" "darwin amd64" "darwin arm64" "windows amd64"; do \
+		set -- $$target; \
+		name="mindrail-$$1-$$2"; \
+		if GOOS=$$1 GOARCH=$$2 go build $(GOFLAGS_TAGS) -ldflags "$(LDSTAMP)" -o dist/$$name $(CMD) 2>dist/$$name.err; then \
+			echo "$$1/$$2: built" | tee -a dist/MATRIX.txt; rm -f dist/$$name.err; \
+		else \
+			echo "$$1/$$2: not-built: $$(head -1 dist/$$name.err)" | tee -a dist/MATRIX.txt; rm -f dist/$$name dist/$$name.err; \
+		fi; \
+	done
+	cd dist && sha256sum mindrail-* > SHA256SUMS
+	@./dist/mindrail-linux-amd64 version --json > dist/version.json
+	@grep -q '"build_date"' dist/version.json || (echo "release: stamped fields missing"; exit 1)
+	@grep -q '"version":"$(RELEASE_VERSION)"' dist/version.json || (echo "release: version stamp mismatch"; exit 1)
+	@grep -Eq '"dirty":"(clean|dirty)"' dist/version.json || (echo "release: dirty stamp not stamped"; exit 1)
+	go test -tags $(SMOKE_TAGS) -count=1 -timeout 300s ./cmd/...
+
+# Test-gate matrix (MR-019 AC-03.3): the nine categories, each an explicit
+# command a reader can re-run by hand. Every category asserts a non-empty
+# selection first — an empty cut passing silently would be the exact lie
+# the gates of this milestone exist to prevent.
+.PHONY: gate
+gate: ## Run the nine test categories by explicit selection
+	@./scripts/gate.sh
+
+# Supply-chain scan (tech-stack §102). The binary is absent from developer
+# machines, so the target reports absence loudly instead of presenting a
+# missing scan as a pass; CI installs it and runs the scan for real.
+.PHONY: vuln
+vuln: ## Run govulncheck when present, report absence otherwise
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck ./...; \
+	else \
+		echo "vuln: SKIPPED — govulncheck not installed (CI runs the scan; this is not a pass)"; \
+	fi
 
 .PHONY: clean
 clean: ## Remove build and coverage output

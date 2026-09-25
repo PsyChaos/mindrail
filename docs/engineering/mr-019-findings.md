@@ -123,6 +123,40 @@ doğrulandı, süit yeşil, doc-düzeltmesi doğru, diff 3 dosya.
 
 **Karar:** TASK-02 KAPANDI.
 
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | `make release` damgalar, matrisi kurar, checksum yazar, native smoke'u geçirir; `version --json` damgalı alanları raporlar (`TestVersionStampVocabulary` + release-kanıtı). |
+| AC-03.2 | Karşılandı | `dist/MATRIX.txt`: linux/amd64 built; 4 hedef not-built + CGO/toolchain sebebi. Duyurulan küme: linux/amd64 (§106 kuralı). |
+| AC-03.3 | Karşılandı | `./scripts/gate.sh`: dokuz kategori, her biri explicit komut + boş-seçim reddi; tam koşu yeşil (unit 1307, e2e+smoke dahil). |
+| AC-03.4 | Karşılandı | `make vuln`: binary yokken yüksek-sesli SKIP (pass değil); CI kurup gerçekten tarar. |
+
+**Sayı düzeltmesi (dürüst kayıt):** TASK-02 kapanışındaki "1306"
+sayımı dallanan-sınır testinden önce alınmıştı; doğru taban 1307 idi.
+Kapanış sayımları: TASK-02 → 1307, TASK-03 → 1308.
+
+**Tasarım notları:** `-X` bilinmeyen sembole sessizce işlemez —
+keşif: linker reddetmez, damga düşer. Bu yüzden release damgayı
+doğrular (version-eşleşme + dirty-kelime denetimi; M11). `go test
+-list` `-run`'u yoksayar — gate boşluk sayımını koşu çıktısından
+yapar (M10). `mcpCompatibility="none"` MR-014'te bilinçli
+korunmuştu (D-191); değiştirilmedi, kapsam-dışı not.
+
+### TASK-03 guard mutasyon defteri (tamamı geri alındı, md5-doğrulamalı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M9 | build_date payload'dan düşürüldü | `TestVersionStampVocabulary` + `TestVersionJSONContract` FAIL |
+| M10 | gate boş-seçim koruyucusu düşürüldü | Harness: bogus kategori exit 0 "0 passed" (yalan); korumalıyla ret |
+| M11 | stamp bilinmeyen sembole | `make release` "version stamp mismatch" + Error 1 |
+| M12 | vuln fallback'u düşürüldü | `make vuln` Error 127 |
+
+Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
+md5 ile doğrulandı (`mr019-mutant-{m9,m10,m11}-*.bak`).
+
+`make check` **yeşil** (exit 0). Test sayısı **1308** (TASK-03 başında 1307).
+
 Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
 md5 ile doğrulandı (`mr019-mutant-m{6,7}-*.bak`).
 

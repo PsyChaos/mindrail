@@ -1,5 +1,7 @@
 command
+data.build_date
 data.commit
+data.dirty
 data.go
 data.mcp_compatibility
 data.platform
