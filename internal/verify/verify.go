@@ -79,68 +79,20 @@ func (s *Service) VerifyStaged(ctx context.Context, projectID, root string, runn
 	if err != nil {
 		return Verdict{}, err
 	}
-	attributed, err := s.changes.AttributeStaged(ctx)
-	if err != nil {
-		return Verdict{}, err
-	}
 	knowledge, err := loadScopes(ctx, root)
 	if err != nil {
 		return Verdict{}, err
 	}
-	var input gate.Input
-	for _, symbol := range attributed.Symbols {
-		if symbol.Finding != nil {
-			input.Attribution = append(input.Attribution, *symbol.Finding)
-		}
-		if symbol.UID == "" {
-			continue
-		}
-		bindings, err := s.indexes.BindingsWithStatus(ctx, symbol.UID)
-		if err != nil {
-			return Verdict{}, err
-		}
-		for _, binding := range bindings {
-			severity, active := knowledge.scopeOf(binding.InvariantID)
-			input.Bindings = append(input.Bindings, gate.InvariantBlock{
-				InvariantID: binding.InvariantID,
-				UID:         symbol.UID,
-				Status:      binding.Status,
-				Severity:    severity,
-				Active:      active,
-			})
-		}
-		ambiguities, err := s.indexes.ListAmbiguitiesForUID(ctx, symbol.UID)
-		if err != nil {
-			return Verdict{}, err
-		}
-		for _, ambiguity := range ambiguities {
-			invariant, severity, active := anchor(ctx, s.indexes, knowledge, symbol.UID, ambiguity.CandidateKeys)
-			input.Ambiguities = append(input.Ambiguities, gate.Ambiguity{
-				Key:         ambiguity.RemovedKey,
-				Candidates:  ambiguity.CandidateKeys,
-				InvariantID: invariant,
-				Severity:    severity,
-				Active:      active,
-			})
-		}
-	}
-	guard, err := s.guardStaged(ctx, root, runner, result.Change.ID, knowledge)
+	staged, err := s.guardStaged(ctx, root, runner, result.Change.ID, knowledge)
 	if err != nil {
 		return Verdict{}, err
 	}
-	input.Guard = guard
-	drifted, err := s.stagedDrift(ctx, result.Change.ID)
+	composed, err := s.compose(ctx, result.Change.ID, knowledge, staged)
 	if err != nil {
 		return Verdict{}, err
 	}
-	input.Attribution = append(input.Attribution, drifted...)
-	decision, err := gate.New().Evaluate(input)
-	if err != nil {
-		return Verdict{}, err
-	}
-	verdict.Allow = decision.Allow
-	verdict.Denials = decision.Denials
-	return verdict, nil
+	composed.Knowledge = verdict.Knowledge
+	return composed, nil
 }
 
 // loadProblems reads knowledge problems without judging source: any fatal
@@ -305,6 +257,26 @@ func (s *Service) guardStaged(ctx context.Context, root string, runner git.Comma
 	if len(deltas) == 0 {
 		return nil, nil
 	}
+	mappings, err := s.guardMappings(ctx, changeID, knowledge, deltas)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.guard.Evaluate(ctx, testguard.Request{
+		Files:    deltas,
+		Mappings: mappings,
+		Trigger:  testguard.TriggerStaged,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Findings, nil
+}
+
+// guardMappings resolves bound-uid referrers inside the changed test files
+// to (path, test, production, invariant) tuples the guard triggers on. It
+// is the half guardStaged and guardRange share; only the byte source
+// differs.
+func (s *Service) guardMappings(ctx context.Context, changeID string, knowledge knowledgeScope, deltas []testguard.FileDelta) ([]testguard.TestMapping, error) {
 	testFiles := map[string]bool{}
 	for _, delta := range deltas {
 		testFiles[delta.Path] = true
@@ -347,15 +319,7 @@ func (s *Service) guardStaged(ctx context.Context, root string, runner git.Comma
 			}
 		}
 	}
-	result, err := s.guard.Evaluate(ctx, testguard.Request{
-		Files:    deltas,
-		Mappings: mappings,
-		Trigger:  testguard.TriggerStaged,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result.Findings, nil
+	return mappings, nil
 }
 
 func referrerName(ctx context.Context, indexes *index.Store, unitID, path, key string) (string, bool) {

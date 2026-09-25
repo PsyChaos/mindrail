@@ -29,6 +29,9 @@ func newVerifyCommand(o Options) *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("staged", false, "evaluate the index instead of the worktree")
+	cmd.Flags().Bool("ci", false, "evaluate a committed merge-base range instead of the index")
+	cmd.Flags().String("base", "", "range base revision for --ci (default: origin/main, main, master)")
+	cmd.Flags().String("head", "", "range head revision for --ci (default: HEAD)")
 	return cmd
 }
 
@@ -41,13 +44,43 @@ func runVerify(cmd *cobra.Command, o Options) error {
 	if err != nil {
 		return inv.emit(nil, nil, nil, "", err)
 	}
-	if !staged {
+	ci, err := cmd.Flags().GetBool("ci")
+	if err != nil {
+		return inv.emit(nil, nil, nil, "", err)
+	}
+	base, err := cmd.Flags().GetString("base")
+	if err != nil {
+		return inv.emit(nil, nil, nil, "", err)
+	}
+	head, err := cmd.Flags().GetString("head")
+	if err != nil {
+		return inv.emit(nil, nil, nil, "", err)
+	}
+	if staged && ci {
 		return inv.emit(nil, nil, nil, "", app.NewError(
 			app.CodeCommandLineInvalid,
 			app.KindUsage,
-			"verify needs a mode: --staged is the only one this version implements",
-			"Without a mode the command cannot know whether the index or the worktree is judged.",
-			"Re-run as `mindrail verify --staged`.",
+			"verify takes one mode: --staged or --ci, never both",
+			"The index and a committed range are different things to judge.",
+			"Re-run with exactly one of `mindrail verify --staged` or `mindrail verify --ci`.",
+		))
+	}
+	if (base != "" || head != "") && !ci {
+		return inv.emit(nil, nil, nil, "", app.NewError(
+			app.CodeCommandLineInvalid,
+			app.KindUsage,
+			"verify --base and --head need --ci",
+			"Revisions name a committed range, which only the CI mode judges.",
+			"Re-run as `mindrail verify --ci --base <rev> --head <rev>`.",
+		))
+	}
+	if !staged && !ci {
+		return inv.emit(nil, nil, nil, "", app.NewError(
+			app.CodeCommandLineInvalid,
+			app.KindUsage,
+			"verify needs a mode: --staged or --ci",
+			"Without a mode the command cannot know whether the index or a committed range is judged.",
+			"Re-run as `mindrail verify --staged` or `mindrail verify --ci`.",
 		))
 	}
 	application := bootstrap.New(bootstrap.Options{
@@ -61,9 +94,15 @@ func runVerify(cmd *cobra.Command, o Options) error {
 	defer shutdown(cmd.Context(), application, inv.logger)
 
 	return application.Run(cmd.Context(), func(ctx context.Context, a *bootstrap.App) error {
-		verdict, err := verifyStaged(ctx, a)
+		verdict, err := verifyMode(ctx, a, ci, base, head)
 		if err != nil {
 			return inv.emit(nil, nil, a.Warnings(), a.Config().Config.Output.Color, err)
+		}
+		mode := "verify --staged"
+		judged := "Staged changes fail the shared gates; the commit would not complete."
+		if ci {
+			mode = "verify --ci"
+			judged = "The committed range fails the shared gates; the push would not complete."
 		}
 		if verdict.FatalKnown {
 			fatal := verdict.Knowledge[0]
@@ -76,7 +115,7 @@ func runVerify(cmd *cobra.Command, o Options) error {
 			return inv.emit(verdictReport(verdict), nil, a.Warnings(), a.Config().Config.Output.Color, app.NewError(
 				app.Code(fatal.Code),
 				app.KindFailed,
-				"verify --staged refuses: "+fatal.Message,
+				mode+" refuses: "+fatal.Message,
 				"Knowledge fails closed before any source check runs.",
 				"Fix or remove "+fatal.Path+", then re-run verify.",
 			))
@@ -85,8 +124,8 @@ func runVerify(cmd *cobra.Command, o Options) error {
 			denied := app.NewError(
 				verdict.Denials[0].Code,
 				app.KindFailed,
-				fmt.Sprintf("verify --staged denies: %d blocking findings", len(verdict.Denials)),
-				"Staged changes fail the shared gates; the commit would not complete.",
+				fmt.Sprintf("%s denies: %d blocking findings", mode, len(verdict.Denials)),
+				judged,
 				"Resolve the denials listed in the report, then re-run verify.",
 			)
 			return inv.emit(verdictReport(verdict), nil, a.Warnings(), a.Config().Config.Output.Color, denied)
@@ -95,7 +134,10 @@ func runVerify(cmd *cobra.Command, o Options) error {
 	})
 }
 
-func verifyStaged(ctx context.Context, a *bootstrap.App) (verify.Verdict, error) {
+// verifyMode dispatches the judged source: the index for --staged, the
+// committed merge-base range for --ci. Both compose the same services,
+// built once here so the two modes cannot drift apart.
+func verifyMode(ctx context.Context, a *bootstrap.App, ci bool, base, head string) (verify.Verdict, error) {
 	registry, err := parser.NewRegistry()
 	if err != nil {
 		return verify.Verdict{}, err
@@ -122,15 +164,19 @@ func verifyStaged(ctx context.Context, a *bootstrap.App) (verify.Verdict, error)
 	if err != nil {
 		return verify.Verdict{}, err
 	}
-	projectID, err := verifyProject(ctx, a)
+	projectID, err := verifyProject(a)
 	if err != nil {
 		return verify.Verdict{}, err
 	}
-	return service.VerifyStaged(ctx, projectID, a.Paths().WorktreeRoot, git.NewExecRunner())
+	root := a.Paths().WorktreeRoot
+	runner := git.NewExecRunner()
+	if ci {
+		return service.VerifyCI(ctx, projectID, root, runner, base, head)
+	}
+	return service.VerifyStaged(ctx, projectID, root, runner)
 }
 
-func verifyProject(ctx context.Context, a *bootstrap.App) (string, error) {
-	_ = ctx
+func verifyProject(a *bootstrap.App) (string, error) {
 	workspace := a.Subject().Workspace
 	if workspace.ProjectID == "" {
 		return "", app.NewError(
