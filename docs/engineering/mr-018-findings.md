@@ -162,4 +162,4 @@ fixture testleri) — yeni guard yok, yeni mutant yok. Yük-taşıma,
 test-içi vacuity pinleriyle tutulur (`len(staged)==0 → fatal`,
 `len(denials)==0 → fatal`).
 
-`make check` **yeşil** (exit 0). Test sayısı **1289** (TASK-02 başında 1284).
+`make check` **yeşil** (exit 0). Test sayısı **1290** (TASK-02 başında 1284).
