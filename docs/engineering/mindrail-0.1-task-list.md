@@ -891,11 +891,37 @@ MR-019'a bıraktıkları: `verify --ci` (SLO ölçümü), menzil-op-id'leri
 
 #### Kabul kriterleri
 
-- [ ] STRUCTURAL p95 hedefleri sırasıyla `<150 ms`, `<250 ms`, `<300 ms`, `<1.5 s`, `<2 s` olarak raporlanır.
-- [ ] SQLite wait, parse, impact traversal ve operasyon süreleri ölçülür.
-- [ ] Bütçe aşımı blocking bekleme veya sessiz skip yerine partial/pending sonuç üretir.
-- [ ] Unit, domain, integration, race, knowledge schema, MCP contract, Git worktree, SQLite concurrency ve end-to-end test kapıları çalışır.
-- [ ] Desteklenen platform binary'leri build edilir ve smoke testten geçer.
+- [x] STRUCTURAL p95 hedefleri sırasıyla `<150 ms`, `<250 ms`, `<300 ms`, `<1.5 s`, `<2 s` olarak raporlanır.
+- [x] SQLite wait, parse, impact traversal ve operasyon süreleri ölçülür.
+- [x] Bütçe aşımı blocking bekleme veya sessiz skip yerine partial/pending sonuç üretir.
+- [x] Unit, domain, integration, race, knowledge schema, MCP contract, Git worktree, SQLite concurrency ve end-to-end test kapıları çalışır.
+- [x] Desteklenen platform binary'leri build edilir ve smoke testten geçer.
+
+#### Durum
+
+**Tamamlandı.** Dört görev (TASK-01…04) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01 kapıları temizdi (2 düşük not
+aynı turda kapatıldı: vacuous dal, floor-rank). TASK-02 ilk turda dar
+BLOCKED verdi (S1/S2 yaşayan mutantlar — dallanan-sınır piniyle
+kapatıldı). TASK-03 ilk turda dar BLOCKED verdi (untracked-kör kir
+damgası — porcelain ifadesiyle kapatıldı). TASK-04 kapıları temizdi.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-019-requirements.md](mr-019-requirements.md),
+[mr-019-design.md](mr-019-design.md), `6c5742c`), kararlar D-229…D-236
++ kapı-okumaları: transport-toplam/servis-breakdown ayrımı (tel
+context geçirmez), canlı-op kablosuz erteleme (mekanizma-hazır,
+dürüst kayıt), §106 kuralıyla yalnız linux/amd64 duyurusu. Kod 46,
+göç yok. Yeni paket `internal/perf` (timer, recorder, targets,
+budget); `verify` 13 tool, `make` 4 yeni hedef (`bench`, `release`,
+`gate`, `vuln`).
+
+`make check`, `make verify` (race + smoke), `make bench`, `make gate`
+ve `make tidy-check` yeşil; 1308 test (MR-019 başında 1293 idi; 1307
+PASS + 1 SKIP). 17 guard mutasyonu kırmızı koşuldu (M1…M8, S1/S2,
+M9…M13'). Kapıların MR-020'ye bıraktıkları: bench raporu (demo
+ölçümleri), gate matrisi (çıkış-kanıtı koşucusu), release damgası
+(sürüm kimliği).
 
 ---
 

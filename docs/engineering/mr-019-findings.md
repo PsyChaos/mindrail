@@ -183,3 +183,24 @@ damgalar) aynı turda sertleştirildi: git cevabı bozukken `dirty`
 (M13' kanıtı yukarıdaki scratch koşusu).
 
 **Karar:** TASK-03 KAPANDI.
+
+## TASK-04 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-04.1 | Karşılandı | `make verify` + `make tidy-check` yeşil, test sayısı tek komutla 1308 (1307 PASS + 1 SKIP); `make bench` 14 satır pass=true; `make gate` dokuz kategori yeşil. |
+| AC-04.2 | Karşılandı | Hedef-dışı grepleri: kod 46, göç 8, mcp'de test-dışı değişiklik yok (13 tool intact), yeni queue/goroutine yok, `.github` yok. |
+| AC-04.3 | Karşılandı | 17 mutasyon kırmızı (M1…M8, S1/S2, M9…M13+M13'), task-list Durum bloğu yazıldı. |
+
+Hedef-dışı grep dökümü (kapanış ağacında koşuldu):
+
+- `grep -c 'Code = "' internal/app/code.go` → 46 (yeni kod yok).
+- `ls migrations/*.sql` → 8 dosya (göç yok).
+- `git diff <freeze>..HEAD -- internal/mcp/` → yalnız test
+  dosyaları (`bench_test`, fixture/lifecycle imza genişletmesi);
+  `AddTool` kaydı 13, MCP yüzeyi değişmedi.
+- `go func|make(chan|Ticker` yeni yolda (`perf/`, `impact.go`)
+  yok — zamanlama dışında yeni eşzamanlılık yok.
+- `.github` dizini yok (D-233: provider-neutral).
+
+**Karar:** TASK-04 KAPANDI. **MR-019 KAPANDI.**
