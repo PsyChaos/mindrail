@@ -16,7 +16,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
-func coordinationStore(t *testing.T, root string) (*coordination.Store, *sql.DB) {
+func coordinationStore(t testing.TB, root string) (*coordination.Store, *sql.DB) {
 	t.Helper()
 	db, err := storage.Open(t.Context(), storage.Options{
 		Path: filepath.Join(root, ".git", "mindrail", "mindrail.db"),
@@ -33,7 +33,7 @@ func coordinationStore(t *testing.T, root string) (*coordination.Store, *sql.DB)
 	return coordination.NewStore(db.DB, clock), db.DB
 }
 
-func workspaceOf(t *testing.T, db *sql.DB) (workspaceID, projectID string) {
+func workspaceOf(t testing.TB, db *sql.DB) (workspaceID, projectID string) {
 	t.Helper()
 	if err := db.QueryRowContext(t.Context(),
 		`SELECT workspace_id, project_id FROM workspaces LIMIT 1`).Scan(&workspaceID, &projectID); err != nil {
@@ -42,7 +42,7 @@ func workspaceOf(t *testing.T, db *sql.DB) (workspaceID, projectID string) {
 	return workspaceID, projectID
 }
 
-func openTaskAndSession(t *testing.T, coord *coordination.Store, workspaceID, projectID string) (taskID, session string) {
+func openTaskAndSession(t testing.TB, coord *coordination.Store, workspaceID, projectID string) (taskID, session string) {
 	t.Helper()
 	opened, _, err := coord.OpenSession(t.Context(), workspaceID, "agent-1")
 	if err != nil {

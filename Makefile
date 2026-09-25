@@ -50,6 +50,16 @@ cover: ## Run the suite and write a coverage profile
 vet: ## Run go vet
 	go vet $(GOFLAGS_TAGS) $(PKG)
 
+# The warm-path benchmark suite (MR-019): the five operations against
+# fixture repos, graded against the STRUCTURAL p95 targets. A p95 over
+# target fails this target; recalibration lands as a documented decision
+# with numbers, never a quiet constant change (spec-1.0 §28).
+.PHONY: bench
+bench: ## Run the warm-path benchmarks with p50/p95 grading
+	go test $(GOFLAGS_TAGS) -run='^$$' -bench='Benchmark(Status|Context|BeforeChange|AfterChange|Reconcile)' -benchtime=100x -count=1 -v ./internal/mcp/
+	go test $(GOFLAGS_TAGS) -run='^$$' -bench='BenchmarkAfterChangeSvc|BenchmarkReconcileSvc' -benchtime=100x -count=1 -v ./internal/changes/
+	go test $(GOFLAGS_TAGS) -run='^$$' -bench='BenchmarkAnalyze' -benchtime=100x -count=1 -v ./internal/impact/
+
 .PHONY: fmt
 fmt: ## Format all Go sources
 	go fmt $(PKG)

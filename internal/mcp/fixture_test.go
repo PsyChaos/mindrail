@@ -35,7 +35,7 @@ const (
 		`"severity":"HIGH","scope":{"level":"PROJECT"}}`
 )
 
-func newTestRepo(t *testing.T) string {
+func newTestRepo(t testing.TB) string {
 	t.Helper()
 	root := t.TempDir()
 	if out, err := exec.Command("git", "init", "--quiet", root).CombinedOutput(); err != nil {
@@ -75,7 +75,7 @@ func newTestRepo(t *testing.T) string {
 	return root
 }
 
-func indexTestFile(t *testing.T, root, pkg, path string) {
+func indexTestFile(t testing.TB, root, pkg, path string) {
 	t.Helper()
 	dbPath := filepath.Join(root, ".git", "mindrail", "mindrail.db")
 	db, err := storage.Open(t.Context(), storage.Options{Path: dbPath})
@@ -100,7 +100,7 @@ func indexTestFile(t *testing.T, root, pkg, path string) {
 	}
 }
 
-func newTestServer(t *testing.T, root string) *mcp.Server {
+func newTestServer(t testing.TB, root string) *mcp.Server {
 	t.Helper()
 	server, err := mcp.New(t.Context(), root)
 	if err != nil {

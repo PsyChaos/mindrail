@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/index"
+	"github.com/PsyChaos/mindrail/internal/perf"
 )
 
 // Breadth is the validation breadth ladder (spec §124). Structural evidence
@@ -139,6 +140,11 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
+	// The traversal span is observed, never gated: telemetry cannot fail
+	// analysis (decision D-230). TASK-02 threads the budget through this
+	// same loop.
+	stopTraversal := perf.Span(ctx, perf.Traversal)
+	defer stopTraversal()
 	visited := map[string]bool{}
 	for _, uid := range frontier {
 		visited[uid] = true

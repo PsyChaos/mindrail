@@ -22,7 +22,7 @@ type impactFixture struct {
 	unit    index.ProjectUnit
 }
 
-func newImpactFixture(t *testing.T) impactFixture {
+func newImpactFixture(t testing.TB) impactFixture {
 	t.Helper()
 	db, err := storage.Open(t.Context(), storage.Options{Path: filepath.Join(t.TempDir(), "mindrail.db")})
 	if err != nil {
@@ -49,12 +49,12 @@ func newImpactFixture(t *testing.T) impactFixture {
 	return impactFixture{service: service, indexes: indexes, db: db.DB, unit: unit}
 }
 
-func seedSymbol(t *testing.T, fx impactFixture, uid, key, name, path string) int64 {
+func seedSymbol(t testing.TB, fx impactFixture, uid, key, name, path string) int64 {
 	t.Helper()
 	return seedSymbolIn(t, fx, fx.unit, uid, key, name, path)
 }
 
-func seedSymbolIn(t *testing.T, fx impactFixture, unit index.ProjectUnit, uid, key, name, path string) int64 {
+func seedSymbolIn(t testing.TB, fx impactFixture, unit index.ProjectUnit, uid, key, name, path string) int64 {
 	t.Helper()
 	exec := func(statement string, args ...any) {
 		t.Helper()
@@ -78,7 +78,7 @@ func seedSymbolIn(t *testing.T, fx impactFixture, unit index.ProjectUnit, uid, k
 	return id
 }
 
-func seedReference(t *testing.T, fx impactFixture, referrerKey, targetText string, targetID int64) {
+func seedReference(t testing.TB, fx impactFixture, referrerKey, targetText string, targetID int64) {
 	t.Helper()
 	if _, err := fx.db.ExecContext(t.Context(), `INSERT INTO symbol_references
 		(unit_id, path, referrer_key, target_text, label, confidence, resolved_symbol_id)
@@ -90,7 +90,7 @@ func seedReference(t *testing.T, fx impactFixture, referrerKey, targetText strin
 
 // seedChain builds C → B → A plus B → D: C refers to B, B refers to A and
 // to D, all same file. D shares A's referrer, which pins per-edge dedupe.
-func seedChain(t *testing.T, fx impactFixture) {
+func seedChain(t testing.TB, fx impactFixture) {
 	t.Helper()
 	a := seedSymbol(t, fx, "SYM-I-A", "a", "fa", "/r/a.py")
 	b := seedSymbol(t, fx, "SYM-I-B", "b", "fb", "/r/a.py")

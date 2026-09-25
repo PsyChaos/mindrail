@@ -31,7 +31,7 @@ type serviceFixture struct {
 	units   map[string]index.ProjectUnit
 }
 
-func newServiceFixture(t *testing.T) serviceFixture {
+func newServiceFixture(t testing.TB) serviceFixture {
 	t.Helper()
 	root := t.TempDir()
 	db, err := storage.Open(t.Context(), storage.Options{Path: filepath.Join(root, "mindrail.db")})
@@ -91,7 +91,7 @@ func newServiceFixture(t *testing.T) serviceFixture {
 	return serviceFixture{store: store, indexes: indexes, service: service, indexer: indexer, db: db.DB, root: root, units: units}
 }
 
-func seedTasks(t *testing.T, db *sql.DB, tasks ...string) {
+func seedTasks(t testing.TB, db *sql.DB, tasks ...string) {
 	t.Helper()
 	seed := func(statement string, args ...any) {
 		t.Helper()

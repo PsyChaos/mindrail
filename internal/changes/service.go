@@ -8,6 +8,7 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/index/inventory"
+	"github.com/PsyChaos/mindrail/internal/perf"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
@@ -98,9 +99,15 @@ func (s *Service) SyncFileSymbols(ctx context.Context, projectID, repoRoot, chan
 		return nil
 	}
 	delta := diffSymbols(stored, current, via)
-	if _, err := s.indexer.IndexFile(ctx, projectID, unit, path, hints...); err != nil {
+	indexed, err := s.indexer.IndexFile(ctx, projectID, unit, path, hints...)
+	if err != nil {
 		return err
 	}
+	// Telemetry folds what indexing already measured: parse time and the
+	// write-transaction wait. The results were already computed; observing
+	// them changes no decision downstream (decision D-230).
+	perf.Observe(ctx, perf.Parse, indexed.Timing.Parse)
+	perf.Observe(ctx, perf.SQLiteWait, indexed.WriteStats.Waited)
 	resolved, err := s.attachUIDs(ctx, unit.ID, path, delta)
 	if err != nil {
 		return err
