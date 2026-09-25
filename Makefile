@@ -87,11 +87,15 @@ check: fmt-check vet test ## Local quality gate (fast: runs on every save)
 # Release stamping (tech-stack §103). Dirty detection covers tracked
 # modifications, staged changes AND untracked files: an untracked .go
 # file compiles into the binary, so ignoring it would stamp "clean" over
-# unknown contents. A tree git cannot read stamps "unknown".
+# unknown contents. A tree git cannot read at all stamps "unknown"; a
+# tree whose git answers brokenly stamps "dirty" — a repository no git
+# command can inspect must never claim clean.
 RELEASE_VERSION ?= 0.1.0
 RELEASE_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 RELEASE_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
-RELEASE_DIRTY := $(shell if ! git rev-parse --git-dir >/dev/null 2>&1; then echo unknown; elif [ -n "$$(git status --porcelain 2>/dev/null)" ]; then echo dirty; else echo clean; fi)
+RELEASE_DIRTY := $(shell if ! git rev-parse --git-dir >/dev/null 2>&1; then echo unknown; else \
+	out="$$(git status --porcelain 2>/dev/null)"; rc=$$?; \
+	if [ $$rc -ne 0 ] || [ -n "$$out" ]; then echo dirty; else echo clean; fi; fi)
 LDSTAMP := -X github.com/PsyChaos/mindrail/internal/cli.version=$(RELEASE_VERSION) \
 	-X github.com/PsyChaos/mindrail/internal/cli.commit=$(RELEASE_COMMIT) \
 	-X github.com/PsyChaos/mindrail/internal/cli.buildDate=$(RELEASE_DATE) \

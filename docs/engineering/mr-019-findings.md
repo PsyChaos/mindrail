@@ -172,3 +172,14 @@ deklaredir, gate 1307 PASS sayar).
 | M13 | eski kir-ifadesi (untracked körü) | Scratch repo: untracked'lı ağaç `clean` (yalan); yeni ifadeyle `dirty` |
 
 **Karar:** TASK-03 KAPANDI (re-gate tur 2 aşağıda).
+
+### TASK-03 re-gate tur 2 — PASS
+
+Porcelain ifadesi, scratch empirikler (temiz/staged/untracked/
+non-repo), `.exe` adlandırması, bulgu hijyeni ve sayım-drift
+(1308 declared = 1307 PASS + 1 SKIP) CONFIRMED; `TestVersion`
+yeşil; diff 2 dosya. Artık-düşük not (bozuk-index `clean`
+damgalar) aynı turda sertleştirildi: git cevabı bozukken `dirty`
+(M13' kanıtı yukarıdaki scratch koşusu).
+
+**Karar:** TASK-03 KAPANDI.
