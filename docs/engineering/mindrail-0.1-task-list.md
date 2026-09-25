@@ -844,11 +844,38 @@ hook kurulumu (CI eşdeğeri), staged-kaynak (aralıklar).
 
 #### Kabul kriterleri
 
-- [ ] Base/head seçimi ve merge-base hataları yapılandırılmış biçimde raporlanır.
-- [ ] `--no-verify` ile yerelde atlanan denial CI'da yeniden üretilir.
-- [ ] CI, staged/local yol ile aynı policy ve domain servislerini kullanır.
-- [ ] Bozuk/incompatible knowledge en erken aşamada fail-closed olur.
-- [ ] Fresh-clone Git fixture testi tüm akışı doğrular.
+- [x] Base/head seçimi ve merge-base hataları yapılandırılmış biçimde raporlanır.
+- [x] `--no-verify` ile yerelde atlanan denial CI'da yeniden üretilir.
+- [x] CI, staged/local yol ile aynı policy ve domain servislerini kullanır.
+- [x] Bozuk/incompatible knowledge en erken aşamada fail-closed olur.
+- [x] Fresh-clone Git fixture testi tüm akışı doğrular.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01 ilk turda 5 kapı-bulgusu verdi
+(B1 ters-aralık yeşili, B2 default-boş yeşili, B3 worktree-bağımlılık
+çökmesi, B4 modlar-arası union kirlenmesi, B5 knowledge-desk bypass'ı)
+— remediasyon ikinci turda N1/F1 artığıyla BLOCKED verdi (knowledge-kir
+carve-out'u), üçüncü tur PASS aldı. TASK-02 ilk turda 2 reprodüksiyon +
+1 insidental ile BLOCKED verdi (boş-aralıklı temiz fixture, bare
+main-tip yeşili, daralmayan change) — remediasyon ikinci turda PASS
+aldı. TASK-03 kapıları temizdi.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-018-requirements.md](mr-018-requirements.md),
+[mr-018-design.md](mr-018-design.md), `a2ae21c`), kararlar D-221…D-228
++ kapı-okumaları: default-boş reddi (explicit-eşit yeşil), menzil
+başına change (hüküm (base, head)'in fonksiyonu), temiz-desk önkoşulu
+(worktree HEAD == head, knowledge-JSON kir reddi). Kod 46, göç yok.
+`verify` ikinci modu (`--ci` + `--base/--head`) aldı; manifest, cache,
+lease, profil-çalıştırma eklenmedi.
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil;
+1293 test (MR-018 başında 1260 idi). 16 guard mutasyonu kırmızı koşuldu
+(M1…M7 TASK-01, M8…M13 remediasyon, M14…M16 TASK-02). Kapıların
+MR-019'a bıraktıkları: `verify --ci` (SLO ölçümü), menzil-op-id'leri
+(tekrar-protokolü), desk-önkoşulu (temiz-klon varsayımı).
 
 ---
 

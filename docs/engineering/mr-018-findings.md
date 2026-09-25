@@ -211,3 +211,25 @@ bare'da ret), T2-3 (menzil-anahtarlı op, daralma + yakınsama) hepsi
 CONFIRMED; süit yeşil; HEAD binary ile uçtan uca reprodüksiyon temiz.
 
 **Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı | `make verify` + `make tidy-check` yeşil, test sayısı tek komutla 1293. |
+| AC-03.2 | Karşılandı | Hedef-dışı grepleri: kod 46, göç 8, yeni yolda manifest/cache/lease/profil yok, worktree-hüküm okuması yok (4 yeni flag dışında yüzey yok). |
+| AC-03.3 | Karşılandı | 16 mutasyon kırmızı (M1…M16, üçü davranış-koruyucu ilk yazımda kırmızı vermedi — test güçlendirilip koşuldu), task-list Durum bloğu yazıldı. |
+
+Hedef-dışı grep dökümü (kapanış ağacında koşuldu):
+
+- `grep -c 'Code = "' internal/app/code.go` → 46 (yeni kod yok).
+- `ls migrations/*.sql` → 8 dosya (göç yok).
+- `manifest|cross-run|cache|task-lease` yeni yolda yok (`CacheDir`
+  ismi yalnız devralınan indexer kurulumunda).
+- `ShowStaged|StatusEntries|DiscoverFilesGit|os.ReadFile` yeni
+  yolda yok — menzil baytları yalnız `ShowRev`/aralık-keşfiyle okunur;
+  `status --porcelain` yalnız önkoşul reddi içindir, hüküm vermez.
+- `profile` yeni yolda yok (D-226: boş required set).
+- `verify` flag'leri: `--staged`, `--ci`, `--base`, `--head` — başka yok.
+
+**Karar:** TASK-03 KAPANDI. **MR-018 KAPANDI.**
