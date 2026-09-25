@@ -197,3 +197,17 @@ dokunulmadan yeşil.
 
 Remediasyon sonrası `make check` **yeşil**. Test sayısı **1293**.
 Re-gate tur 2 (aşağıda).
+
+### TASK-02 kapı — Reader: 4/4 CONFIRMED + PASS; Breaker round-1: BLOCKED (T2-1…T2-3); re-gate round-2: PASS
+
+**Round-1 Reader:** AC-02.1…02.4 CONFIRMED (+2 INFO: shape allowlist'te
+`REQUIRED_EVIDENCE_NOT_CURRENT` yok — D-226 ile ulaşılamaz, engel değil;
+clone DB seed'leri fixture-scaffolding, kayıtlı).
+**Round-1 Breaker:** T2-1 (temiz fixture boş aralık), T2-2 (bare main-tip
+yeşil), T2-3 (daralmayan change) GERÇEK — üçü de yukarıda kapatıldı.
+**Round-2:** T2-1 (explicit base + dosya-sayımı, M16 eski-ağaçta
+kırmızı), T2-2 (default-boş reddi + explicit-eşit yeşil, §1 hikâyesi
+bare'da ret), T2-3 (menzil-anahtarlı op, daralma + yakınsama) hepsi
+CONFIRMED; süit yeşil; HEAD binary ile uçtan uca reprodüksiyon temiz.
+
+**Karar:** TASK-02 KAPANDI.
