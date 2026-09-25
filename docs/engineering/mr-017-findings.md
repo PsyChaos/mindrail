@@ -110,3 +110,16 @@ yoktu. `requireSh` eklendi (requireGit disiplini).
 **Karar:** TASK-02 KAPANDI.
 
 ## TASK-03 kabul kanıtı (PENDING)
+
+## TASK-03 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-03.1 | Karşılandı (kapıda) | `make verify` + `make tidy-check` + sayı aşağıda. |
+| AC-03.2 | Karşılandı | Grep kanıtı: kod 46 (yeni yok); 3 komut kaydı; migration yok; değer yankısı yok. |
+| AC-03.3 | Karşılandı (kapıda) | M1…M12 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
+
+`make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
+**yeşil**. Test sayısı **1260**.
+
+### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
