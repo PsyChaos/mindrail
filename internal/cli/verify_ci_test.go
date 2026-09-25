@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -34,6 +35,13 @@ func changeRowCount(t *testing.T, repo string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// removeDB deletes the runtime database so the next command starts from
+// no index state, the way a fresh clone does.
+func removeDB(t *testing.T, repo string) error {
+	t.Helper()
+	return os.Remove(runtimeDBPath(t, repo))
 }
 
 type ciDenial struct {
@@ -135,9 +143,18 @@ func TestVerifyCIParityWithStaged(t *testing.T) {
 
 	_, staged := ciDenials(t, repo, "verify", "--staged", "--json")
 
-	// One commit carries both files: the staged index above already held
-	// the same content, so the range judges exactly what staging judged.
+	// Fresh database between the modes: symbol rows are deltas against
+	// index state, so judging the same content twice on one database
+	// would let the first run's indexing hide the second run's rows.
+	// Local and CI verdicts always come from different databases in
+	// real use; the reset reproduces that instead of the artifact.
 	gitCommitFile(t, repo, "pkg/a.py")
+	if err := removeDB(t, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, repo, "init"); got.code != app.ExitSuccess {
+		t.Fatalf("re-init exited %d: %v\n%s", got.code, got.err, got.stdout)
+	}
 
 	code, ranged := ciDenials(t, repo, "verify", "--ci", "--base", base, "--json")
 	if code != app.ExitFailed {
@@ -284,5 +301,142 @@ func TestVerifyCIDefaultBaseNamesCandidates(t *testing.T) {
 	got.requireExit(t, app.ExitUsage)
 	if !strings.Contains(got.stdout, "origin/main") {
 		t.Fatalf("refusal names no candidates: %s", got.stdout)
+	}
+}
+
+// TestVerifyCIInvertedRangeRefuses pins the Breaker B1 fix: a base that is
+// a descendant of head judges an empty range, and an empty range must
+// never certify green — it refuses with usage instead.
+func TestVerifyCIInvertedRangeRefuses(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	gitCommitFile(t, repo, "pkg/a.py")
+	ahead := gitRev(t, repo, "HEAD")
+	head := gitRev(t, repo, "HEAD~1")
+	// Check out the judged head: the worktree gate must pass so that only
+	// the inversion guard can produce the refusal below.
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--quiet", head).CombinedOutput(); err != nil {
+		t.Fatalf("checkout head: %v: %s", err, out)
+	}
+
+	got := run(t, repo, "verify", "--ci", "--base", ahead, "--head", head, "--json")
+	got.requireExit(t, app.ExitUsage)
+	if payload := got.errorPayload(t); payload.Code != app.CodeCommandLineInvalid {
+		t.Fatalf("code = %q, want COMMAND_LINE_INVALID", payload.Code)
+	}
+	if n := changeRowCount(t, repo); n != 0 {
+		t.Fatalf("changes = %d, want 0: refusal evaluated source", n)
+	}
+}
+
+// TestVerifyCIWorktreeMismatchRefuses pins the Breaker B3 fix: the desk
+// must be a checkout of the judged head, because indexing reads desk
+// bytes. A head the checkout does not have refuses instead of crashing
+// on missing files.
+func TestVerifyCIWorktreeMismatchRefuses(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	base := gitRev(t, repo, "HEAD")
+	gitCommitFile(t, repo, "pkg/a.py")
+	head := gitRev(t, repo, "HEAD")
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--quiet", base).CombinedOutput(); err != nil {
+		t.Fatalf("checkout base: %v: %s", err, out)
+	}
+
+	got := run(t, repo, "verify", "--ci", "--base", base, "--head", head, "--json")
+	got.requireExit(t, app.ExitUsage)
+	if !strings.Contains(got.stdout, head[:7]) {
+		t.Fatalf("refusal names no judged head: %s", got.stdout)
+	}
+}
+
+// TestVerifyCIDirtyDeskRefuses pins the Breaker B5 fix: uncommitted edits
+// would have the verdict certify bytes it never judged, so a dirty desk
+// refuses with the paths named.
+func TestVerifyCIDirtyDeskRefuses(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	base := gitRev(t, repo, "HEAD")
+	gitCommitFile(t, repo, "pkg/a.py")
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 2\n")
+
+	got := run(t, repo, "verify", "--ci", "--base", base, "--json")
+	got.requireExit(t, app.ExitUsage)
+	if !strings.Contains(got.stdout, "pkg/a.py") {
+		t.Fatalf("refusal names no dirty path: %s", got.stdout)
+	}
+}
+
+// TestVerifyCIRangeScoping pins the Breaker B4 fix in the forward
+// direction: content that was staged (and judged) but never committed
+// must not ride a later CI verdict.
+func TestVerifyCIRangeScoping(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	base := gitRev(t, repo, "HEAD")
+
+	writeRepoFile(t, repo, "pkg/staged.py", "def staged_one():\n    return 1\n")
+	gitStageFile(t, repo, "pkg/staged.py")
+	run(t, repo, "verify", "--staged", "--json")
+	if out, err := exec.Command("git", "-C", repo, "rm", "--quiet", "--cached", "pkg/staged.py").CombinedOutput(); err != nil {
+		t.Fatalf("unstage: %v: %s", err, out)
+	}
+	if err := os.Remove(repo + "/pkg/staged.py"); err != nil {
+		t.Fatal(err)
+	}
+
+	writeRepoFile(t, repo, "pkg/ci.py", "def ci_one():\n    return 2\n")
+	gitCommitFile(t, repo, "pkg/ci.py")
+
+	code, denials := ciDenials(t, repo, "verify", "--ci", "--base", base, "--json")
+	if code != app.ExitFailed {
+		t.Fatalf("code = %d, want denial (denials %+v)", code, denials)
+	}
+	for _, denial := range denials {
+		if strings.Contains(denial.Key, "staged") {
+			t.Fatalf("CI verdict judges uncommitted content: %+v", denials)
+		}
+	}
+	found := false
+	for _, denial := range denials {
+		if strings.Contains(denial.Key, "ci_one") || strings.Contains(denial.Key, "ci.py") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("CI verdict misses its own range: %+v", denials)
+	}
+}
+
+// TestVerifyStagedIgnoresCIRows pins the Breaker B4 fix in the reverse
+// direction: committed content a CI run judged must not ride a later
+// staged verdict.
+func TestVerifyStagedIgnoresCIRows(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	base := gitRev(t, repo, "HEAD")
+	writeRepoFile(t, repo, "pkg/ci.py", "def ci_one():\n    return 2\n")
+	gitCommitFile(t, repo, "pkg/ci.py")
+	run(t, repo, "verify", "--ci", "--base", base, "--json")
+
+	writeRepoFile(t, repo, "pkg/staged.py", "def staged_one():\n    return 1\n")
+	gitStageFile(t, repo, "pkg/staged.py")
+
+	code, denials := ciDenials(t, repo, "verify", "--staged", "--json")
+	if code != app.ExitFailed {
+		t.Fatalf("code = %d, want denial (denials %+v)", code, denials)
+	}
+	for _, denial := range denials {
+		if strings.Contains(denial.Key, "ci_one") || (strings.Contains(denial.Key, "ci.py") && !strings.Contains(denial.Key, "staged")) {
+			t.Fatalf("staged verdict judges committed-only content: %+v", denials)
+		}
 	}
 }

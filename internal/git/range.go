@@ -80,6 +80,69 @@ func RangeEntries(ctx context.Context, runner CommandRunner, dir, mergeBaseSHA, 
 	return parseStagedEntries(stdout)
 }
 
+// DeskDirt lists worktree paths that differ from HEAD: staged, unstaged
+// and untracked alike, repo-relative with slashes. Excluded machinery
+// (.git/, .mindrail/) never reports — the runtime database lives under
+// .git and the knowledge records under .mindrail, and neither is desk
+// dirt a committed-range verdict may consider. A git that cannot answer
+// is an error, never a clean bill.
+func DeskDirt(ctx context.Context, runner CommandRunner, dir string) ([]string, error) {
+	if runner == nil || dir == "" {
+		return nil, fmt.Errorf("git: desk check needs a runner and a directory")
+	}
+	stdout, stderr, err := runner.Run(ctx, dir,
+		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".")
+	if err != nil {
+		return nil, fmt.Errorf("git: desk check failed: %w: %s", err, dish(stderr))
+	}
+	return parseDirt(stdout), nil
+}
+
+// parseDirt reads NUL-separated porcelain v1 rows: a two-letter status, a
+// space, then the path. Renames and copies carry the source as a second
+// field, which is collected too — dirt is dirt on either side.
+func parseDirt(stdout []byte) []string {
+	fields := bytes.Split(stdout, []byte{0})
+	var out []string
+	seen := map[string]bool{}
+	add := func(rel string) {
+		rel = strings.TrimSuffix(rel, "/")
+		if rel == "" || seen[rel] || isExcludedRel(rel) {
+			return
+		}
+		seen[rel] = true
+		out = append(out, rel)
+	}
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
+		if len(field) == 0 {
+			continue
+		}
+		if len(field) < 4 || field[2] != ' ' {
+			// A rename source rides bare after its row; anything else
+			// unparseable is still a path worth naming.
+			add(string(field))
+			continue
+		}
+		status, path := string(field[:2]), string(field[3:])
+		add(path)
+		if strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C") {
+			if i+1 < len(fields) && len(fields[i+1]) > 0 {
+				add(string(fields[i+1]))
+				i++
+			}
+		}
+	}
+	return out
+}
+
+// isExcludedRel drops the machinery discovery never claims: runtime state
+// and knowledge records are not source either verify path may judge.
+func isExcludedRel(rel string) bool {
+	return rel == ".git" || strings.HasPrefix(rel, ".git/") ||
+		rel == ".mindrail" || strings.HasPrefix(rel, ".mindrail/")
+}
+
 // ShowRev reads one path's bytes at one resolved commit SHA. Missing at
 // that rev reads as absent; any other git failure is an error for the same
 // reason ShowStaged documents: a git that cannot answer must not read as

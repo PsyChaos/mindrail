@@ -77,13 +77,16 @@ func stagedContent(ctx context.Context, runner git.CommandRunner, root string, f
 	return string(content), false, nil
 }
 
-// AttributeStaged attributes staged discovery globally: every symbol of
-// the NULL-task change against every open change's baseline. Zero
+// AttributeChanges attributes one verify run's discovery globally: every
+// symbol of the given changes against every open change's baseline. Zero
 // candidates is unregistered, two or more is ambiguous, one attributes —
 // the D-133 rule without an evaluating task, because verify judges the
-// commit, not a task. The answer rides TaskAttribution with an empty
-// task id.
-func (s *Service) AttributeStaged(ctx context.Context) (TaskAttribution, error) {
+// commit, not a task. Scoping to the run's own changes is what keeps the
+// staged and CI verdicts from judging each other's rows: the two modes
+// write different NULL-task changes into one database, and a verdict
+// carrying denials for content outside its judged set would be gate
+// confusion, not coverage.
+func (s *Service) AttributeChanges(ctx context.Context, changeIDs []string) (TaskAttribution, error) {
 	answer := TaskAttribution{}
 	scopes, err := s.store.ReadAllBaselines(ctx)
 	if err != nil {
@@ -93,11 +96,7 @@ func (s *Service) AttributeStaged(ctx context.Context) (TaskAttribution, error) 
 	if err != nil {
 		return TaskAttribution{}, err
 	}
-	changes, err := s.stagedChanges(ctx)
-	if err != nil {
-		return TaskAttribution{}, err
-	}
-	for _, change := range changes {
+	for _, change := range changeIDs {
 		symbols, err := s.store.ReadChangeSymbols(ctx, change)
 		if err != nil {
 			return TaskAttribution{}, err
@@ -150,14 +149,9 @@ func (s *Service) Store() *Store {
 	return s.store
 }
 
-func (s *Service) stagedChanges(ctx context.Context) ([]string, error) {
-	return s.store.listNullTaskChanges(ctx)
-}
-
-// listNullTaskChanges returns the ownerless changes: rows no task claims,
-// which staged reconciliation writes into. Neutral read beside
-// ListTaskChanges; attribution treats these rows' symbols through the
-// global rule, never as any task's.
+// listNullTaskChanges returns the ownerless changes: rows no task claims.
+// Neutral read beside ListTaskChanges, kept for diagnosis; attribution no
+// longer unions across them (scoped per run).
 func (s *Store) listNullTaskChanges(ctx context.Context) ([]string, error) {
 	if err := s.requireSchema(ctx); err != nil {
 		return nil, err

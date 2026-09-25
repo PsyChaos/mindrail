@@ -8,6 +8,7 @@ package verify
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/gate"
@@ -65,6 +66,14 @@ func (s *Service) VerifyCI(ctx context.Context, projectID, root string, runner g
 			"Histories without a common ancestor have no range to judge.",
 			"Pass a --base that shares history with --head.", err)
 	}
+	if mergeBase == headSHA && baseSHA != headSHA {
+		return Verdict{}, rangeUsage("base "+shortSHA(baseSHA)+" is a descendant of head "+shortSHA(headSHA)+" (inverted range)",
+			"A range that ends where it starts judges nothing; certifying it green would be a lie.",
+			"Swap --base and --head, or pass a base that is an ancestor of head.", nil)
+	}
+	if err := refuseDeskMismatch(ctx, runner, root, headSHA); err != nil {
+		return Verdict{}, err
+	}
 	result, err := s.changes.ReconcileRange(ctx, projectID, root, mergeBase, headSHA, runner)
 	if err != nil {
 		return Verdict{}, err
@@ -90,7 +99,7 @@ func (s *Service) VerifyCI(ctx context.Context, projectID, root string, runner g
 // findings, and staged-scope drift. It is the half VerifyStaged and
 // VerifyCI share (decision D-225); only the file source differs.
 func (s *Service) compose(ctx context.Context, changeID string, knowledge knowledgeScope, guard []testguard.Finding) (Verdict, error) {
-	attributed, err := s.changes.AttributeStaged(ctx)
+	attributed, err := s.changes.AttributeChanges(ctx, []string{changeID})
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -196,7 +205,59 @@ func (s *Service) guardRange(ctx context.Context, root string, runner git.Comman
 	return result.Findings, nil
 }
 
-// rangeUsage wraps an unnameable range in the stable usage contract: the
+// refuseDeskMismatch enforces the CI precondition the disk-reading half
+// of the composition needs: the worktree must be a clean checkout of the
+// judged head. Indexing and knowledge load from desk bytes, so a desk that
+// is behind head, ahead of it, or dirty would have the verdict certify
+// bytes it never read. Fresh clones satisfy this by construction; anything
+// else is a structured refusal, never a silent judgment.
+func refuseDeskMismatch(ctx context.Context, runner git.CommandRunner, root, headSHA string) error {
+	worktreeHEAD, err := git.ResolveRev(ctx, runner, root, "HEAD")
+	if err != nil || worktreeHEAD != headSHA {
+		return rangeUsage("worktree checkout does not match judged head "+shortSHA(headSHA),
+			"Indexing and knowledge read desk bytes; a desk on another commit would certify unread content.",
+			"Check out "+headSHA+", or re-run with a --head that names the checkout.", err)
+	}
+	dirt, err := git.DeskDirt(ctx, runner, root)
+	if err != nil {
+		return rangeUsage("worktree dirt cannot be listed",
+			"A desk that cannot be inspected cannot be certified clean.",
+			"Re-run once git answers again.", err)
+	}
+	if len(dirt) > 0 {
+		named := dirt
+		if len(named) > 5 {
+			named = named[:5]
+		}
+		return rangeUsage("worktree is dirty ("+joinDirt(named, len(dirt))+")",
+			"Indexing and knowledge read desk bytes; uncommitted edits would certify unread content.",
+			"Commit, stash or discard the listed paths — or judge a clean checkout — then re-run.", nil)
+	}
+	return nil
+}
+
+// joinDirt names the first paths plus the remainder count.
+func joinDirt(named []string, total int) string {
+	s := ""
+	for i, path := range named {
+		if i > 0 {
+			s += ", "
+		}
+		s += path
+	}
+	if total > len(named) {
+		s += ", ... (+" + strconv.Itoa(total-len(named)) + " more)"
+	}
+	return s
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
 // caller mistyped or omitted a revision, and the remedy names the fix. The
 // underlying git answer rides the message — it is what names the tried
 // candidates — alongside the structured code. No new code (decision D-227).

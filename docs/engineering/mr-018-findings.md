@@ -52,3 +52,51 @@ dönmek) kırmızı vermedi — davranış-koruyucu mutant olarak kayıtlı,
 yerine M5' koşuldu.
 
 `make check` **yeşil** (exit 0). Test sayısı **1276** (TASK-01 başında 1260).
+
+## TASK-01 kapı remediasyonu (Breaker 5 bulgu → 5 düzeltme)
+
+Reader 5/5 CONFIRMED verdi (F1/F2 INFO: boş-olmayan temiz aralık ve
+merge-base-ci testi TASK-02'ye bırakıldı). Breaker 5 GERÇEK buldu;
+tamamı aynı turda kapatıldı:
+
+| # | Bulgu | Düzeltme | Pin |
+|---|---|---|---|
+| B1 | Ters aralık (`base` head'in torunu) boş diff'le yeşil onaylıyordu | `mergeBase == head && base != head` usage-reddi (SHA'lı mesaj) | `TestVerifyCIInvertedRangeRefuses` (M8) |
+| B2 | Default-base sessizce boş aralığa çözümleniyordu (HEAD base'in gerisinde) | B1 reddi + çözümlenen SHA'nın mesajda adlandırılması; sessiz-yeşil kapandı | B1 pini + `TestVerifyCIWorktreeMismatchRefuses` mesaj denetimi |
+| B3 | CI yolu worktree baytlarına dokunuyordu (`IndexFile` diskten okur); head-gerisi checkout sınıflanmamış çöküyordu (boş kod) | Önkoşul: worktree HEAD == judged head, aksi hâlde usage-reddi | `TestVerifyCIWorktreeMismatchRefuses` (M9) |
+| B4 | `compose` tüm NULL-task satırlarını union'lıyordu: CI commitlenmemiş içeriği, staged commitli içeriği yargılıyordu | `AttributeChanges(ctx, [changeID])`: her mod yalnız kendi satırlarını attribute eder | `TestVerifyCIRangeScoping`, `TestVerifyStagedIgnoresCIRows` (M11) |
+| B5 | Knowledge worktree'den okunuyordu; commitli-bozuk + düzeltilmiş-desk yeşil geçiyordu | Önkoşul: `.mindrail/`/`.git/` dışı kirli desk usage-reddi (dosyalar adlandırılır) | `TestVerifyCIDirtyDeskRefuses` (M10), dışlama pini (M12) |
+
+**Önkoşul kaydı (D-222 uygulaması):** `VerifyCI` temiz checkout ister —
+worktree HEAD judged head'e eşit, desk `.mindrail/`/`.git/` dışında temiz.
+Fresh clone bunu yapısal olarak sağlar (TASK-02); kirli desk yalan
+söylemek yerine reddedilir.
+
+**Bilinen kısıt (kapsam-dışı, dürüst kayıt):** sembol satırları index
+durumuna göre delta'dır; aynı veritabanında staged-yargıdan sonra
+koşulan yerel `--ci` satır göremeyip eksik-deny verebilir (union
+kalkmadan önce tam tersi kirlenme vardı — B4). Otoriter kapı fresh-clone
+CI'dır (ayrı DB); parite testi bu yüzden faz-arasında DB sıfırlar.
+Staged yolunun modlar-arası aynı delta-görünürlüğü MR-017'den devralındı,
+değiştirilmedi.
+
+**Gözlem (kapsam-dışı):** init'siz dizinde `verify` (staged dahil, önceden
+var) boş kodla düşüyor — bootstrap davranışı, burada değiştirilmedi.
+
+### Remediasyon mutasyon defteri (tamamı geri alındı, md5-doğrulamalı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M8 | inversiyon reddi kapatıldı | `TestVerifyCIInvertedRangeRefuses` FAIL |
+| M9 | worktree-eşleşme reddi kapatıldı | `TestVerifyCIWorktreeMismatchRefuses` FAIL |
+| M10 | kir-desk reddi kapatıldı | `TestVerifyCIDirtyDeskRefuses` FAIL |
+| M11 | attribution union'a döndürüldü | `TestVerifyCIRangeScoping` + `TestVerifyStagedIgnoresCIRows` FAIL |
+| M12 | kir-dışlama (`.mindrail/`) düşürüldü | `TestVerifyCICleanGreen` FAIL |
+
+`M1`/`M6` ilk yazımda kırmızı vermedi (test kurgusu reddi başka yoldan
+üretiyordu); testler güçlendirildi (`--staged --base` reddi, commitli
+çift-mod), sonra kırmızı koşuldu. `M5` davranış-koruyucu çıktı, `M5'`
+koşuldu.
+
+Remediasyon sonrası `make check` **yeşil** (exit 0). Test sayısı **1281**.
+Re-gate: Reader + Breaker ikinci tur (aşağıda).
