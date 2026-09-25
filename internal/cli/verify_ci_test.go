@@ -37,6 +37,22 @@ func changeRowCount(t *testing.T, repo string) int {
 	return n
 }
 
+// changeFileCount reads the reconciled file rows: a green verdict over an
+// allegedly non-empty range must have judged files, not an empty diff.
+func changeFileCount(t *testing.T, repo string) int {
+	t.Helper()
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var n int
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM change_files`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // removeDB deletes the runtime database so the next command starts from
 // no index state, the way a fresh clone does.
 func removeDB(t *testing.T, repo string) error {
@@ -235,15 +251,40 @@ func TestVerifyCIKnowledgeFirst(t *testing.T) {
 	}
 }
 
-// TestVerifyCIDefaultBase pins decision D-223's quiet half: with no --base,
-// the documented chain resolves the branch the fixture committed on.
-func TestVerifyCIDefaultBase(t *testing.T) {
+// TestVerifyCIDefaultEmptyRefuses pins the default-empty rule: a default
+// base that equals head judges nothing, and judging nothing by default
+// would certify a main-tip bypass green. Explicit equal revs stay green
+// (caller's choice); a default that finds nothing refuses loudly.
+func TestVerifyCIDefaultEmptyRefuses(t *testing.T) {
 	repo := newInitializedRepo(t)
 	writeRepoFile(t, repo, "README.md", "# docs\n")
 	gitCommitFile(t, repo, "README.md")
 	if out, err := exec.Command("git", "-C", repo, "branch", "-f", "main", "HEAD").CombinedOutput(); err != nil {
 		t.Fatalf("branch main: %v: %s", err, out)
 	}
+
+	got := run(t, repo, "verify", "--ci", "--json")
+	got.requireExit(t, app.ExitUsage)
+	if payload := got.errorPayload(t); payload.Code != app.CodeCommandLineInvalid {
+		t.Fatalf("code = %q, want COMMAND_LINE_INVALID", payload.Code)
+	}
+}
+
+// TestVerifyCIDefaultBaseBehind pins decision D-223's working half: with
+// the default chain resolving to a base behind head, bare --ci judges
+// the range.
+func TestVerifyCIDefaultBaseBehind(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "README.md", "# docs\n")
+	gitCommitFile(t, repo, "README.md")
+	if out, err := exec.Command("git", "-C", repo, "branch", "-f", "main", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("branch main: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--quiet", "-b", "work").CombinedOutput(); err != nil {
+		t.Fatalf("checkout -b work: %v: %s", err, out)
+	}
+	writeRepoFile(t, repo, "docs/notes.md", "# notes\n")
+	gitCommitFile(t, repo, "docs/notes.md")
 
 	code, denials := ciDenials(t, repo, "verify", "--ci", "--json")
 	if code != app.ExitSuccess || len(denials) != 0 {
@@ -260,25 +301,21 @@ func TestVerifyCIGuardDenies(t *testing.T) {
 	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
 	gitCommitFile(t, repo, "pkg/pyproject.toml")
 	gitCommitFile(t, repo, "pkg/test_a.py")
+	// The binding's knowledge record travels committed, like code: the
+	// desk stays clean and head stays put across both passes below, so
+	// the second pass re-judges the same range (same change, rows
+	// accumulate) instead of a moved one.
+	writeGuardInvariant(t, repo)
+	gitCommitFile(t, repo, ".mindrail/knowledge/invariants/INV-G.json")
 	base := gitRev(t, repo, "HEAD")
 	registerTestUnit(t, repo, "pkg")
 	writeRepoFile(t, repo, "pkg/test_a.py", "def helper():\n    return 1\n")
 	gitCommitFile(t, repo, "pkg/test_a.py")
 
 	// First pass populates the index (helper uid); the guard beat seeds
-	// binding + reference on top, like the staged two-pass test. The
-	// seeded knowledge record is committed before the second pass: CI
-	// demands a clean desk, and committed knowledge is what a fresh
-	// clone judges.
+	// binding + reference on top, like the staged two-pass test.
 	run(t, repo, "verify", "--ci", "--base", base, "--json")
 	seedGuardBinding(t, repo, "pkg/test_a.py")
-	if out, err := exec.Command("git", "-C", repo, "add",
-		".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
-		t.Fatalf("add knowledge: %v: %s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", repo, "commit", "--quiet", "-m", "guard binding").CombinedOutput(); err != nil {
-		t.Fatalf("commit knowledge: %v: %s", err, out)
-	}
 
 	code, denials := ciDenials(t, repo, "verify", "--ci", "--base", base, "--json")
 	if code != app.ExitFailed {

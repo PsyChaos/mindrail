@@ -45,6 +45,7 @@ func (s *Service) VerifyCI(ctx context.Context, projectID, root string, runner g
 			"Pass an existing commit as --head, or omit it to judge HEAD.", err)
 	}
 	var baseSHA string
+	baseDefaulted := baseRev == ""
 	if baseRev != "" {
 		baseSHA, err = git.ResolveRev(ctx, runner, root, baseRev)
 		if err != nil {
@@ -70,6 +71,11 @@ func (s *Service) VerifyCI(ctx context.Context, projectID, root string, runner g
 		return Verdict{}, rangeUsage("base "+shortSHA(baseSHA)+" is a descendant of head "+shortSHA(headSHA)+" (inverted range)",
 			"A range that ends where it starts judges nothing; certifying it green would be a lie.",
 			"Swap --base and --head, or pass a base that is an ancestor of head.", nil)
+	}
+	if baseSHA == headSHA && baseDefaulted {
+		return Verdict{}, rangeUsage("default base "+shortSHA(baseSHA)+" equals head (nothing to judge)",
+			"An empty default range would certify any content green — including a bypassed commit.",
+			"Push commits the base does not contain, or pass explicit --base and --head.", nil)
 	}
 	if err := refuseDeskMismatch(ctx, runner, root, headSHA); err != nil {
 		return Verdict{}, err

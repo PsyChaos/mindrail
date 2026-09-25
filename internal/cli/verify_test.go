@@ -209,6 +209,13 @@ func seedGuardBinding(t *testing.T, repo, test string) {
 		VALUES ('INV-G', ?, 'bound', '2026-09-23T10:00:00Z')`, helperUID); err != nil {
 		t.Fatal(err)
 	}
+	writeGuardInvariant(t, repo)
+}
+
+// writeGuardInvariant drops the CRITICAL INV-G record the guard beat
+// binds against. Callers judging a committed range commit it first.
+func writeGuardInvariant(t *testing.T, repo string) {
+	t.Helper()
 	dir := filepath.Join(repo, ".mindrail", "knowledge", "invariants")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

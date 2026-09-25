@@ -8,10 +8,24 @@ import (
 	"github.com/PsyChaos/mindrail/internal/git"
 )
 
-// verifyCIOperationID converges repeat CI runs onto one NULL-task change
-// instead of minting a fresh retroactive row per call — the D-215 principle
-// applied to the range path (decision D-227).
-const verifyCIOperationID = "verify-ci"
+// rangeOperationID converges repeat runs of one range onto one NULL-task
+// change instead of minting a fresh retroactive row per call — the D-215
+// principle applied per range. Keying by range (not one fixed id) is what
+// keeps verdicts a function of (base, head): a narrower later run reads
+// only its own change, never stale rows from a wider earlier one.
+func rangeOperationID(mergeBaseSHA, headSHA string) string {
+	return "verify-ci-" + shortSHA(mergeBaseSHA, 12) + "-" + shortSHA(headSHA, 12)
+}
+
+// shortSHA names the first n hex digits of a resolved SHA for messages
+// and operation ids. SHAs are length-validated at resolution, so the
+// slice is safe on this path.
+func shortSHA(sha string, n int) string {
+	if len(sha) > n {
+		return sha[:n]
+	}
+	return sha
+}
 
 // ReconcileRange runs the canonical path over a committed range: range
 // entries, head bytes for hashing and symbol sync, linkage into a NULL-task
@@ -33,7 +47,7 @@ func (s *Service) ReconcileRange(ctx context.Context, projectID, repoRoot, merge
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	change, err := s.store.EnsureOpenChange(ctx, "", verifyCIOperationID)
+	change, err := s.store.EnsureOpenChange(ctx, "", rangeOperationID(mergeBaseSHA, headSHA))
 	if err != nil {
 		return ReconcileResult{}, err
 	}

@@ -45,15 +45,19 @@ func TestVerifyCIFreshCloneCleanGreen(t *testing.T) {
 	origin := newInitializedRepo(t)
 	writeRepoFile(t, origin, "README.md", "# docs\n")
 	gitCommitFile(t, origin, "README.md")
+	base := gitRev(t, origin, "HEAD")
 	writeRepoFile(t, origin, "docs/notes.md", "# notes\n")
 	gitCommitFile(t, origin, "docs/notes.md")
 
 	clone := cloneRepo(t, origin)
 	initClone(t, clone)
 
-	code, denials := ciDenials(t, clone, "verify", "--ci", "--json")
+	code, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
 	if code != app.ExitSuccess || len(denials) != 0 {
 		t.Fatalf("code = %d, denials = %+v, want green", code, denials)
+	}
+	if n := changeFileCount(t, clone); n != 1 {
+		t.Fatalf("files = %d, want 1: the green must judge the range, not an empty diff", n)
 	}
 }
 
@@ -109,6 +113,11 @@ func TestVerifyCIFreshCloneGuardBlocks(t *testing.T) {
 	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
 	gitCommitFile(t, origin, "pkg/pyproject.toml")
 	gitCommitFile(t, origin, "pkg/test_a.py")
+	// The binding's knowledge record travels committed in origin, so the
+	// clone judges it like any fresh checkout — and head stays put
+	// across both passes below.
+	writeGuardInvariant(t, origin)
+	gitCommitFile(t, origin, ".mindrail/knowledge/invariants/INV-G.json")
 	base := gitRev(t, origin, "HEAD")
 	writeRepoFile(t, origin, "pkg/test_a.py", "def helper():\n    return 1\n")
 	gitCommitFile(t, origin, "pkg/test_a.py")
@@ -118,13 +127,6 @@ func TestVerifyCIFreshCloneGuardBlocks(t *testing.T) {
 	registerTestUnit(t, clone, "pkg")
 	run(t, clone, "verify", "--ci", "--base", base, "--json")
 	seedGuardBinding(t, clone, "pkg/test_a.py")
-	if out, err := exec.Command("git", "-C", clone, "add",
-		".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
-		t.Fatalf("add knowledge: %v: %s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", clone, "commit", "--quiet", "-m", "guard binding").CombinedOutput(); err != nil {
-		t.Fatalf("commit knowledge: %v: %s", err, out)
-	}
 
 	code, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
 	if code != app.ExitFailed {
@@ -232,5 +234,51 @@ func TestVerifyCIDenialShape(t *testing.T) {
 		if !known[denial.Code] && !strings.HasPrefix(denial.Code, "KNOWLEDGE") {
 			t.Fatalf("unknown code %q (registry drift?)", denial.Code)
 		}
+	}
+}
+
+// TestVerifyCIDefaultOverBypassRefuses pins the main-tip rule: a bare
+// --ci whose default base equals head judges nothing, so it refuses
+// instead of certifying a bypassed tip green.
+func TestVerifyCIDefaultOverBypassRefuses(t *testing.T) {
+	origin := newInitializedRepo(t)
+	writeRepoFile(t, origin, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, origin, "pkg/pyproject.toml")
+	gitStageFile(t, origin, "pkg/a.py")
+	if _, staged := ciDenials(t, origin, "verify", "--staged", "--json"); len(staged) == 0 {
+		t.Fatal("staged run denied nothing; bypass is vacuous")
+	}
+	if out, err := exec.Command("git", "-C", origin,
+		"commit", "--quiet", "--no-verify", "-m", "bypass").CombinedOutput(); err != nil {
+		t.Fatalf("commit --no-verify: %v: %s", err, out)
+	}
+
+	clone := cloneRepo(t, origin)
+	initClone(t, clone)
+
+	got := run(t, clone, "verify", "--ci", "--json")
+	got.requireExit(t, app.ExitUsage)
+}
+
+// TestVerifyCINarrowsAcrossRuns pins recompute semantics: a wide denial
+// followed by an explicit empty range greens — stale rows from the wider
+// run are not re-judged.
+func TestVerifyCINarrowsAcrossRuns(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	base := gitRev(t, repo, "HEAD")
+	gitCommitFile(t, repo, "pkg/a.py")
+	head := gitRev(t, repo, "HEAD")
+
+	wide, denials := ciDenials(t, repo, "verify", "--ci", "--base", base, "--json")
+	if wide != app.ExitFailed || len(denials) == 0 {
+		t.Fatalf("wide run: code = %d, denials = %+v, want denial", wide, denials)
+	}
+	narrow, narrowed := ciDenials(t, repo, "verify", "--ci", "--base", head, "--head", head, "--json")
+	if narrow != app.ExitSuccess || len(narrowed) != 0 {
+		t.Fatalf("narrow run: code = %d, denials = %+v, want green", narrow, narrowed)
 	}
 }

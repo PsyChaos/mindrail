@@ -157,9 +157,43 @@ yazar — sonraki `verify --ci` knowledge-first reddeder; iki yarı da
 pinli. Merge-base CLI testi (`TestVerifyCIUnrelatedBasesRefuse`,
 Reader F2) TASK-02'ye alındı.
 
-**Üretim-kodu notu (REQ-07):** TASK-02 üretim kodu eklemez (yalnız
-fixture testleri) — yeni guard yok, yeni mutant yok. Yük-taşıma,
-test-içi vacuity pinleriyle tutulur (`len(staged)==0 → fatal`,
-`len(denials)==0 → fatal`).
+**Üretim-kodu notu (REQ-07):** TASK-02 başlangıçta üretim kodu
+eklemiyordu; kapı remediasyonu üç üretim değişikliği getirdi
+(aşağıda) — üçü de kırmızı koşuldu (M14…M16).
 
 `make check` **yeşil** (exit 0). Test sayısı **1290** (TASK-02 başında 1284).
+
+## TASK-02 kapı remediasyonu (Breaker BLOCKED → 3 düzeltme)
+
+**Reader:** 4/4 CONFIRMED, PASS. **Breaker:** 2 reprodüksiyon + 1
+insidental:
+
+| # | Bulgu | Düzeltme | Pin |
+|---|---|---|---|
+| T2-1 | Clean-clone fixture boş aralığı yargılıyordu (default base == HEAD) | Explicit `--base` + `change_files == 1` denetimi | `TestVerifyCIFreshCloneCleanGreen` (M16) |
+| T2-2 | Bare `--ci` main-tip bypass'ı sessiz-yeşil onaylıyordu | Default'tan gelen boş aralık usage-reddi (explicit eşit revler yeşil kalır) | `TestVerifyCIDefaultEmptyRefuses`, `TestVerifyCIDefaultOverBypassRefuses`, `TestVerifyCIDefaultBaseBehind` (M14) |
+| T2-3 (insidental) | `verify-ci` change'i daralmıyordu: geniş-aralık satırları dar aralıkta yeniden yargılanıyordu | Menzil-anahtarlı op-id (`verify-ci-<base12>-<head12>`): hüküm (base, head)'in fonksiyonu | `TestVerifyCINarrowsAcrossRuns` (M15) |
+
+**Tasarım okumaları:** D-223'e ek — default'tan gelen boş aralık
+reddedilir, explicit boş aralık yeşildir (çağıranın seçimi). D-227'ye
+ek — CI recompute eder: her menzil kendi change'inde birleşir, aynı
+menzilin tekrarı yakınsar. Staged yolundaki aynı-birikim davranışı
+MR-017'den devralındı, değiştirilmedi.
+
+**Guard-iki-geçiş düzeltmesi (T2-3'ün bedeli):** menzil-anahtarlama,
+geçiş-arası head taşıyan guard testlerini kırdı (ikinci geçiş yeni
+change'de satır göremedi — delta-görünürlüğü). Çözüm: binding
+knowledge'ı geçişlerden ÖNCE commitlenir (base pininden önce);
+head iki geçişte de sabittir, aynı change birikir. Staged guard testi
+dokunulmadan yeşil.
+
+### Remediasyon mutasyon defteri (tamamı geri alındı, md5-doğrulamalı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M14 | default-boş reddi kapatıldı | `TestVerifyCIDefaultOverBypassRefuses` + `TestVerifyCIDefaultEmptyRefuses` FAIL |
+| M15 | menzil-anahtarlı op-id sabit id'ye döndürüldü | `TestVerifyCINarrowsAcrossRuns` FAIL (+ guard/parity de düşer) |
+| M16 | RangeEntries head..head | `TestVerifyCIFreshCloneCleanGreen` FAIL (dosya-sayım pini) |
+
+Remediasyon sonrası `make check` **yeşil**. Test sayısı **1293**.
+Re-gate tur 2 (aşağıda).
