@@ -513,3 +513,33 @@ func TestVerifyCIKnowledgeAddedDirtRefuses(t *testing.T) {
 		t.Fatalf("report names no fatal problem: %s", got.stdout)
 	}
 }
+
+// TestVerifyCIUnrelatedBasesRefuse is the CLI half of the merge-base
+// story (Reader F2): two roots share no history, so there is no range to
+// judge — structured refusal, never empty-green.
+func TestVerifyCIUnrelatedBasesRefuse(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "README.md", "# docs\n")
+	gitCommitFile(t, repo, "README.md")
+	out, err := exec.Command("git", "-C", repo, "branch", "--show-current").CombinedOutput()
+	if err != nil {
+		t.Fatalf("current branch: %v: %s", err, out)
+	}
+	first := strings.TrimSpace(string(out))
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--quiet", "--orphan", "other").CombinedOutput(); err != nil {
+		t.Fatalf("orphan: %v: %s", err, out)
+	}
+	writeRepoFile(t, repo, "OTHER.md", "# other\n")
+	gitCommitFile(t, repo, "OTHER.md")
+	// Judge from the first root's checkout: the worktree gate must pass
+	// so that only the merge-base failure can produce the refusal.
+	if out, err := exec.Command("git", "-C", repo, "checkout", "--quiet", first).CombinedOutput(); err != nil {
+		t.Fatalf("checkout %s: %v: %s", first, err, out)
+	}
+
+	got := run(t, repo, "verify", "--ci", "--base", "other", "--head", first, "--json")
+	if got.code == app.ExitSuccess {
+		t.Fatalf("unrelated histories verified: %s", got.stdout)
+	}
+	got.requireExit(t, app.ExitUsage)
+}

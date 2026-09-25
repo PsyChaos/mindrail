@@ -139,3 +139,27 @@ iki yönde de reddediyor, süit yeşil. Tek not doc-only stale comment —
 aynı turda düzeltildi.
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Fresh-clone temiz yeşil (`TestVerifyCIFreshCloneCleanGreen`, boş-olmayan docs-aralığı — Reader F1'i de kapatır) + `--no-verify` reprodüksiyonu (`TestVerifyCINoVerifyReproduced`, staged↔clone code-kümesi birebir). |
+| AC-02.2 | Karşılandı | Clone'da ranged guard blocking (`TestVerifyCIFreshCloneGuardBlocks`, iki-geçiş + commitli seed). |
+| AC-02.3 | Karşılandı | Clone'da commitli-fatal knowledge fail-closed (`TestVerifyCIFreshCloneKnowledgeFailsClosed`, 0 satır). |
+| AC-02.4 | Karşılandı | Denial şekli (`TestVerifyCIDenialShape`: code+provenance+remedy, bilinen kodlar, envelope exit). |
+
+**Tasarım notları:** clone'lar gerçek `git clone` ile kurulur (mock
+yok, tech-stack §92); `origin/main` zinciri clone'da çözümlenir.
+Guard testindeki seed clone'da commitlenir (temiz-desk önkoşulu).
+Knowledge testinde `init` de fail-closed çıkar (exit 1) ama DB'yi
+yazar — sonraki `verify --ci` knowledge-first reddeder; iki yarı da
+pinli. Merge-base CLI testi (`TestVerifyCIUnrelatedBasesRefuse`,
+Reader F2) TASK-02'ye alındı.
+
+**Üretim-kodu notu (REQ-07):** TASK-02 üretim kodu eklemez (yalnız
+fixture testleri) — yeni guard yok, yeni mutant yok. Yük-taşıma,
+test-içi vacuity pinleriyle tutulur (`len(staged)==0 → fatal`,
+`len(denials)==0 → fatal`).
+
+`make check` **yeşil** (exit 0). Test sayısı **1289** (TASK-02 başında 1284).
