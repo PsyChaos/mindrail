@@ -40,7 +40,8 @@ oldu (dokunulan test dosyalarında davranış değişikliği yok).
 | # | Mutant | Kırmızı kanıt |
 |---|---|---|
 | M1 | Grade bilinmeyen op'u geçirir | `TestGradeFailsClosed` FAIL |
-| M2 | percentile rank +1 kayık | `TestPercentileNearestRank` FAIL |
+| M2 | percentile rank kayık (floor) | `TestPercentileNearestRank` FAIL |
+| M2' | kapı notuyla ceil-rank'e geçildi; Floor-mutantı tekrar kırmızı | `TestPercentileNearestRank` FAIL |
 | M3 | SyncFileSymbols fold'u düşürüldü | `TestAfterChangeObservesBreakdowns` FAIL |
 | M4 | traversal span düşürüldü | `TestAnalyzeObservesTraversal` FAIL |
 | M5 | Targets'tan status silindi | `BenchmarkStatus` FAIL (fail-closed grading) |
@@ -49,3 +50,13 @@ Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
 md5 ile doğrulandı (`mr019-mutant-m{1,3,4}-*.bak`).
 
 `make check` **yeşil** (exit 0). Test sayısı **1300** (TASK-01 başında 1293).
+
+### TASK-01 kapı — Reader: PASS; Breaker: PASS
+
+İki kapı da PASS verdi; iki düşük not aynı turda kapatıldı:
+vacuous wall-clock dalı (`TestTimerUsesAppClock` artık Total-varlığını
+dener) ve floor-rank percentile (ceil nearest-rank + M2' kırmızı).
+Taşınabilir bulgu: MCP teli context value geçirmez — toplamlar
+transportta, breakdown'lar servis katmanında ölçülür.
+
+**Karar:** TASK-01 KAPANDI.

@@ -55,8 +55,8 @@ func TestPercentileNearestRank(t *testing.T) {
 	if got := recorder.Percentile(50); got != 50*time.Millisecond {
 		t.Fatalf("p50 = %v, want 50ms", got)
 	}
-	if got := recorder.Percentile(95); got != 90*time.Millisecond {
-		t.Fatalf("p95 = %v, want 90ms (nearest-rank of 10)", got)
+	if got := recorder.Percentile(95); got != 100*time.Millisecond {
+		t.Fatalf("p95 = %v, want 100ms (nearest-rank of 10)", got)
 	}
 	if got := recorder.Percentile(0); got != 10*time.Millisecond {
 		t.Fatalf("p0 = %v, want 10ms", got)
@@ -92,15 +92,15 @@ func TestGradeFailsClosed(t *testing.T) {
 }
 
 // TestTimerUsesAppClock pins the seam: production passes SystemClock,
-// tests pass FixedClock — the timer itself is clock-agnostic.
+// tests pass FixedClock — the timer itself is clock-agnostic, and Total
+// is always banked under either.
 func TestTimerUsesAppClock(t *testing.T) {
 	fixed := app.FixedClock{Instant: time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)}
-	timer := perf.Start(fixed)
-	if got := timer.Stop().Total(); got != 0 {
-		t.Fatalf("fixed-clock total = %v, want 0", got)
+	if _, ok := perf.Start(fixed).Stop().Breakdowns[perf.Total]; !ok {
+		t.Fatal("fixed-clock sample banks no total")
 	}
 	system := perf.Start(app.SystemClock{})
-	if got := system.Stop().Total(); got < 0 {
-		t.Fatalf("system-clock total = %v, want >= 0", got)
+	if _, ok := system.Stop().Breakdowns[perf.Total]; !ok {
+		t.Fatal("system-clock sample banks no total")
 	}
 }

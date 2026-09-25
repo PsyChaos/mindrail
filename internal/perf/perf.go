@@ -8,6 +8,7 @@ package perf
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -211,7 +212,7 @@ func percentileOf(samples []time.Duration, p float64) time.Duration {
 	}
 	sorted := append([]time.Duration(nil), samples...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	rank := int((p / 100) * float64(len(sorted)))
+	rank := int(math.Ceil((p / 100) * float64(len(sorted))))
 	if rank < 1 {
 		rank = 1
 	}
