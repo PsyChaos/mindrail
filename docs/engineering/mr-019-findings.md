@@ -157,7 +157,18 @@ md5 ile doğrulandı (`mr019-mutant-{m9,m10,m11}-*.bak`).
 
 `make check` **yeşil** (exit 0). Test sayısı **1308** (TASK-03 başında 1307).
 
-Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
-md5 ile doğrulandı (`mr019-mutant-m{6,7}-*.bak`).
+### TASK-03 kapı — Reader: PASS; Breaker: dar BLOCKED (kir-damgası)
 
-`make check` **yeşil** (exit 0). Test sayısı **1306** (TASK-02 başında 1300).
+**Round-1 Reader:** AC-03.1…03.4 CONFIRMED + 2 düşük not (aşağıda
+kapatıldı: bayat paragraf silindi; 1307/1308 farkı = 1 SKIP,
+`TestTheOwnershipRuleHoldsOverTheWiderSpace` — bildirilen 1308
+deklaredir, gate 1307 PASS sayar).
+**Round-1 Breaker:** untracked-dosyalı ağaç `clean` damgalıyordu
+(eski `git diff` ifadesi untracked'ı görmez) — `git status
+--porcelain` ifadesiyle kapatıldı; windows artifaktı `.exe` aldı.
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M13 | eski kir-ifadesi (untracked körü) | Scratch repo: untracked'lı ağaç `clean` (yalan); yeni ifadeyle `dirty` |
+
+**Karar:** TASK-03 KAPANDI (re-gate tur 2 aşağıda).

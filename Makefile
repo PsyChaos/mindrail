@@ -84,13 +84,14 @@ tidy-check: ## Fail if go.mod or go.sum are not tidy
 .PHONY: check
 check: fmt-check vet test ## Local quality gate (fast: runs on every save)
 
-# Release stamping (tech-stack §103). Dirty detection is fail-open toward
-# honesty: anything but a clean tree stamps "dirty", and a tree git cannot
-# read stamps "unknown" rather than claiming clean.
+# Release stamping (tech-stack §103). Dirty detection covers tracked
+# modifications, staged changes AND untracked files: an untracked .go
+# file compiles into the binary, so ignoring it would stamp "clean" over
+# unknown contents. A tree git cannot read stamps "unknown".
 RELEASE_VERSION ?= 0.1.0
 RELEASE_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 RELEASE_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
-RELEASE_DIRTY := $(shell git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null && echo clean || echo dirty)
+RELEASE_DIRTY := $(shell if ! git rev-parse --git-dir >/dev/null 2>&1; then echo unknown; elif [ -n "$$(git status --porcelain 2>/dev/null)" ]; then echo dirty; else echo clean; fi)
 LDSTAMP := -X github.com/PsyChaos/mindrail/internal/cli.version=$(RELEASE_VERSION) \
 	-X github.com/PsyChaos/mindrail/internal/cli.commit=$(RELEASE_COMMIT) \
 	-X github.com/PsyChaos/mindrail/internal/cli.buildDate=$(RELEASE_DATE) \
@@ -119,6 +120,7 @@ release: ## Stamp, build the platform matrix, checksums, native smoke
 	@for target in "linux arm64" "darwin amd64" "darwin arm64" "windows amd64"; do \
 		set -- $$target; \
 		name="mindrail-$$1-$$2"; \
+		if [ "$$1" = "windows" ]; then name="$$name.exe"; fi; \
 		if GOOS=$$1 GOARCH=$$2 go build $(GOFLAGS_TAGS) -ldflags "$(LDSTAMP)" -o dist/$$name $(CMD) 2>dist/$$name.err; then \
 			echo "$$1/$$2: built" | tee -a dist/MATRIX.txt; rm -f dist/$$name.err; \
 		else \
