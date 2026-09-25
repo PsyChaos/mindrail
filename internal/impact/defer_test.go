@@ -213,3 +213,37 @@ func TestDeferralFrontierRequeuesPrioritized(t *testing.T) {
 		t.Fatalf("complete = %v, entries = %+v, want the full closure", full.Complete, full.Entries)
 	}
 }
+
+// TestDeferralBranchingFrontier pins the exact remainder shape the
+// single-chain tests cannot see: with inputs [B, D] and one work item,
+// level 1 expands B (queuing C for next level) and exhausts on D, so the
+// pending frontier must name BOTH the unexpanded input AND the already
+// queued next-level uid, in that order. Dropping `next` silently skips
+// queued work; per-level yield expands too much — both mutants die here.
+func TestDeferralBranchingFrontier(t *testing.T) {
+	fx := newImpactFixture(t)
+	seedChain(t, fx)
+	partial, err := fx.service.Analyze(perf.WithBudget(t.Context(), perf.NewItemBudget(1)), impact.Request{
+		Symbols:    []impact.Input{{UID: "SYM-I-B"}, {UID: "SYM-I-D"}},
+		Depth:      2,
+		DirectOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.Complete {
+		t.Fatal("exhausted analysis reports complete")
+	}
+	if len(partial.Entries) != 1 || partial.Entries[0].Via.ReferrerKey != "c" {
+		t.Fatalf("entries = %+v, want exactly the C edge", partial.Entries)
+	}
+	want := []string{"SYM-I-D", "SYM-I-C"}
+	if len(partial.Pending) != len(want) {
+		t.Fatalf("pending = %v, want %v", partial.Pending, want)
+	}
+	for i := range want {
+		if partial.Pending[i] != want[i] {
+			t.Fatalf("pending = %v, want %v", partial.Pending, want)
+		}
+	}
+}

@@ -102,7 +102,8 @@ type Entry struct {
 // reports whether the traversal finished: false means the budget ran out
 // and Pending names the unexpanded frontier uids, so the caller can
 // re-queue their units at high priority and complete later. Pending is
-// empty exactly when Complete is true.
+// empty exactly when Complete is true, on nil-error returns — error
+// returns carry no partial (callers check err first, per Go convention).
 type Result struct {
 	Entries           []Entry
 	StructuralBreadth Breadth

@@ -92,6 +92,29 @@ bulunmaz; erteleme, FULL-traversal geldiğinde hazır mekanizmadır
 | M7 | pending frontier düşürüldü | `TestDeferralItemBudgetFrontier` + `TestDeferralFrontierRequeuesPrioritized` FAIL |
 | M8 | kısmi sonuç complete raporlar | `TestDeferralZeroBudgetPartial` FAIL |
 
+### TASK-02 kapı — Reader: PASS; Breaker round-1: dar BLOCKED (S1/S2)
+
+**Round-1 Reader:** AC-02.1…02.4 CONFIRMED + 2 düşük kapsam-notu
+(aşağıda).
+**Round-1 Breaker:** kaynak doğru, kanıt eksik — S1 (`next`'siz
+Pending yaşaması) ve S2 (seviye-başına Yield yaşaması) mutantları
+tüm suite'te yeşil kalıyordu. Çözüm: dallanan-sınır testi
+(`[B, D]` + 1 öğe → pending `[D, C]`); S1/S2 kırmızı koşuldu.
+Error-dönüşlerindeki `Complete=false` + boş-Pending için doc
+düzeltildi ("on nil-error").
+
+Kapsam-notları (engelsiz, dürüst kayıt): Yield tane-başınadır —
+öğe-içi fan-in/fallback bütçesizdir (0.1 structural fan-in küçüktür);
+kısmi dönüş breadth-yeniden-hesabını atlar (testlerin tamamı
+`DirectOnly`).
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| S1 | Pending'den `next` düşürüldü | `TestDeferralBranchingFrontier` FAIL |
+| S2 | Yield seviye-başına alındı | `TestDeferralBranchingFrontier` FAIL |
+
+**Karar:** TASK-02 KAPANDI (re-gate tur 2 aşağıda).
+
 Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
 md5 ile doğrulandı (`mr019-mutant-m{6,7}-*.bak`).
 
