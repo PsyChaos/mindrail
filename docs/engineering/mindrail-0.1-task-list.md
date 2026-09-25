@@ -805,11 +805,30 @@ kompozisyon girdileri (staged/CI verify), version-error'lar (politika).
 
 #### Kabul kriterleri
 
-- [ ] `verify --staged` unreconciled staged değişikliği yakalar.
-- [ ] Knowledge corruption/ileri şema kaynak doğrulamasından önce fail-closed olur.
-- [ ] Test weakening staged yolda blocking bulgu üretir.
-- [ ] Kurulum mevcut pre-commit hook içeriğini overwrite etmez.
-- [ ] Git fixture testleri clean, allow ve denial senaryolarını kapsar.
+- [x] `verify --staged` unreconciled staged değişikliği yakalar.
+- [x] Knowledge corruption/ileri şema kaynak doğrulamasından önce fail-closed olur.
+- [x] Test weakening staged yolda blocking bulgu üretir.
+- [x] Kurulum mevcut pre-commit hook içeriğini overwrite etmez.
+- [x] Git fixture testleri clean, allow ve denial senaryolarını kapsar.
+
+#### Durum
+
+**Tamamlandı.** Üç görev (TASK-01…03) seri koşuldu; her biri bağımsız
+Reader/Breaker kapısından geçti. TASK-01'de AC-01.3 şerhli kapandı
+(malformed-JSON loader-tasarımı) + B-3 fail-closed + drift/unborn/args
+pinleri (M6…M9). TASK-02'de hook + fixture'lar kapandı (M10…M13).
+TASK-03 kapıları temizdi (M9-etiket çakışması giderildi: M1…M9 / M10…M13).
+
+Sözleşme koda başlanmadan donduruldu
+([mr-017-requirements.md](mr-017-requirements.md),
+[mr-017-design.md](mr-017-design.md), `8551a1b`), kararlar D-215…D-220:
+D-215 staged-satır-yazımı, D-216 index-hükmü, D-217 fatal-önceliği, D-218
+eklemeli-kurulum. Kod 46, göç yok. 3 komut (verify/knowledge/hook).
+
+`make check`, `make verify` (race + smoke) ve `make tidy-check` yeşil; 1260
+test (MR-017 başında 1241 idi). 13 guard mutasyonu kırmızı koşuldu
+(M1…M13). Kapıların MR-018'e bıraktıkları: verify --staged (CI çağırır),
+hook kurulumu (CI eşdeğeri), staged-kaynak (aralıklar).
 
 ---
 

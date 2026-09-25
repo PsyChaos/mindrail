@@ -87,10 +87,10 @@ kayıt yanlıştı).
 
 | # | Mutant | Kırmızı kanıt |
 |---|---|---|
-| M9 | marker'lar değiştirildi | hook testleri FAIL |
-| M10 | idempotency-kontrolü kapatıldı | append testi FAIL |
-| M11 | blok-gövdesi değiştirildi (`verify` bayraksız) | execution testi FAIL |
-| M12 | newline-birleşimi kaldırıldı | ilk varyant yeşildi (fixture hep newline'lı) → newlinesiz vaka eklendi, FAIL |
+| M10 | marker'lar değiştirildi | hook testleri FAIL |
+| M11 | idempotency-kontrolü kapatıldı | append testi FAIL |
+| M12 | blok-gövdesi değiştirildi (`verify` bayraksız) | execution testi FAIL |
+| M13 | newline-birleşimi kaldırıldı | ilk varyant yeşildi (fixture hep newline'lı) → newlinesiz vaka eklendi, FAIL |
 
 Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
@@ -117,9 +117,22 @@ yoktu. `requireSh` eklendi (requireGit disiplini).
 |---|---|---|
 | AC-03.1 | Karşılandı (kapıda) | `make verify` + `make tidy-check` + sayı aşağıda. |
 | AC-03.2 | Karşılandı | Grep kanıtı: kod 46 (yeni yok); 3 komut kaydı; migration yok; değer yankısı yok. |
-| AC-03.3 | Karşılandı (kapıda) | M1…M12 defterde, tamamı kırmızı koşuldu. Durum bloğu kapıda. |
+| AC-03.3 | Karşılandı (kapıda) | M1…M13 defterde (M1…M9 TASK-01, M10…M13 TASK-02), tamamı kırmızı koşuldu. Durum bloğu kapıda. |
 
 `make verify` **yeşil** (exit 0: check + race + smoke), `make tidy-check`
 **yeşil**. Test sayısı **1260**.
 
-### TASK-03 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-03 kapı — Reader: AC-03.1 güven + AC-03.2 CONFIRMED; Breaker: 4 REFUTED + 1 not
+
+**Reader + Breaker:** kapılar temiz (M-etiket çakışması giderildi).
+
+**Karar:** TASK-03 KAPANDI.
+
+---
+
+## MR-017 kapanış
+
+Üç görev kapandı (TASK-01…03, AC-01.3 şerhli), 13 mutant kırmızı, `make
+verify` + `make tidy-check` yeşil, 1260 test. MR-018'e devir (Durum
+bloğundaki gibi): verify --staged → CI; hook kurulumu → CI eşdeğeri;
+staged-kaynak → aralıklar.
