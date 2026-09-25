@@ -1,6 +1,7 @@
 package perf_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -102,5 +103,48 @@ func TestTimerUsesAppClock(t *testing.T) {
 	system := perf.Start(app.SystemClock{})
 	if _, ok := system.Stop().Breakdowns[perf.Total]; !ok {
 		t.Fatal("system-clock sample banks no total")
+	}
+}
+
+// TestBudgetYieldSemantics pins the cooperative contract: nil budgets
+// continue forever, zero budgets exhaust immediately, item budgets count
+// down exactly, time budgets expire.
+func TestBudgetYieldSemantics(t *testing.T) {
+	var absent *perf.Budget
+	if !absent.Yield() {
+		t.Fatal("nil budget refused work")
+	}
+	if perf.NewBudget(0).Yield() {
+		t.Fatal("zero time budget yielded")
+	}
+	if !perf.NewBudget(time.Hour).Yield() {
+		t.Fatal("hour budget refused first yield")
+	}
+	items := perf.NewItemBudget(2)
+	if !items.Yield() || !items.Yield() {
+		t.Fatal("item budget refused within count")
+	}
+	if items.Yield() {
+		t.Fatal("item budget yielded past count")
+	}
+	if perf.NewItemBudget(0).Yield() {
+		t.Fatal("zero item budget yielded")
+	}
+}
+
+// TestBudgetContextRoundTrip pins the seam: attach, read back, absent
+// reads nil (which yields forever).
+func TestBudgetContextRoundTrip(t *testing.T) {
+	t.Helper()
+	budget := perf.NewItemBudget(1)
+	ctx := perf.WithBudget(context.Background(), budget)
+	if perf.BudgetFrom(ctx) != budget {
+		t.Fatal("budget did not round-trip through context")
+	}
+	if perf.BudgetFrom(context.Background()) != nil {
+		t.Fatal("absent budget is not nil")
+	}
+	if !perf.BudgetFrom(context.Background()).Yield() {
+		t.Fatal("absent budget refused work")
 	}
 }

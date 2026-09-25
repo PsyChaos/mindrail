@@ -98,12 +98,18 @@ type Entry struct {
 
 // Result is one analysis. StructuralBreadth is what the evidence alone
 // supports (TARGETED in TASK-01, MODULE once a fallback engages); Breadth
-// is the override when justified, else the structural breadth.
+// is the override when justified, else the structural breadth. Complete
+// reports whether the traversal finished: false means the budget ran out
+// and Pending names the unexpanded frontier uids, so the caller can
+// re-queue their units at high priority and complete later. Pending is
+// empty exactly when Complete is true.
 type Result struct {
 	Entries           []Entry
 	StructuralBreadth Breadth
 	Breadth           Breadth
 	Justification     string
+	Complete          bool
+	Pending           []string
 }
 
 // Service traverses stored structural facts. It holds the index store the
@@ -151,9 +157,22 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 	}
 	seen := map[[4]string]bool{}
 	fallback := false
+	budget := perf.BudgetFrom(ctx)
 	for level := 1; level <= depth && len(frontier) > 0; level++ {
 		var next []string
-		for _, uid := range frontier {
+		for i, uid := range frontier {
+			if !budget.Yield() {
+				// Deferral, not failure: entries so far ride along,
+				// and the unexpanded remainder names itself exactly
+				// (decision D-231). No block, no silent skip.
+				return Result{
+					Entries:           result.Entries,
+					StructuralBreadth: result.StructuralBreadth,
+					Breadth:           result.Breadth,
+					Justification:     request.Justification,
+					Pending:           append(append([]string{}, frontier[i:]...), next...),
+				}, nil
+			}
 			referrers, err := s.indexes.ReferrersOfUID(ctx, uid)
 			if err != nil {
 				return Result{}, err
@@ -209,6 +228,7 @@ func (s *Service) Analyze(ctx context.Context, request Request) (Result, error) 
 			result.Breadth = request.BreadthOverride
 		}
 	}
+	result.Complete = true
 	return result, nil
 }
 

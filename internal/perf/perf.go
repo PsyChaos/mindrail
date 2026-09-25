@@ -110,6 +110,69 @@ func Span(ctx context.Context, name string) func() {
 	return func() { Observe(ctx, name, time.Since(start)) }
 }
 
+// Budget is a cooperative execution budget: loops call Yield at
+// work-item boundaries and stop with a partial result when it says no.
+// A nil *Budget (no budget attached) always continues — budgeted and
+// unbudgeted paths share one code shape, and unbudgeted callers behave
+// exactly as before (decision D-230's spirit applied to deferral).
+//
+// The Budget deliberately has no wait and no drop: the two refused
+// behaviors (blocking past budget, silently skipping) are
+// unrepresentable. Time budgets serve production; item budgets serve
+// deterministic tests — the Yield path is identical either way.
+type Budget struct {
+	deadline time.Time
+	items    int
+}
+
+// NewBudget returns a wall-clock budget of d. Zero or negative d
+// exhausts on the first Yield — the deterministic partial in tests.
+func NewBudget(d time.Duration) *Budget {
+	return &Budget{deadline: time.Now().Add(d), items: -1}
+}
+
+// NewItemBudget returns a work-item budget of n yields. Zero or negative
+// n exhausts immediately. Production uses time budgets; tests use item
+// budgets for exact frontiers without timing flakiness.
+func NewItemBudget(n int) *Budget {
+	return &Budget{items: n}
+}
+
+// Yield reports whether one more work item may run.
+func (b *Budget) Yield() bool {
+	if b == nil {
+		return true
+	}
+	if b.items >= 0 {
+		if b.items == 0 {
+			return false
+		}
+		b.items--
+	}
+	if !b.deadline.IsZero() && !time.Now().Before(b.deadline) {
+		return false
+	}
+	return true
+}
+
+// budgetKey carries the ambient budget through context.Context, the same
+// seam as the timer: services cooperate without signature changes.
+type budgetKey struct{}
+
+// WithBudget attaches a budget to the context.
+func WithBudget(ctx context.Context, budget *Budget) context.Context {
+	return context.WithValue(ctx, budgetKey{}, budget)
+}
+
+// BudgetFrom returns the context's budget, or nil when absent (which
+// Yields forever).
+func BudgetFrom(ctx context.Context) *Budget {
+	if budget, ok := ctx.Value(budgetKey{}).(*Budget); ok {
+		return budget
+	}
+	return nil
+}
+
 // Bench runs fn b.N times under a fresh ambient timer each iteration,
 // grades p95 against the STRUCTURAL target, and fails the benchmark when
 // the target is missed (decision D-229). One warmup call runs before

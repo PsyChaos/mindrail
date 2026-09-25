@@ -60,3 +60,39 @@ Taşınabilir bulgu: MCP teli context value geçirmez — toplamlar
 transportta, breakdown'lar servis katmanında ölçülür.
 
 **Karar:** TASK-01 KAPANDI.
+
+## TASK-02 kabul kanıtı
+
+| Kriter | Sonuç | Kanıt |
+|---|---|---|
+| AC-02.1 | Karşılandı | Sıfır-bütçe ve öğe-bütçe testleri kısmi girdi + açık pending frontier döndürür (`TestDeferralZeroBudgetPartial`, `TestDeferralItemBudgetFrontier`); bloklama ve sessiz-skip yolu yok (Budget'ta bekleme ve düşürme temsil edilemez). |
+| AC-02.2 | Karşılandı | Pending frontier unit'e çözümlenir, `Scheduler.Prioritize` ile kuyruk başına taşınır (kuyruk konumu denetlenir), cömert tekrar tam kapanır (`TestDeferralFrontierRequeuesPrioritized`). |
+| AC-02.3 | Karşılandı | Sıfır-bütçe deterministik kısmi, cömert-bütçe tam (`TestDeferralGenerousBudgetCompletes`); öğe-bütçeleri sayımla kesin sınır çizer — duvar-saati yok. |
+| AC-02.4 | Karşılandı | `Complete`/`Pending` sonuç şeklidir: kod ve göç yok (grepler TASK-04'te). |
+
+**Tasarım notları:** bütçe ctx-plumbing ile taşınır (imza
+değişikliği yok; nil bütçe sonsuza dek sürdürür — bütçesiz çağrılar
+eskisi gibi davranır). Sonuç genişletmesi (`Complete`, `Pending`)
+DeepEqual karşılaştırması olmadığı için mevcut testleri kırmaz.
+Canlı-op kablolaması yok: `Analyze`'ın 0.1'de üretim çağrıcısı
+bulunmaz; erteleme, FULL-traversal geldiğinde hazır mekanizmadır
+(D-231 uygulaması, dürüst kayıt). Soğuk-indeks PARTIAL_READY yolu
+(MR-005) canlı kısmi davranıştır, değişmedi.
+
+**Fixture notu:** erteleme zinciri gerçek unit yolunda tohumlanır
+(pending file-state unit-dışı yolu reddeder; paylaşılan
+`seedReference` `/r/a.py` sabitler — `seedReferenceAt` ile
+çözüldü).
+
+### TASK-02 guard mutasyon defteri (tamamı geri alındı, md5-doğrulamalı)
+
+| # | Mutant | Kırmızı kanıt |
+|---|---|---|
+| M6 | Budget hiç tükenmez | `TestDeferralZeroBudgetPartial` + `TestDeferralItemBudgetFrontier` FAIL |
+| M7 | pending frontier düşürüldü | `TestDeferralItemBudgetFrontier` + `TestDeferralFrontierRequeuesPrioritized` FAIL |
+| M8 | kısmi sonuç complete raporlar | `TestDeferralZeroBudgetPartial` FAIL |
+
+Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
+md5 ile doğrulandı (`mr019-mutant-m{6,7}-*.bak`).
+
+`make check` **yeşil** (exit 0). Test sayısı **1306** (TASK-02 başında 1300).
