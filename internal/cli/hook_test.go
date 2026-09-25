@@ -16,6 +16,13 @@ func hookPath(t *testing.T, repo string) string {
 	return filepath.Join(repo, ".git", "hooks", "pre-commit")
 }
 
+func requireSh(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not installed")
+	}
+}
+
 func readHook(t *testing.T, repo string) string {
 	t.Helper()
 	raw, err := os.ReadFile(hookPath(t, repo))
@@ -98,6 +105,7 @@ func TestHookInstallAppendsForeignUntouched(t *testing.T) {
 // hook is a shell script by definition, so executing it is the only proof
 // and the fixture is test-only.
 func TestHookBlockExecutesVerify(t *testing.T) {
+	requireSh(t)
 	repo := newInitializedRepo(t)
 	bin := t.TempDir()
 	script := "#!/bin/sh\necho \"CALLED: $@\"\nexit 3\n"

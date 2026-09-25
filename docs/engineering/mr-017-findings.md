@@ -96,4 +96,17 @@ Her mutant sonrası dosyalar backup'tan restore edilip md5 ile doğrulandı.
 
 `make check` **yeşil** (exit 0). Test sayısı **1260**.
 
-### TASK-02 kapı (commit sonrası bağımsız değerlendirme bekleniyor)
+### TASK-02 kapı — Reader: 4/4 CONFIRMED; Breaker: 4 REFUTED + 2 not→işlendi
+
+**Reader:** AC-02.1…AC-02.4 CONFIRMED (allow-"warnings" nominal notuyla).
+
+**Breaker B-3 (çıplak-binary, spec-onaylı kısıt):** blok `mindrail`
+adını sabit yazıyor; PATH'ta yoksa hook sessizce ölüyor. D-218 donmuş
+gövdeyi emrediyor — değişiklik yok, bilinen kırılganlık olarak kayıtlı.
+
+**Breaker B-5 (sh-bağımlılık, KAPATILDI):** execution testinde skip-guard
+yoktu. `requireSh` eklendi (requireGit disiplini).
+
+**Karar:** TASK-02 KAPANDI.
+
+## TASK-03 kabul kanıtı (PENDING)
