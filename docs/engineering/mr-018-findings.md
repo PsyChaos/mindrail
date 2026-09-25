@@ -233,3 +233,11 @@ Hedef-dışı grep dökümü (kapanış ağacında koşuldu):
 - `verify` flag'leri: `--staged`, `--ci`, `--base`, `--head` — başka yok.
 
 **Karar:** TASK-03 KAPANDI. **MR-018 KAPANDI.**
+
+### TASK-03 kapı — PASS
+
+Kapanış kapısı AC-03.1…03.3'ü doğruladı: sayı 1293 (tek komut),
+hedef-dışı greplerin tamamı (46 kod, 8 göç, manifest/cache/lease/
+profil/worktree-hüküm yok, 4 flag), M1…M16 defteri sürekliliği,
+DoD-1…5 ve Durum doğruluğu. İki kayıt-dışı not (biri doc-shorthand,
+biri ileriye-dönük cümle) engel değil.
