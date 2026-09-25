@@ -204,3 +204,10 @@ Hedef-dışı grep dökümü (kapanış ağacında koşuldu):
 - `.github` dizini yok (D-233: provider-neutral).
 
 **Karar:** TASK-04 KAPANDI. **MR-019 KAPANDI.**
+
+### TASK-04 kapı — PASS (dar, kendini-doğrulayan)
+
+Kapanış kapısı AC-04.1…04.3'ü doğruladı: sayı 1308 (tek komut),
+hedef-dışı greplerin tamamı, M1…M13' defteri sürekliliği, DoD-1…5
+ve Durum doğruluğu. Tek düzeltme: "kapıları" → "kapanış kapısı"
+(TASK-04'te Reader/Breaker çifti koşmadı; kapanış kapısı koştu).

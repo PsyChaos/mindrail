@@ -904,7 +904,8 @@ Reader/Breaker kapısından geçti. TASK-01 kapıları temizdi (2 düşük not
 aynı turda kapatıldı: vacuous dal, floor-rank). TASK-02 ilk turda dar
 BLOCKED verdi (S1/S2 yaşayan mutantlar — dallanan-sınır piniyle
 kapatıldı). TASK-03 ilk turda dar BLOCKED verdi (untracked-kör kir
-damgası — porcelain ifadesiyle kapatıldı). TASK-04 kapıları temizdi.
+damgası — porcelain ifadesiyle kapatıldı). TASK-04 kapanış kapısı
+temizdi.
 
 Sözleşme koda başlanmadan donduruldu
 ([mr-019-requirements.md](mr-019-requirements.md),
