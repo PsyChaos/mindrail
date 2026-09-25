@@ -115,6 +115,14 @@ kısmi dönüş breadth-yeniden-hesabını atlar (testlerin tamamı
 
 **Karar:** TASK-02 KAPANDI (re-gate tur 2 aşağıda).
 
+### TASK-02 re-gate tur 2 — PASS
+
+Dallanan-sınır pini zincir topolojisine karşı izlendi (B→C kenarı,
+pending `[D, C]`), S1/S2 `/tmp` kopyasında koşularak kırmızı
+doğrulandı, süit yeşil, doc-düzeltmesi doğru, diff 3 dosya.
+
+**Karar:** TASK-02 KAPANDI.
+
 Her mutant sonrası dosyalar benzersiz-isimli backup'tan restore edilip
 md5 ile doğrulandı (`mr019-mutant-m{6,7}-*.bak`).
 
