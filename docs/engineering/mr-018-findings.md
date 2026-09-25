@@ -125,3 +125,17 @@ düşürülünce desk-temiz knowledge ile yeşile döndü).
 
 Tur-2 sonrası `make check` **yeşil**. Test sayısı **1284**.
 Re-gate tur 3 (N1/F1 odağı, aşağıda).
+
+### TASK-01 kapı — Reader: 5/5 CONFIRMED; Breaker round-1: 5 BULGU→KAPANDI; round-2: N1/F1→KAPANDI; round-3: PASS
+
+**Round-1 Reader:** AC-01.1…01.5 CONFIRMED ( +2 INFO: F1 boş-olmayan
+temiz aralık, F2 merge-base CLI testi — ikisi de TASK-02'ye).
+**Round-1 Breaker:** B1…B5 GERÇEK, tamamı kapatıldı (yukarıdaki tablo).
+**Round-2:** B1–B4 kapandı; B5 kısmi → N1/F1 HIGH (aşağıda kapatıldı).
+**Round-3 (N1/F1 odağı):** PASS — carve-out loader yüzeyiyle eşleşiyor
+(`recordSuffix .json`), iki yön pinli (M13 eski ağaçta kırmızı
+koşuldu: exit 0 + boş `knowledge_problems`), F1 repro'su HEAD binary'de
+iki yönde de reddediyor, süit yeşil. Tek not doc-only stale comment —
+aynı turda düzeltildi.
+
+**Karar:** TASK-01 KAPANDI.

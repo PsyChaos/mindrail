@@ -81,11 +81,11 @@ func RangeEntries(ctx context.Context, runner CommandRunner, dir, mergeBaseSHA, 
 }
 
 // DeskDirt lists worktree paths that differ from HEAD: staged, unstaged
-// and untracked alike, repo-relative with slashes. Excluded machinery
-// (.git/, .mindrail/) never reports — the runtime database lives under
-// .git and the knowledge records under .mindrail, and neither is desk
-// dirt a committed-range verdict may consider. A git that cannot answer
-// is an error, never a clean bill.
+// and untracked alike, repo-relative with slashes. Runtime state (.git/)
+// and scaffolding never report — but knowledge records do: verdicts read
+// `.mindrail/knowledge` from desk bytes (see isExcludedRel), so dirty
+// record JSON is dirt a committed-range verdict may not ignore. A git
+// that cannot answer is an error, never a clean bill.
 func DeskDirt(ctx context.Context, runner CommandRunner, dir string) ([]string, error) {
 	if runner == nil || dir == "" {
 		return nil, fmt.Errorf("git: desk check needs a runner and a directory")
