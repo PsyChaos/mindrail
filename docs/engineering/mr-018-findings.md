@@ -100,3 +100,28 @@ koşuldu.
 
 Remediasyon sonrası `make check` **yeşil** (exit 0). Test sayısı **1281**.
 Re-gate: Reader + Breaker ikinci tur (aşağıda).
+
+## Re-gate tur 2 (BLOCKED → N1/F1 düzeltmesi)
+
+İki kapı da B1–B4'ü kapattı, B5'i kısmi buldu: `.mindrail/` toptan
+dışlama, knowledge kirini gizliyordu (N1/F1 HIGH — committed-fatal +
+desk-silme yeşile dönüyordu, M10 yalnızca source kirini pinliyordu).
+
+Düzeltme: dışlama daraltıldı — `.mindrail/knowledge/**/*.json`
+(loader'ın okuduğu suffix) kirliyse reddeder; `.gitkeep`/config/`.git/`
+hâlâ görmezden gelinir (fresh `init` üç untracked scaffolding bırakır,
+kanıtı kapıda). Ters yön (desk-eklenen fatal) knowledge-first kapısında
+fail-closed olur (exit 1, fatal raporlu) — menzil hiç adlandırılmaz.
+
+| Pin | Kapsadığı yön |
+|---|---|
+| `TestVerifyCIKnowledgeDirtRefuses` (M13) | committed-fatal + desk-silme → usage-reddi, dosya adlandırılır |
+| `TestVerifyCIKnowledgeAddedDirtRefuses` | committed-clean + desk-eklenen fatal → knowledge-first fatal-reddi |
+| `TestDeskDirtKnowledgeRecords` (git birimi) | `.json` listelenir, `.gitkeep`/config/`.git/` listelenmez |
+
+Yan etki: guard iki-geçişli testi artık seed'i commitliyor (CI temiz
+desk ister; fresh-clone'a daha sadık). M13 kırmızı koşuldu (carve-out
+düşürülünce desk-temiz knowledge ile yeşile döndü).
+
+Tur-2 sonrası `make check` **yeşil**. Test sayısı **1284**.
+Re-gate tur 3 (N1/F1 odağı, aşağıda).

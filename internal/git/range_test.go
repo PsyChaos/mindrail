@@ -147,3 +147,38 @@ func TestMergeBaseUnrelatedRefuses(t *testing.T) {
 		t.Fatal("unrelated histories merged")
 	}
 }
+
+// TestDeskDirtKnowledgeRecords pins the N1/F1 narrowing: JSON records
+// under .mindrail/knowledge ride the dirt list (verdicts read them),
+// while scaffolding (.gitkeep, config) and runtime state (.git/) stay
+// ignored so clean checkouts keep judging.
+func TestDeskDirtKnowledgeRecords(t *testing.T) {
+	ctx := fixtureContext(t)
+	runner := &FakeRunner{
+		Responses: map[string]FakeResponse{
+			"status --porcelain=v1 -z --untracked-files=all -- .": {
+				Stdout: " M pkg/a.py\x00" +
+					" D .mindrail/knowledge/decisions/DEC-0001.json\x00" +
+					"?? .mindrail/knowledge/decisions/.gitkeep\x00" +
+					"?? .mindrail/config.toml\x00" +
+					"?? .git/mindrail/mindrail.db\x00",
+			},
+		},
+	}
+	dirt, err := DeskDirt(ctx, runner, "/repo")
+	if err != nil {
+		t.Fatalf("DeskDirt: %v", err)
+	}
+	want := map[string]bool{
+		"pkg/a.py": true,
+		".mindrail/knowledge/decisions/DEC-0001.json": true,
+	}
+	if len(dirt) != len(want) {
+		t.Fatalf("dirt = %q, want %v", dirt, want)
+	}
+	for _, path := range dirt {
+		if !want[path] {
+			t.Fatalf("dirt = %q, want %v", dirt, want)
+		}
+	}
+}

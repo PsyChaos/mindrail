@@ -266,9 +266,19 @@ func TestVerifyCIGuardDenies(t *testing.T) {
 	gitCommitFile(t, repo, "pkg/test_a.py")
 
 	// First pass populates the index (helper uid); the guard beat seeds
-	// binding + reference on top, like the staged two-pass test.
+	// binding + reference on top, like the staged two-pass test. The
+	// seeded knowledge record is committed before the second pass: CI
+	// demands a clean desk, and committed knowledge is what a fresh
+	// clone judges.
 	run(t, repo, "verify", "--ci", "--base", base, "--json")
 	seedGuardBinding(t, repo, "pkg/test_a.py")
+	if out, err := exec.Command("git", "-C", repo, "add",
+		".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
+		t.Fatalf("add knowledge: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "commit", "--quiet", "-m", "guard binding").CombinedOutput(); err != nil {
+		t.Fatalf("commit knowledge: %v: %s", err, out)
+	}
 
 	code, denials := ciDenials(t, repo, "verify", "--ci", "--base", base, "--json")
 	if code != app.ExitFailed {
@@ -438,5 +448,68 @@ func TestVerifyStagedIgnoresCIRows(t *testing.T) {
 		if strings.Contains(denial.Key, "ci_one") || (strings.Contains(denial.Key, "ci.py") && !strings.Contains(denial.Key, "staged")) {
 			t.Fatalf("staged verdict judges committed-only content: %+v", denials)
 		}
+	}
+}
+
+// TestVerifyCIKnowledgeDirtRefuses pins the N1/F1 fix: a committed-fatal
+// knowledge record deleted uncommitted in the desk refuses — the verdict
+// may not certify the committed range against desk-fixed knowledge.
+func TestVerifyCIKnowledgeDirtRefuses(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	writeKnowledgeRecord(t, repo, "DEC-0001.json",
+		`{"schema_version":999,"kind":"decision","id":"DEC-0001","status":"active",`+
+			`"created_at":"2026-09-23T10:00:00Z","title":"Future","decision":"Later."}`)
+	gitCommitFile(t, repo, "pkg/a.py")
+	if out, err := exec.Command("git", "-C", repo, "add",
+		".mindrail/knowledge/decisions/DEC-0001.json").CombinedOutput(); err != nil {
+		t.Fatalf("add knowledge: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "commit", "--quiet", "-m", "fatal knowledge").CombinedOutput(); err != nil {
+		t.Fatalf("commit knowledge: %v: %s", err, out)
+	}
+	base := gitRev(t, repo, "HEAD~1")
+	if err := os.Remove(repo + "/.mindrail/knowledge/decisions/DEC-0001.json"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := run(t, repo, "verify", "--ci", "--base", base, "--json")
+	got.requireExit(t, app.ExitUsage)
+	if !strings.Contains(got.stdout, "DEC-0001.json") {
+		t.Fatalf("refusal names no knowledge path: %s", got.stdout)
+	}
+}
+
+// TestVerifyCIKnowledgeAddedDirtRefuses pins the reverse half: committed-
+// clean knowledge plus a desk-added fatal record refuses as well —
+// through the knowledge-first gate, which reads the same desk bytes and
+// fails closed before the range is ever named.
+func TestVerifyCIKnowledgeAddedDirtRefuses(t *testing.T) {
+	repo := newInitializedRepo(t)
+	writeRepoFile(t, repo, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, repo, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, repo, "pkg/pyproject.toml")
+	gitCommitFile(t, repo, "pkg/a.py")
+	base := gitRev(t, repo, "HEAD~1")
+	writeKnowledgeRecord(t, repo, "DEC-0009.json",
+		`{"schema_version":999,"kind":"decision","id":"DEC-0009","status":"active",`+
+			`"created_at":"2026-09-23T10:00:00Z","title":"Future","decision":"Later."}`)
+
+	got := run(t, repo, "verify", "--ci", "--base", base, "--json")
+	got.requireExit(t, app.ExitFailed)
+	var data struct {
+		Knowledge []struct {
+			Fatal bool `json:"fatal"`
+		} `json:"knowledge_problems"`
+	}
+	decodeData(t, got.stdout, &data)
+	fatal := false
+	for _, problem := range data.Knowledge {
+		fatal = fatal || problem.Fatal
+	}
+	if !fatal {
+		t.Fatalf("report names no fatal problem: %s", got.stdout)
 	}
 }

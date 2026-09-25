@@ -137,10 +137,29 @@ func parseDirt(stdout []byte) []string {
 }
 
 // isExcludedRel drops the machinery discovery never claims: runtime state
-// and knowledge records are not source either verify path may judge.
+// and scaffolding are not source either verify path may judge. The one
+// exception is knowledge records: verdicts read `.mindrail/knowledge`
+// from desk bytes, so a dirty `*.json` record there flips judgments and
+// must refuse (the loader reads exactly that suffix). `.gitkeep`
+// scaffolding and config stay ignored — a fresh `init` leaves them
+// untracked, and refusing on them would reject every clean checkout.
 func isExcludedRel(rel string) bool {
-	return rel == ".git" || strings.HasPrefix(rel, ".git/") ||
-		rel == ".mindrail" || strings.HasPrefix(rel, ".mindrail/")
+	if rel == ".git" || strings.HasPrefix(rel, ".git/") {
+		return true
+	}
+	if rel == ".mindrail" || strings.HasPrefix(rel, ".mindrail/") {
+		if isKnowledgeRecord(rel) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// isKnowledgeRecord reports the paths verdicts actually read: JSON records
+// under the knowledge tree, the loader's record suffix.
+func isKnowledgeRecord(rel string) bool {
+	return strings.HasPrefix(rel, ".mindrail/knowledge/") && strings.HasSuffix(rel, ".json")
 }
 
 // ShowRev reads one path's bytes at one resolved commit SHA. Missing at
