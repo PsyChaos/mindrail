@@ -311,5 +311,16 @@ Anlam daralması/genişlemesi yoktur; AC-02.1'in hükmü aynıdır.
 
 ## TASK-04 — ürün sahibi kararı ve kapanış kaydı (REQ-04)
 
-Pending: owner's release verdict (AC-04.1), Durum block (AC-04.2),
-closing proof + graph refresh (AC-04.3).
+Owner verdict (AC-04.1, in-session, explicit): **Ship 0.1.** Ürün
+sahibi (kullanıcı) altı demonun tasarlandığı gibi davrandığını ve
+kapıların PASS olduğunu görerek 0.1 release'i onayladı. Koşul yok.
+Tarih: 2026-09-26 (session ses_f27b5da48ffeUkeqgyedOpnmA8).
+
+Closing proof (AC-04.3): temp driver'lar silindi (D-241 —
+`internal/cli/mr020_demo_test.go`,
+`internal/gate/mr020_demo_test.go`,
+`internal/index/symbol/mr020_demo_test.go`); final diff'te
+implementation yok (kod 46, göç v8). `make verify` yeşil (check +
+race + smoke), `make tidy-check` yeşil, test sayımı 1308
+(`go test -list '.*' ./... | grep -c '^Test'` — driver silme sonrası
+MR-019 baseline'ine döndü, beklenen).

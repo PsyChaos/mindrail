@@ -926,7 +926,7 @@ M9…M13'). Kapıların MR-020'ye bıraktıkları: bench raporu (demo
 
 ---
 
-### [ ] MR-020 — 0.1 çıkış koşulu kabul incelemesi
+### [x] MR-020 — 0.1 çıkış koşulu kabul incelemesi
 
 - **Tür:** HITL
 - **Blocked by:** MR-019
@@ -938,13 +938,47 @@ Temiz bir örnek repository ve iki ajan/worktree senaryosu üzerinde 0.1 exit co
 
 #### Kabul kriterleri
 
-- [ ] Birincil end-to-end senaryonun başarılı ALLOW yolu demo edilir.
-- [ ] `before_change` unutma reconcile tarafından yakalanır.
-- [ ] `--no-verify`, CI verification tarafından yakalanır.
-- [ ] Protected-symbol rename kimliği korur veya explicit ambiguity ile bloklanır.
-- [ ] Kritik test zayıflatma production code değişmese bile bloklanır.
-- [ ] Stale evidence completion proof'u olarak reddedilir.
-- [ ] Ürün sahibi sonuçları ve 0.1 release kararını kayda geçirir.
+- [x] Birincil end-to-end senaryonun başarılı ALLOW yolu demo edilir.
+- [x] `before_change` unutma reconcile tarafından yakalanır.
+- [x] `--no-verify`, CI verification tarafından yakalanır.
+- [x] Protected-symbol rename kimliği korur veya explicit ambiguity ile bloklanır.
+- [x] Kritik test zayıflatma production code değişmese bile bloklanır.
+- [x] Stale evidence completion proof'u olarak reddedilir.
+- [x] Ürün sahibi sonuçları ve 0.1 release kararını kayda geçirir.
+
+#### Durum
+
+**Tamamlandı — ürün sahibi kararı: Ship 0.1.** Dört görev (TASK-01…04)
+seri koşuldu; TASK-01…03'ün her biri bağımsız Reader/Breaker
+kapısından geçti (round-1 BLOCKED → remediasyon → round-2/3 PASS).
+Altı demo scratch repo + gerçek binary/üretim servisleriyle koşuldu:
+docs-only değişiklik ALLOW (`allow:true`, sıfır denial); beyan
+edilmemiş diff `UNREGISTERED_CHANGE` (gömülü `ReconcileStaged` yolu,
+`CHG-…` keşif artığı); hook DENY → `commit --no-verify` → fresh
+klonda `verify --ci` birebir aynı kod kümesi; rename aynı
+`symbol_uid`'yi taşır, ikizlenirsen `SYMBOL_IDENTITY_AMBIGUOUS` ile
+bloklar (satır uid'yi korur), silinirse `ORPHANED_PROTECTED_SYMBOL`;
+yalnız-test zayıflatma `TEST_GUARD_WEAKENED` (üretim bayt-aynı pini);
+bayat kanıt `REQUIRED_EVIDENCE_NOT_CURRENT` + yeniden-koş listesi,
+taze koşu ALLOW'a döndürür.
+
+Sözleşme koda başlanmadan donduruldu
+([mr-020-requirements.md](mr-020-requirements.md),
+[mr-020-design.md](mr-020-design.md), `e24d1e7`), kararlar D-237…D-244
++ kapı-okumaları: iki-kopya senaryosu CLI worktree'lerinde ve stale
+demosunda (kopya A/B); rename'de sıralı-ajan (iki-checkout deneyi
+günlüğe geçti: aynı baytlar bağımsız uid basar — lifecycle-başına
+dayanıklılık, checkout'lar-arası değil); cross-copy kanıt
+`scope escapes the root` ile fail-safe. Freeze-sonrası tek kelimelik
+Türkçe düzeltme DoD-1 notuyla kayıtlı. Kod 46, göç yok (v8), MCP
+yüzeyi değişmedi — demo sürücüleri geçiciydi, kapanışta silindi
+(D-241).
+
+`make verify` (check + race + smoke) ve `make tidy-check` yeşil; 1308
+test (MR-019 baseline — geçici 7 demo testi silindi). Kapıların
+sonraya bıraktıkları: yok — 0.1 kernel kapandı; bulgular
+`mr-020-findings.md`'de, ölçüm girdileri MR-019 kanıtında (bench
+raporu, gate matrisi, release damgası linux/amd64).
 
 ---
 
