@@ -420,7 +420,7 @@ test (MR-007 başında 1074 idi). Kapıların MR-008'e bıraktıkları: divergen
 listesi şekli, unattributed delta listesi, `symbol.Service` + uid'li Change
 satırları.
 
-### [ ] MR-008 — Scope drift ve unregistered change ambiguity
+### [x] MR-008 — Scope drift ve unregistered change ambiguity
 
 - **Tür:** AFK
 - **Blocked by:** MR-004, MR-007
@@ -464,7 +464,7 @@ attributed (change, symbol) çiftleri MR-009'un traversal girdisi.
 
 ---
 
-### [ ] MR-009 — Sınırlı ve açıklanabilir STRUCTURAL etki analizi
+### [x] MR-009 — Sınırlı ve açıklanabilir STRUCTURAL etki analizi
 
 - **Tür:** AFK
 - **Blocked by:** MR-002, MR-005, MR-007
@@ -507,7 +507,7 @@ girdisi).
 
 ---
 
-### [ ] MR-010 — Güvenli validation runner ve snapshot'a bağlı evidence
+### [x] MR-010 — Güvenli validation runner ve snapshot'a bağlı evidence
 
 - **Tür:** AFK
 - **Blocked by:** MR-002, MR-007, MR-009
@@ -550,7 +550,7 @@ replay (retry girdisi).
 
 ---
 
-### [ ] MR-011 — Kaynak değişince evidence geçersizleştirme
+### [x] MR-011 — Kaynak değişince evidence geçersizleştirme
 
 - **Tür:** AFK
 - **Blocked by:** MR-010
@@ -592,7 +592,7 @@ uygulamaz, zafiyet profili tanımlamaz — MR-012'nin girdisi verdict
 
 ---
 
-### [ ] MR-012 — Kritik doğrulama testini zayıflatma guard'ı
+### [x] MR-012 — Kritik doğrulama testini zayıflatma guard'ı
 
 - **Tür:** AFK
 - **Blocked by:** MR-002, MR-005, MR-007
@@ -634,7 +634,7 @@ girdisi).
 
 ---
 
-### [ ] MR-013 — Yerel completion evidence gate
+### [x] MR-013 — Yerel completion evidence gate
 
 - **Tür:** AFK
 - **Blocked by:** MR-006, MR-008, MR-009, MR-011, MR-012
@@ -675,7 +675,7 @@ kodları (CI çıktısı), coverage-boşlukları (koşul listesi).
 
 ---
 
-### [ ] MR-014 — MCP bilgi ve bağlam araçları
+### [x] MR-014 — MCP bilgi ve bağlam araçları
 
 - **Tür:** AFK
 - **Blocked by:** MR-002, MR-003, MR-009
@@ -716,7 +716,7 @@ refusal-kodları (ajanlara).
 
 ---
 
-### [ ] MR-015 — MCP koordinasyon ve değişiklik araçları
+### [x] MR-015 — MCP koordinasyon ve değişiklik araçları
 
 - **Tür:** AFK
 - **Blocked by:** MR-004, MR-007, MR-008, MR-014
@@ -754,7 +754,7 @@ op-id'ler (retry protokolü).
 
 ---
 
-### [ ] MR-016 — MCP validation ve completion araçları
+### [x] MR-016 — MCP validation ve completion araçları
 
 - **Tür:** AFK
 - **Blocked by:** MR-010, MR-011, MR-013, MR-014
@@ -793,7 +793,7 @@ kompozisyon girdileri (staged/CI verify), version-error'lar (politika).
 
 ---
 
-### [ ] MR-017 — Staged değişiklik için yerel Git enforcement
+### [x] MR-017 — Staged değişiklik için yerel Git enforcement
 
 - **Tür:** AFK
 - **Blocked by:** MR-002, MR-008, MR-012, MR-013
@@ -832,7 +832,7 @@ hook kurulumu (CI eşdeğeri), staged-kaynak (aralıklar).
 
 ---
 
-### [ ] MR-018 — Hook bypass'a dayanıklı CI verification
+### [x] MR-018 — Hook bypass'a dayanıklı CI verification
 
 - **Tür:** AFK
 - **Blocked by:** MR-017
@@ -879,7 +879,7 @@ MR-019'a bıraktıkları: `verify --ci` (SLO ölçümü), menzil-op-id'leri
 
 ---
 
-### [ ] MR-019 — Warm-path SLO, pending state ve release kalite kapısı
+### [x] MR-019 — Warm-path SLO, pending state ve release kalite kapısı
 
 - **Tür:** AFK
 - **Blocked by:** MR-015, MR-016, MR-018
