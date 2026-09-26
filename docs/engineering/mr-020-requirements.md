@@ -174,8 +174,8 @@ Owns REQ-01 (task-list AC-1, AC-2).
 
 Owns REQ-02 (task-list AC-3, AC-4).
 
-- **AC-02.1** `--no-verify` ile yerelde geçirilmiş bir commit, fresh
-  clone üzerinde `verify --ci` tarafından yeniden reddedilir
+- **AC-02.1** `--no-verify` ile yerelde geçirilmiş bir commit, yeni
+  klon üzerinde `verify --ci` tarafından yeniden reddedilir
   (D-238 — CI çıktısıyla, DENY reason code görünür).
 - **AC-02.2** Korunan bir sembolün rename'i ya aynı `symbol_uid`
   üzerinde kimliği korur ya da explicit ambiguity ile bloklanır;
