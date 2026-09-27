@@ -209,7 +209,9 @@ func (h *connectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func sameOriginFormPost(r *http.Request, host string) bool {
-	return r.Header.Get("Origin") == "http://"+host &&
+	origin := r.Header.Get("Origin")
+	trustedOrigin := origin == "http://"+host || origin == "null"
+	return trustedOrigin &&
 		r.Header.Get("Sec-Fetch-Site") == "same-origin" &&
 		r.Header.Get("Sec-Fetch-Mode") == "navigate" &&
 		r.Header.Get("Sec-Fetch-Dest") == "document"

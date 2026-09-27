@@ -65,6 +65,24 @@ func TestConnectHandlerAcceptsOneSameOriginFormWithoutEchoingKey(t *testing.T) {
 	}
 }
 
+func TestConnectHandlerAcceptsNullOriginWithTrustedFetchMetadata(t *testing.T) {
+	store := &memoryStore{}
+	results := make(chan error, 1)
+	handler := newConnectHandler(t.Context(), "127.0.0.1:43123", "unguessable", store, results)
+	req := trustedPostRequest(url.Values{"api_key": {testSecret}}.Encode())
+	req.Header.Set("Origin", "null")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || store.key != testSecret || store.sets != 1 {
+		t.Fatalf("status = %d, key = %q, sets = %d", rec.Code, store.key, store.sets)
+	}
+	if err := <-results; err != nil {
+		t.Fatalf("result = %v", err)
+	}
+}
+
 func TestConnectHandlerRejectsHostileOriginAndFetchMetadata(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -75,6 +93,7 @@ func TestConnectHandlerRejectsHostileOriginAndFetchMetadata(t *testing.T) {
 	}{
 		{name: "missing origin", site: "same-origin", mode: "navigate", dest: "document"},
 		{name: "hostile origin", origin: "https://attacker.example", site: "cross-site", mode: "navigate", dest: "document"},
+		{name: "null cross site", origin: "null", site: "cross-site", mode: "navigate", dest: "document"},
 		{name: "cross site", origin: "http://127.0.0.1:43123", site: "cross-site", mode: "navigate", dest: "document"},
 		{name: "cors mode", origin: "http://127.0.0.1:43123", site: "same-origin", mode: "cors", dest: "document"},
 		{name: "empty destination", origin: "http://127.0.0.1:43123", site: "same-origin", mode: "navigate"},
