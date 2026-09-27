@@ -72,14 +72,15 @@ simulated rather than real.
 ## Optional Jev routing advice
 
 Before an ambiguous choice among tools, agent roles, models, or reasoning-effort
-levels, check `TYPESAFE_API_KEY`: when it is non-blank, ask the installed Mindrail
-bridge for Jev advice; otherwise continue the existing selection flow. Use Jev only
+levels, ask the installed Mindrail bridge for optional Jev advice. The bridge owns
+credential discovery and returns a typed disabled result when the user has not
+connected JEV, so no client-specific environment check is required. Use Jev only
 with closed, caller-supplied candidate sets; candidate identifiers and short
 descriptions must describe every selectable option. Known policy, availability,
 permissions, and other deterministic constraints narrow the candidates before Jev
 sees them.
 
-With the opt-in key present, send a bounded JSON request on standard input:
+Send a bounded JSON request on standard input:
 
 ```bash
 mindrail agent route < request.json
@@ -91,9 +92,12 @@ any non-empty combination of the top-level candidate arrays `tools`, `agents`,
 `description`. Send only the smallest non-sensitive goal/context summary and closed
 candidate descriptions needed for the decision; never send raw secrets, logs, or
 source code. Never put the API key in the request, repository configuration, `.env`,
-argv, or logs. Inject it from a password manager or OS keyring into the environment
-that launches the coding agent; the installed bridge and embedded adapter read it
-only from that process environment.
+agent settings, chat, argv, or logs. Mindrail stores an explicitly connected key in
+the operating-system keyring; `TYPESAFE_API_KEY` is only an optional automation
+override. Persistent storage uses Secret Service on Linux and Credential Manager on
+Windows; macOS persistence is refused until an application-bound native Keychain
+backend is available. The installed bridge injects the resolved key only into its
+adapter child.
 
 Treat a `mode: "shadow"`, `advisory: true` response only as evidence. Routing
 acceptance is atomic: apply selections only when the top-level `status` is `"ok"`,
@@ -102,7 +106,7 @@ for the current state. Any low-confidence or no-match selection makes the top-le
 status `"fallback"` and leaves all selections unaccepted, so continue the
 pre-existing selection flow.
 
-The disabled path (including a missing or whitespace-only key), bridge launch
+The disabled path (including no keyring credential and no non-blank override), bridge launch
 problems, and provider or response failures return typed disabled/fallback JSON and
 continue normal flow; the no-key path does not read stdin, launch Python, or make a
 network request. A malformed, oversized, or otherwise contract-invalid local input

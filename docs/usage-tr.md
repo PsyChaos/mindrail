@@ -459,12 +459,19 @@ günceller.
 
 ### Opsiyonel JEV yönlendirmesi ve anahtar yönetimi
 
-JEV tamamen opsiyoneldir. `TYPESAFE_API_KEY` yoksa veya boşsa agent normal
-yönlendirme akışına devam eder. Etkinleştirirken anahtarı password manager ya da
-işletim sistemi keyring'inden yalnız agent'ı başlatan process environment'ına
-enjekte edecek güvenilir entegrasyonu agent başlamadan önce yapılandırın. Anahtar
-yalnız environment'ta bulunur; stdin, shell örneği, repository config, `.env`, argv,
-log veya commit içinde bulunmamalıdır.
+JEV tamamen opsiyonel ve coding-agent bağımsızdır. Herhangi bir yerel agent'tan
+`mindrail jev connect` çalıştırmasını isteyin veya komutu doğrudan başlatın. Mindrail
+yalnız loopback üzerinde geçici bir tarayıcı formu açar ve girilen anahtarı işletim
+sisteminin credential store/keyring alanına kaydeder. Anahtarı agent sohbetine,
+Codex/Claude/Cursor ayarına, stdin'e, repository config'e, `.env` dosyasına, argv'ye,
+log'a veya commit'e yazmayın. `TYPESAFE_API_KEY` yalnız CI/container otomasyonu için
+daha yüksek öncelikli opsiyonel override olarak kalır. İki kaynak da yoksa normal
+yönlendirme akışı değişmez.
+
+Güvenli kalıcı saklama şu anda Linux'ta Secret Service, Windows'ta Credential
+Manager üzerinden desteklenir. Mindrail, uygulamaya bağlı native Keychain backend'i
+hazır olana kadar macOS'ta kalıcı saklamayı bilinçli olarak reddeder; macOS'ta
+opsiyonel environment override kullanılabilir.
 
 Belirsiz bir tool, agent, model veya reasoning-effort seçimi için güvenli ve bounded
 istek örneği şöyledir; anahtar JSON'a veya komut satırına eklenmez:
@@ -482,11 +489,8 @@ top-level durum `ok` ve bütün seçimler accepted olduğunda tavsiyeyi kullanı
 disabled, fallback, error veya reddedilmiş sonuçta normal akışa devam eder.
 TypeSafe'e yalnız gerekli en küçük hassas-olmayan goal/context özetini ve kapalı
 candidate açıklamalarını gönderin; ham secret, log veya kaynak kod göndermeyin.
-
-Terminalde export edilen environment değişkenleri masaüstü/GUI uygulamalarına
-çoğunlukla miras kalmaz. GUI agent'ı hazırlanmış environment'tan başlatın veya
-desktop session'ın güvenilir secret-injection yöntemini kullanın; repository'ye
-key dosyası ekleyerek bu farkı kapatmayın.
+`mindrail jev status` yalnız bağlantı durumunu ve aktif kaynağın adını gösterir;
+anahtarı göstermez. `mindrail jev disconnect` keyring'deki credential'ı kaldırır.
 
 ## Konfigürasyon ve validation profile'ları
 

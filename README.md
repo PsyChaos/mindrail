@@ -121,12 +121,18 @@ program; the second updates one existing worktree without replacing user-owned
 
 ## Optional JEV routing
 
-JEV advice is opt-in. Leave `TYPESAFE_API_KEY` unset for the normal routing flow.
-When enabling it, read the key from a password manager or OS keyring and inject it
-only into the environment of the process that launches the coding agent. Configure
-that trusted integration before launch; the key is environment-only and must not
-appear in stdin, shell examples, repository config, an `.env` file, command
-arguments, logs, or committed content.
+JEV advice is opt-in and coding-agent neutral. Ask any local agent to run
+`mindrail jev connect`, or invoke it directly: Mindrail opens a loopback-only browser
+form and stores the submitted credential in the operating-system keyring. The key
+must not appear in agent chat, Codex/Claude/Cursor settings, stdin, repository
+configuration, an `.env` file, command arguments, logs, or committed content.
+Secure persistent storage is currently available through Secret Service on Linux
+and Credential Manager on Windows. Mindrail deliberately refuses persistent storage
+on macOS until an application-bound native Keychain backend is available; use the
+optional environment override there.
+`TYPESAFE_API_KEY` remains an optional higher-precedence override for CI and
+container automation. With neither source configured, the normal routing flow is
+unchanged.
 
 For an ambiguous tool, agent, model, or reasoning-effort choice, the agent can send
 the bounded routing request without including the key:
@@ -143,11 +149,10 @@ and closed candidate descriptions—never raw secrets, logs, or source code.
 
 The installed binary carries the canonical adapter behind `mindrail agent route`;
 agents consume advice only when the top-level result is `ok` and every selection is
-accepted. Missing keys and all disabled/fallback/error results continue normally.
-Python 3 is needed only when this optional route is enabled. Desktop/GUI agents
-often do not inherit variables exported in a terminal; launch them from the
-prepared environment or configure the desktop session's trusted secret-injection
-mechanism.
+accepted. Missing credentials and all disabled/fallback/error results continue
+normally. `mindrail jev status` reports only whether JEV is connected and which
+non-secret source is active; `mindrail jev disconnect` removes the stored keyring
+credential. Python 3 is needed only when this optional route is enabled.
 
 ## Storage model
 

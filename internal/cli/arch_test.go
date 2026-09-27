@@ -63,9 +63,10 @@ func TestMainImportsAreMinimal(t *testing.T) {
 	module, root := moduleInfo(t)
 
 	allowed := map[string]struct{}{
-		module + "/internal/app": {},
-		module + "/internal/cli": {},
-		module + "/internal/mcp": {},
+		module + "/internal/app":        {},
+		module + "/internal/cli":        {},
+		module + "/internal/jevconnect": {},
+		module + "/internal/mcp":        {},
 	}
 
 	mainDir := filepath.Join(root, "cmd", "mindrail")
@@ -187,11 +188,8 @@ func matchForbidden(importPath string, forbidden []string) string {
 
 // TestInitPathDoesNotImportNetHTTP is acceptance criterion 1 turned into a
 // compile-time fact: `mindrail init` cannot depend on the network because the
-// code that runs it cannot reach a network package.
-//
-// The first-party check parses production sources only. Test files are excluded
-// on purpose — internal/bootstrap's own test installs a refusing HTTP transport
-// to prove that nothing dials, and that proof needs net/http.
+// code that runs it cannot reach a network package. The loopback-only browser
+// connector is injected at the executable composition root.
 func TestInitPathDoesNotImportNetHTTP(t *testing.T) {
 	module, root := moduleInfo(t)
 	packages := firstPartyPackages(t, root)
@@ -200,7 +198,6 @@ func TestInitPathDoesNotImportNetHTTP(t *testing.T) {
 
 	for _, entry := range []string{"internal/bootstrap", "internal/cli"} {
 		reached := reachableFrom(t, packages, module+"/"+entry)
-
 		for _, forbidden := range networkPackages {
 			if via, ok := reached[forbidden]; ok {
 				t.Errorf("%s reaches %q via %s", entry, forbidden, via)

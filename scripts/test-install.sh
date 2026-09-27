@@ -37,14 +37,18 @@ run_install "$control" /usr/bin
 test -f "$control/usr/bin/mindrail"
 test -x "$control/usr/bin/mindrail"
 test ! -L "$control/usr/bin/mindrail"
+version_json=$("$control/usr/bin/mindrail" version --json)
+printf '%s\n' "$version_json" | grep -q '"version":"0.2.0"'
 
 # Replacing an existing regular file remains atomic and leaves no temp file.
-printf '%s\n' old-binary >"$control/usr/bin/mindrail"
-old_hash=$(sha256sum "$control/usr/bin/mindrail")
-run_install "$control" /usr/bin
-test -f "$control/usr/bin/mindrail"
-test -x "$control/usr/bin/mindrail"
-test "$(sha256sum "$control/usr/bin/mindrail")" != "$old_hash"
+replacement=$scratch/replacement
+mkdir -p "$replacement/usr/bin"
+printf '%s\n' old-binary >"$replacement/usr/bin/mindrail"
+old_hash=$(sha256sum "$replacement/usr/bin/mindrail")
+run_install "$replacement" /usr/bin
+test -f "$replacement/usr/bin/mindrail"
+test -x "$replacement/usr/bin/mindrail"
+test "$(sha256sum "$replacement/usr/bin/mindrail")" != "$old_hash"
 
 # A directory at the final destination must not absorb the temporary binary.
 directory_target=$scratch/directory-target

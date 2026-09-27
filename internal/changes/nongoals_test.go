@@ -30,9 +30,10 @@ func moduleRoot(t *testing.T) string {
 // resolvers must not exist as code — comments may name them, imports may not.
 // Test files are excluded: fixtures may reference anything, production may
 // not. MCP transport was on this list until MR-014 built it deliberately.
-// net/http left the list with the loopback-only read dashboard; its dependency
-// is isolated from bootstrap/internal/cli and covered by dashboard security
-// and CLI architecture tests.
+// The loopback-only read dashboard and client-neutral JEV browser connector
+// are the two deliberate net/http islands. Their dependencies stay isolated
+// from bootstrap/internal/cli and are covered by dedicated security,
+// architecture and contract tests.
 func TestNoLaterMilestoneMachinery(t *testing.T) {
 	root := moduleRoot(t)
 	// knowledge/cli deliberately absent: bootstrap, doctor and the root
@@ -66,6 +67,9 @@ func TestNoLaterMilestoneMachinery(t *testing.T) {
 		for _, spec := range f.Imports {
 			importPath := strings.Trim(spec.Path.Value, `"`)
 			for _, ban := range banned {
+				if ban == "net/http" && strings.Contains(filepath.ToSlash(path), "/internal/jevconnect/") {
+					continue
+				}
 				if strings.Contains(importPath, ban) {
 					violations = append(violations, path+": "+importPath)
 				}
@@ -81,11 +85,11 @@ func TestNoLaterMilestoneMachinery(t *testing.T) {
 	}
 }
 
-// TestNoNewCodesIn01 pins the 0.1 code vocabulary: MR-008 added the three
-// attribution codes, MR-012 the guard code, MR-013 the evidence code,
-// MR-014 the version-gap code; further codes arrive later, never here.
-func TestNoNewCodesIn01(t *testing.T) {
-	if got := len(app.RegisteredCodes()); got != 46 {
-		t.Fatalf("registered codes = %d, want 46 (three attribution codes in MR-008, one guard code in MR-012, one evidence code in MR-013, one version-gap code in MR-014)", got)
+// TestNoUnplannedCodesIn02 pins the 0.2 code vocabulary. In addition to the
+// 0.1 vocabulary, the client-neutral JEV workflow owns seven explicit
+// unavailable/error identities so automation never has to branch on prose.
+func TestNoUnplannedCodesIn02(t *testing.T) {
+	if got := len(app.RegisteredCodes()); got != 53 {
+		t.Fatalf("registered codes = %d, want 53 (the 0.1 vocabulary plus seven JEV connection codes)", got)
 	}
 }

@@ -31,8 +31,9 @@ mindrail verify when needed. CI runs mindrail verify --ci. Advanced commands and
 explicit-ID MCP payloads remain available for diagnostics and legacy clients.
 
 Before an ambiguous tool, agent, model, or reasoning-effort choice, optional JEV
-routing is available through `mindrail agent route`. Use it only when
-`TYPESAFE_API_KEY` is non-blank; without the key, continue the normal flow.
+routing is available through `mindrail agent route`. The bridge resolves
+its opt-in credential from Mindrail's OS keyring entry or the non-blank
+`TYPESAFE_API_KEY` automation override; without either, continue the normal flow.
 Write one bounded JSON object to stdin: a required `goal` string, optional
 `context` JSON, and one or more `tools`, `agents`, `models`, or `efforts`
 arrays. Every candidate must contain exactly `id` and `description`. Example:
@@ -41,8 +42,13 @@ Supply only the smallest non-sensitive summary and candidate descriptions needed
 for the judgment—never raw secrets, logs, or source code.
 Consume advice only when the top-level status is `ok` and every selection is
 accepted; on every disabled, fallback, error, or rejected result, continue normally.
-Keep the key out of repository config and `.env` files: inject it from a
-password manager or OS keyring into the environment that launches the agent.
+Keep the key out of repository config, `.env` files, agent settings, and
+chat. The user connects it through `mindrail jev connect`, which opens a
+loopback browser form and stores the credential in the operating-system keyring.
+Persistent storage is supported through Secret Service on Linux and Credential
+Manager on Windows. On macOS, Mindrail refuses persistence until an application-bound
+native Keychain backend is available; use the optional environment override.
+`TYPESAFE_API_KEY` remains an optional CI/container override.
 <!-- END MINDRAIL MANAGED SECTION -->
 
 ## graphify
