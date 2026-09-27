@@ -49,6 +49,12 @@ that surface later as audit findings.
 Run genuinely independent workstreams concurrently, then synchronize before
 integration.
 
+When an independent workstream is accepted (Phase 14) while others are still
+running, start its checkpoint audit now rather than holding it for the end — see
+Rule 4 in `references/audit-scoping.md`. The audit then runs in the shadow of the
+remaining implementation instead of after it. Record the ref it was audited at; if
+a later task touches those files again, the checkpoint verdict is void for them.
+
 Before launching, check that parallelism cannot create conflicting edits to the same
 files, incompatible contracts, duplicated implementations, or divergent architectural
 assumptions. Detecting these afterwards means throwing work away — that is the
@@ -121,6 +127,18 @@ dependencies still compatible, and downstream tasks have the outputs they need.
 Code being written is not task completion. Accepting self-reports unverified is how
 a chain of "done" tasks produces a broken system.
 
+This check is deliberately cheap — one diff read, one impacted-test run
+(`scripts/impacted_tests.py --changed <task's files>`, not the suite), one look
+for files the brief didn't name. If the selector reports a changed file that reaches
+no test, that is the first thing to raise with the agent: the task shipped code
+nothing exercises. It is **not** the dual-agent audit, and a task
+finishing is not a trigger to invoke `dual-agent-task-audit`; that skill's own
+description ("verify this properly", "is this really done") will tempt you at every
+task boundary, and giving in multiplies the audit by the number of tasks. Write
+"verified per Phase 14, not audited" against each accepted task. The one audit
+happens at Phase 19 over the integrated result, sized per cluster by risk
+(`references/audit-scoping.md`).
+
 ---
 
 ## Phase 15 — Testing strategy
@@ -132,6 +150,18 @@ regression, contract, edge-case, failure-path, end-to-end.
 | --- | --- | --- |
 
 Every `REQ-*` maps to at least one verification mechanism.
+
+Record, per `TASK-*`, the narrowest command that runs that task's tests — take it
+from `scripts/impacted_tests.py` and correct it by hand where you know better. This
+becomes the cluster's `test_cmd` in the audit plan: the Breaker's mutation move runs
+it once per neutralized guard instead of the whole suite, which is the difference
+between minutes and hours on a multi-task delivery. If the repo has no impact map
+and no coverage contexts and the selector's confidence comes back low, the cheapest
+fix is usually to add a `.impact-map.json` for the touched modules as part of the
+task — it costs ten minutes and pays back on every round, and every future task.
+
+E2e tests are never narrowed by inference; they run in full at the gate or via the
+explicit map only. Say here which it will be.
 
 Distinguish **code coverage** from **requirement coverage**. High coverage means
 lines executed; it says nothing about whether the required behavior is asserted.
@@ -161,6 +191,14 @@ migration validation, dependency validation.
 
 Capture exact commands and exact results. `scripts/validate.py` detects the project's
 real command set and records output to JSON.
+
+This is the **one** full-suite run of the delivery (a second happens after
+remediation only if a round changed code). Everything before it ran impacted tests;
+this is where the selector's blind spots get covered, so do not narrow it. If it is
+too slow to run even once, run the full unit/integration suite and only the mapped
+e2e tests, and list the e2e tests that did not run — by name — as unverified.
+Handing the full run to CI is a user decision, not the orchestrator's, and it lowers
+the final status to `COMPLETED_PENDING_FULL_SUITE`.
 
 Distinguish pre-existing baseline failures from failures the task introduced. If a
 baseline wasn't captured before implementation, say so and treat ambiguous failures
