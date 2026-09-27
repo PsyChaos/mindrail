@@ -33,6 +33,22 @@ mindrail doctor     # detailed, read-only diagnosis
 mindrail verify     # verify staged changes locally
 ```
 
+To watch the local runtime as an operations board, start the read-only live
+dashboard and open the printed tokenized URL:
+
+```bash
+mindrail dashboard
+```
+
+It binds only to `127.0.0.1`, embeds all frontend assets in the binary and
+streams bounded snapshots over SSE. Factory, Agents and Events views show task
+states and revisions, lease history, agent sessions, checkpoint/handoff
+metadata, validation evidence metadata and repository readiness. Checkpoint text, evidence
+output, command arguments, provenance, credentials and unbounded checkpoint
+text are never published. CI, completion/testguard and merge state are labelled
+unavailable or on-demand when the runtime schema has no persisted provider
+result; the dashboard does not invent GitHub or merge facts.
+
 CI uses the committed-range gate:
 
 ```bash

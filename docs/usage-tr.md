@@ -123,6 +123,26 @@ mindrail doctor     # ayrıntılı ve read-only teşhis
 mindrail verify     # local: staged değişiklikleri doğrular
 ```
 
+Canlı yerel operasyon görünümü için:
+
+```bash
+mindrail dashboard
+```
+
+Komut yalnız `127.0.0.1` üzerinde rastgele bir porta bağlanır ve terminale
+token içeren yerel URL'yi yazar. Factory görünümü yedi gerçek task state'ini,
+revision ve `claimed_by` sahipliğini; Agents görünümü session ile aktif,
+expired ve released lease geçmişini; Events görünümü checkpoint/handoff ve
+validation evidence metadata'sını canlı SSE akışında gösterir.
+Frontend dosyaları binary içine gömülüdür; ayrı Node kurulumu gerekmez.
+
+Dashboard read-only'dir. Evidence output/argv/provenance alanlarını, API key veya
+başka credential değerlerini ve sınırsız checkpoint metnini yayınlamaz. Mevcut
+şema completion/testguard bulgularını kalıcı tutmadığı için bunlar `on_demand`,
+GitHub/merge provider'ı yoksa ilgili bölümler `unavailable` görünür; sahte CI veya
+merge sonucu üretilmez. Sabit port gerekirse `mindrail dashboard --port 43187`
+kullanılabilir. `Ctrl-C` sunucuyu güvenli biçimde kapatır.
+
 CI'da committed merge-base aralığını doğrulamak için:
 
 ```bash
