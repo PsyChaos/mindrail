@@ -23,7 +23,8 @@ type CollectorOptions struct {
 	WorktreeRoot string
 	Profiles     map[string]config.ValidationProfile
 	Readiness    status.Report
-	Environ      []string
+	JEV          JEVState
+	StartedAt    time.Time
 	Redact       func(string) string
 	Now          func() time.Time
 }
@@ -44,6 +45,12 @@ func NewCollector(opts CollectorOptions) (*Collector, error) {
 	if opts.Now == nil {
 		opts.Now = func() time.Time { return time.Now().UTC() }
 	}
+	if opts.StartedAt.IsZero() {
+		opts.StartedAt = opts.Now().UTC()
+	} else {
+		opts.StartedAt = opts.StartedAt.UTC()
+	}
+	opts.JEV = normalizeJEVState(opts.JEV)
 	if opts.Redact == nil {
 		opts.Redact = func(value string) string { return value }
 	}
@@ -81,10 +88,15 @@ func (c *Collector) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	activity, err := c.sessionActivity(ctx, tx, sessions, now)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	for i := range sessions {
 		sessions[i].Engaged = engaged[sessions[i].ID]
 		sessions[i].TaskCount = taskCounts[sessions[i].ID]
 		sessions[i].LeaseCount = leaseCounts[sessions[i].ID]
+		applySessionActivity(&sessions[i], activity[sessions[i].ID])
 	}
 
 	latest, latestCI, err := c.latestEvidence(ctx, tx)
@@ -99,7 +111,6 @@ func (c *Collector) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err := tx.Commit(); err != nil {
 		return Snapshot{}, err
 	}
-	jev := c.jev()
 	truncated := map[string]bool{}
 	if taskCut {
 		truncated["tasks"] = true
@@ -122,19 +133,69 @@ func (c *Collector) Snapshot(ctx context.Context) (Snapshot, error) {
 
 	return Snapshot{
 		Sequence: c.seq.Add(1), GeneratedAt: now,
+		Dashboard: DashboardState{StartedAt: c.opts.StartedAt, UptimeSeconds: nonNegativeSeconds(now.Sub(c.opts.StartedAt))},
 		Project: Project{ID: boundedText(c.opts.ProjectID, maxIDRunes), Name: boundedText(c.opts.Redact(c.opts.ProjectName), maxTextRunes), WorkspaceID: boundedText(c.opts.Workspace.ID, maxIDRunes),
 			LinkedWorktree: c.opts.Workspace.IsLinkedWorktree},
 		Summary: summary, Tasks: tasks, Sessions: sessions, Leases: leases,
 		Checkpoints: checkpoints, Evidence: evidence, Profiles: profiles, Readiness: readinessView(c.opts.Readiness, c.opts.Redact),
 		CI:         ci,
 		Merge:      ProviderState{Status: "unavailable", Detail: "No GitHub or merge provider is configured for this local read-only view."},
-		JEV:        jev,
+		JEV:        c.opts.JEV,
 		Completion: CompletionState{Status: "on_demand", Detail: "Completion and testguard findings are evaluated during completion and are not persisted by this schema.", Findings: 0},
 		Capabilities: Capabilities{ReadOnly: true, LiveTransport: "sse", TaskRevisionHistory: "current_revision_only",
 			CheckpointNotes: "metadata_only", SensitiveData: "checkpoint text, evidence output, argv, provenance and credentials omitted",
 			ReadinessFreshness: "startup_snapshot"},
 		Truncated: truncated,
 	}, nil
+}
+
+type sessionActivity struct {
+	currentTaskCount      int
+	currentTasks          []SessionTask
+	currentTasksTruncated bool
+	activeLeaseCount      int
+	latestActivityAt      *time.Time
+	latestLeaseRenewedAt  *time.Time
+	nextLeaseExpiresAt    *time.Time
+}
+
+func applySessionActivity(session *Session, activity sessionActivity) {
+	session.CurrentTaskCount = activity.currentTaskCount
+	session.CurrentTasks = activity.currentTasks
+	if session.CurrentTasks == nil {
+		session.CurrentTasks = []SessionTask{}
+	}
+	session.CurrentTasksTruncated = activity.currentTasksTruncated
+	session.LatestActivityAt = activity.latestActivityAt
+	session.LatestLeaseRenewedAt = activity.latestLeaseRenewedAt
+	session.NextLeaseExpiresAt = activity.nextLeaseExpiresAt
+	switch {
+	case activity.currentTaskCount > 0 && activity.activeLeaseCount > 0:
+		session.ActivityStatus = "active_signal"
+	case activity.currentTaskCount > 0:
+		session.ActivityStatus = "claim_only"
+	case activity.activeLeaseCount > 0:
+		session.ActivityStatus = "lease_only"
+	default:
+		session.ActivityStatus = "history"
+	}
+}
+
+func nonNegativeSeconds(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return int64(duration / time.Second)
+}
+
+func normalizeJEVState(state JEVState) JEVState {
+	if state.Configured && (state.Source == "environment" || state.Source == "keyring") {
+		return JEVState{Configured: true, Source: state.Source, Provider: "typesafe", Mode: "optional_advisory"}
+	}
+	if state.Source == "unavailable" {
+		return JEVState{Configured: false, Source: "unavailable", Provider: "typesafe", Mode: "normal_routing"}
+	}
+	return JEVState{Configured: false, Source: "none", Provider: "typesafe", Mode: "normal_routing"}
 }
 
 func readinessView(report status.Report, redact func(string) string) ReadinessView {
@@ -440,6 +501,190 @@ func (c *Collector) summary(ctx context.Context, db queryer, now time.Time) (Sum
 	return result, engaged, taskCounts, leaseCounts, nil
 }
 
+// sessionActivity derives the operator-facing coordination signals directly
+// from the database rather than the capped top-level detail arrays. This keeps
+// counts and status exact even when those arrays are truncated. The task names
+// shown on a card are separately bounded and disclose their own truncation.
+func (c *Collector) sessionActivity(ctx context.Context, db queryer, sessions []Session, now time.Time) (map[string]sessionActivity, error) {
+	result := make(map[string]sessionActivity, len(sessions))
+	for _, session := range sessions {
+		started := session.StartedAt
+		result[session.ID] = sessionActivity{latestActivityAt: &started, currentTasks: []SessionTask{}}
+	}
+	placeholders, sessionArgs := sessionQueryScope(sessions)
+	if len(sessionArgs) == 0 {
+		return result, nil
+	}
+
+	countArgs := []any{c.opts.ProjectID}
+	countArgs = append(countArgs, sessionArgs...)
+	rows, err := db.QueryContext(ctx, `SELECT claimed_by, COUNT(*) FROM tasks
+		WHERE project_id = ? AND state NOT IN ('COMPLETED','ABANDONED')
+		AND claimed_by IN (`+placeholders+`) GROUP BY claimed_by`, countArgs...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sessionID string
+		var count int
+		if err := rows.Scan(&sessionID, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		activity := result[sessionID]
+		activity.currentTaskCount = count
+		activity.currentTasksTruncated = count > maxSessionTasks
+		result[sessionID] = activity
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	taskArgs := []any{maxTextRunes, c.opts.ProjectID}
+	taskArgs = append(taskArgs, sessionArgs...)
+	taskArgs = append(taskArgs, maxSessionTasks)
+	rows, err = db.QueryContext(ctx, `WITH ranked AS (
+		SELECT claimed_by, task_id,
+		CASE WHEN length(title)>? THEN '[TRUNCATED]' ELSE title END AS bounded_title,
+		state, updated_at,
+		ROW_NUMBER() OVER (PARTITION BY claimed_by ORDER BY julianday(updated_at) DESC, task_id DESC) AS rank
+		FROM tasks WHERE project_id = ? AND state NOT IN ('COMPLETED','ABANDONED')
+		AND claimed_by IN (`+placeholders+`)
+	) SELECT claimed_by, task_id, bounded_title, state, updated_at
+	FROM ranked WHERE rank <= ? ORDER BY claimed_by, rank`, taskArgs...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sessionID, taskID, title, state, rawUpdated string
+		if err := rows.Scan(&sessionID, &taskID, &title, &state, &rawUpdated); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		activity := result[sessionID]
+		updated, parseErr := app.ParseTime(rawUpdated)
+		if parseErr != nil {
+			rows.Close()
+			return nil, parseErr
+		}
+		redacted := c.opts.Redact(title)
+		activity.currentTasks = append(activity.currentTasks, SessionTask{
+			ID: boundedText(taskID, maxIDRunes), Title: boundedText(redacted, maxTextRunes),
+			State: state, UpdatedAt: updated,
+		})
+		result[sessionID] = activity
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	leaseArgs := []any{c.opts.ProjectID}
+	leaseArgs = append(leaseArgs, sessionArgs...)
+	rows, err = db.QueryContext(ctx, `SELECT holder, renewed_at, expires_at FROM leases
+		WHERE project_id = ? AND released_at IS NULL AND holder IN (`+placeholders+`)`, leaseArgs...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sessionID, rawRenewed, rawExpires string
+		if err := rows.Scan(&sessionID, &rawRenewed, &rawExpires); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		activity, ok := result[sessionID]
+		if !ok {
+			continue
+		}
+		renewed, parseErr := app.ParseTime(rawRenewed)
+		if parseErr != nil {
+			rows.Close()
+			return nil, parseErr
+		}
+		expires, parseErr := app.ParseTime(rawExpires)
+		if parseErr != nil {
+			rows.Close()
+			return nil, parseErr
+		}
+		if !now.Before(expires) {
+			continue
+		}
+		activity.activeLeaseCount++
+		if activity.latestLeaseRenewedAt == nil || renewed.After(*activity.latestLeaseRenewedAt) {
+			value := renewed
+			activity.latestLeaseRenewedAt = &value
+		}
+		if activity.nextLeaseExpiresAt == nil || expires.Before(*activity.nextLeaseExpiresAt) {
+			value := expires
+			activity.nextLeaseExpiresAt = &value
+		}
+		result[sessionID] = activity
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	activityArgs := make([]any, 0, 5*(len(sessionArgs)+1))
+	for range 5 {
+		activityArgs = append(activityArgs, c.opts.ProjectID)
+		activityArgs = append(activityArgs, sessionArgs...)
+	}
+	rows, err = db.QueryContext(ctx, `WITH activity AS (
+		SELECT opened_by AS session_id, created_at AS activity_at FROM tasks WHERE project_id = ? AND opened_by IN (`+placeholders+`)
+		UNION ALL SELECT claimed_by, updated_at FROM tasks WHERE project_id = ? AND claimed_by IN (`+placeholders+`)
+		UNION ALL SELECT holder, renewed_at FROM leases WHERE project_id = ? AND holder IN (`+placeholders+`)
+		UNION ALL SELECT holder, released_at FROM leases WHERE project_id = ? AND released_at IS NOT NULL AND holder IN (`+placeholders+`)
+		UNION ALL SELECT checkpoints.session_id, checkpoints.created_at FROM checkpoints
+		JOIN tasks ON tasks.task_id = checkpoints.task_id WHERE tasks.project_id = ? AND checkpoints.session_id IN (`+placeholders+`)
+	), ranked AS (
+		SELECT session_id, activity_at, ROW_NUMBER() OVER (
+			PARTITION BY session_id ORDER BY julianday(activity_at) DESC,
+			CASE WHEN instr(activity_at,'.') = 0 THEN 0 ELSE CAST(substr(
+				substr(activity_at,instr(activity_at,'.')+1,length(activity_at)-instr(activity_at,'.')-1) || '000000000',1,9
+			) AS INTEGER) END DESC
+		) AS rank FROM activity
+	)
+	SELECT session_id, activity_at FROM ranked WHERE rank = 1`, activityArgs...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sessionID, rawActivity string
+		if err := rows.Scan(&sessionID, &rawActivity); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		activity, ok := result[sessionID]
+		if !ok {
+			continue
+		}
+		at, parseErr := app.ParseTime(rawActivity)
+		if parseErr != nil {
+			rows.Close()
+			return nil, parseErr
+		}
+		if activity.latestActivityAt == nil || at.After(*activity.latestActivityAt) {
+			value := at
+			activity.latestActivityAt = &value
+		}
+		result[sessionID] = activity
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func sessionQueryScope(sessions []Session) (string, []any) {
+	if len(sessions) == 0 {
+		return "", nil
+	}
+	args := make([]any, 0, len(sessions))
+	for _, session := range sessions {
+		args = append(args, session.ID)
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", len(args)), ","), args
+}
+
 func (c *Collector) latestEvidence(ctx context.Context, db queryer) (map[string]Evidence, *Evidence, error) {
 	latest := map[string]Evidence{}
 	names := make([]string, 0, len(c.opts.Profiles))
@@ -547,15 +792,6 @@ func (c *Collector) profiles(latest map[string]Evidence) []Profile {
 		out = append(out, item)
 	}
 	return out
-}
-
-func (c *Collector) jev() JEVState {
-	for _, entry := range c.opts.Environ {
-		if strings.HasPrefix(entry, "TYPESAFE_API_KEY=") && strings.TrimSpace(strings.TrimPrefix(entry, "TYPESAFE_API_KEY=")) != "" {
-			return JEVState{Configured: true, Source: "environment", Provider: "typesafe", Mode: "optional_advisory"}
-		}
-	}
-	return JEVState{Configured: false, Source: "none", Provider: "typesafe", Mode: "normal_routing"}
 }
 
 func trim[T any](items []T, limit int) []T {

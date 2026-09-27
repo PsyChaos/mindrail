@@ -19,7 +19,7 @@
       <button class="tab" data-view="agents">Agents</button>
       <button class="tab" data-view="events">Events</button>
     </nav>
-    <div class="pulse"><i></i><span id="connection">CONNECTING</span></div>
+    <div class="pulse" title="Dashboard stream state; not an agent liveness signal"><i></i><span id="connection">DASHBOARD CONNECTING</span></div>
   </header>
 
   <main>
@@ -30,9 +30,10 @@
         <p id="project-meta">Loading repository state…</p>
       </div>
       <div class="clock-block">
-        <span>LAST FRAME</span>
-        <strong id="last-frame">—</strong>
-        <small id="sequence">SEQ 0000</small>
+        <div><span>DASHBOARD START</span><strong id="dashboard-start">—</strong></div>
+        <div><span>UPTIME</span><strong id="dashboard-uptime">—</strong></div>
+        <div><span>LAST SNAPSHOT</span><strong id="last-frame">—</strong></div>
+        <div><span>FRAME</span><strong id="sequence">SEQ 0000</strong></div>
       </div>
     </section>
 
@@ -43,6 +44,7 @@
         <aside class="tower-column">
           <section class="panel readiness-panel">
             <header><span>REPOSITORY READINESS</span><b id="readiness-badge">—</b></header>
+            <p class="freshness-note">STARTUP SNAPSHOT · RESTART DASHBOARD TO REFRESH</p>
             <div id="readiness-components" class="component-list"></div>
           </section>
           <section class="panel telemetry-panel">
@@ -60,6 +62,7 @@
       <div class="split-grid">
         <section class="panel stretch">
           <header><span>AGENT SESSIONS</span><b id="session-count">0</b></header>
+          <p class="scope-note">Durable coordination signals only. Dashboard SSE health does not prove agent liveness. Exact client, model, and process liveness are not recorded.</p>
           <div id="agent-grid" class="agent-grid"></div>
         </section>
         <section class="panel stretch">
@@ -86,6 +89,7 @@
   </main>
 
   <template id="empty-template"><div class="empty">NO SIGNALS IN THIS CHANNEL</div></template>
+  <script src="assets/view.js" defer></script>
   <script src="assets/app.js" defer></script>
 </body>
 </html>

@@ -15,6 +15,15 @@ func RunDashboard(ctx context.Context, start cli.DashboardStart) error {
 		DB: start.DB, ProjectID: start.ProjectID, ProjectName: start.ProjectName,
 		WorkspaceID: start.WorkspaceID, WorktreeRoot: start.WorktreeRoot,
 		LinkedWorktree: start.LinkedWorktree, Profiles: start.Profiles,
-		Readiness: start.Readiness, Environ: start.Environ, SecretNames: start.SecretNames, Port: start.Port, Output: start.Output,
+		Readiness:   start.Readiness,
+		JEV:         dashboard.JEVState{Configured: start.JEV.Configured, Source: start.JEV.Source, Provider: "typesafe", Mode: dashboardJEVMode(start.JEV.Configured)},
+		SecretNames: start.SecretNames, Port: start.Port, Output: start.Output,
 	})
+}
+
+func dashboardJEVMode(configured bool) string {
+	if configured {
+		return "optional_advisory"
+	}
+	return "normal_routing"
 }

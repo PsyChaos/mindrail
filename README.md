@@ -49,6 +49,16 @@ text are never published. CI, completion/testguard and merge state are labelled
 unavailable or on-demand when the runtime schema has no persisted provider
 result; the dashboard does not invent GitHub or merge facts.
 
+The dashboard header reports its own start time and uptime, SSE state, snapshot
+age and sequence. Those are dashboard-health signals, not an agent heartbeat.
+Agent cards report only durable coordination facts: the recorded session label
+and ID, claimed non-terminal tasks, active leases and their renewal/expiry, and
+the latest recorded activity. Mindrail does not currently record the exact
+client/model identity or authoritative process liveness, so the dashboard does
+not claim either. Repository readiness and JEV configuration are startup
+snapshots; restart `mindrail dashboard` after `mindrail jev connect` or
+`mindrail jev disconnect`, or when you need readiness to be rebuilt.
+
 CI uses the committed-range gate:
 
 ```bash

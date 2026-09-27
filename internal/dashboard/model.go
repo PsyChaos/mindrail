@@ -7,19 +7,21 @@ import (
 )
 
 const (
-	maxTasks       = 200
-	maxSessions    = 120
-	maxLeases      = 300
-	maxCheckpoints = 200
-	maxEvidence    = 200
-	maxProfiles    = 100
-	maxIDRunes     = 128
-	maxTextRunes   = 1024
+	maxTasks        = 200
+	maxSessions     = 120
+	maxLeases       = 300
+	maxCheckpoints  = 200
+	maxEvidence     = 200
+	maxProfiles     = 100
+	maxSessionTasks = 20
+	maxIDRunes      = 128
+	maxTextRunes    = 1024
 )
 
 type Snapshot struct {
 	Sequence     uint64          `json:"sequence"`
 	GeneratedAt  time.Time       `json:"generated_at"`
+	Dashboard    DashboardState  `json:"dashboard"`
 	Project      Project         `json:"project"`
 	Summary      Summary         `json:"summary"`
 	Tasks        []Task          `json:"tasks"`
@@ -35,6 +37,11 @@ type Snapshot struct {
 	Completion   CompletionState `json:"completion"`
 	Capabilities Capabilities    `json:"capabilities"`
 	Truncated    map[string]bool `json:"truncated,omitempty"`
+}
+
+type DashboardState struct {
+	StartedAt     time.Time `json:"started_at"`
+	UptimeSeconds int64     `json:"uptime_seconds"`
 }
 
 type Project struct {
@@ -79,13 +86,27 @@ type Task struct {
 }
 
 type Session struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Label       string    `json:"label,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	Engaged     bool      `json:"engaged"`
-	TaskCount   int       `json:"task_count"`
-	LeaseCount  int       `json:"lease_count"`
+	ID                    string        `json:"id"`
+	WorkspaceID           string        `json:"workspace_id"`
+	Label                 string        `json:"label,omitempty"`
+	StartedAt             time.Time     `json:"started_at"`
+	Engaged               bool          `json:"engaged"`
+	TaskCount             int           `json:"task_count"`
+	LeaseCount            int           `json:"lease_count"`
+	ActivityStatus        string        `json:"activity_status"`
+	CurrentTaskCount      int           `json:"current_task_count"`
+	CurrentTasks          []SessionTask `json:"current_tasks"`
+	CurrentTasksTruncated bool          `json:"current_tasks_truncated"`
+	LatestActivityAt      *time.Time    `json:"latest_activity_at,omitempty"`
+	LatestLeaseRenewedAt  *time.Time    `json:"latest_lease_renewed_at,omitempty"`
+	NextLeaseExpiresAt    *time.Time    `json:"next_lease_expires_at,omitempty"`
+}
+
+type SessionTask struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	State     string    `json:"state"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Lease struct {

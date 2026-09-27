@@ -143,6 +143,29 @@ GitHub/merge provider'ı yoksa ilgili bölümler `unavailable` görünür; sahte
 merge sonucu üretilmez. Sabit port gerekirse `mindrail dashboard --port 43187`
 kullanılabilir. `Ctrl-C` sunucuyu güvenli biçimde kapatır.
 
+Üst bölümdeki SSE durumu, son snapshot yaşı/sequence değeri ile dashboard başlama
+zamanı ve uptime yalnız dashboard sunucusunun ve tarayıcı akışının durumunu
+gösterir; bir agent prosesinin çalıştığını kanıtlamaz. Agents kartları mevcut
+kalıcı kayıtlardan session label/ID'sini, session yaşını, o session'ın claim ettiği
+terminal olmayan task'ları, aktif lease'leri ve yenileme/sona erme zamanlarını,
+ayrıca son coordination etkinliğini gösterir. Mindrail şu anda tam agent istemcisi
+ve model kimliğini ya da güvenilir proses liveness heartbeat'ini kaydetmez; bu
+nedenle arayüz bunları tahmin etmez. `active signal` yalnız hem güncel task claim'i
+hem de geçerli lease bulunduğunu söyler.
+
+Repository readiness ve JEV bilgisi dashboard başlatılırken alınan snapshot'tır;
+SSE üzerinden yenileniyormuş gibi yorumlanmamalıdır. `mindrail jev connect` veya
+`mindrail jev disconnect` sonrasında ya da readiness'i yeniden hesaplatmak için
+dashboard'u durdurup yeniden başlatın. JEV keyring okunamıyorsa `unavailable`, hiç
+credential yoksa `not configured` görünür; key değeri dashboard'a aktarılmaz.
+
+DevTools'ta kaynağı `chrome-extension://.../contentscript.js` olan
+`MaxListenersExceededWarning` veya `ObjectMultiplex` mesajları Mindrail asset'i
+değil, tarayıcı eklentisinin enjekte ettiği content script'tir. Kaynağa tıklayıp
+extension ID'sini `chrome://extensions` ile eşleştirebilir veya dashboard'u Guest
+profilde/eklentiler kapalıyken açarak doğrulayabilirsiniz. Mindrail'in kendi istemci
+hataları token'lı yerel URL altındaki `assets/app.js` kaynağını gösterir.
+
 CI'da committed merge-base aralığını doğrulamak için:
 
 ```bash

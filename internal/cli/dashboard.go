@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/config"
+	"github.com/PsyChaos/mindrail/internal/credential"
 	"github.com/PsyChaos/mindrail/internal/status"
 )
 
@@ -28,10 +30,18 @@ type DashboardStart struct {
 	LinkedWorktree bool
 	Profiles       map[string]config.ValidationProfile
 	Readiness      status.Report
-	Environ        []string
+	JEV            DashboardJEVState
 	SecretNames    []string
 	Port           int
 	Output         io.Writer
+}
+
+// DashboardJEVState is the credential-free startup projection passed across
+// the optional dashboard transport seam. No secret value or process
+// environment is retained by the long-running server.
+type DashboardJEVState struct {
+	Configured bool
+	Source     string
 }
 
 func newDashboardCommand(o Options) *cobra.Command {
@@ -76,6 +86,7 @@ func runDashboard(cmd *cobra.Command, o Options) error {
 			return inv.emit(nil, nil, a.Warnings(), a.Config().Config.Output.Color, err)
 		}
 		readiness := status.Build(a.Subject(), 0)
+		jev := resolveDashboardJEV(ctx, inv.environ, credential.NewOSStore())
 		if o.RunDashboard == nil {
 			return dashboardFailure(fmt.Errorf("dashboard runner is unavailable"))
 		}
@@ -83,9 +94,27 @@ func runDashboard(cmd *cobra.Command, o Options) error {
 			DB: a.DB(), ProjectID: resolved.space.ProjectID, ProjectName: a.Config().Config.Project.Name,
 			WorkspaceID: resolved.space.ID, WorktreeRoot: a.Repo().WorktreeRoot,
 			LinkedWorktree: resolved.space.IsLinkedWorktree, Profiles: a.Config().Config.Validation,
-			Readiness: readiness, Environ: inv.environ, SecretNames: a.Config().Config.Secrets.Env, Port: port, Output: inv.stdout,
+			Readiness: readiness, JEV: jev, SecretNames: a.Config().Config.Secrets.Env, Port: port, Output: inv.stdout,
 		})
 	})
+}
+
+func resolveDashboardJEV(ctx context.Context, environ []string, store credential.Store) DashboardJEVState {
+	for _, entry := range environ {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && name == "TYPESAFE_API_KEY" && strings.TrimSpace(value) != "" {
+			return DashboardJEVState{Configured: true, Source: "environment"}
+		}
+	}
+	_, state := readJEVKey(ctx, store)
+	switch state {
+	case "available":
+		return DashboardJEVState{Configured: true, Source: "keyring"}
+	case "unavailable":
+		return DashboardJEVState{Configured: false, Source: "unavailable"}
+	default:
+		return DashboardJEVState{Configured: false, Source: "none"}
+	}
 }
 
 func dashboardFailure(err error) error {

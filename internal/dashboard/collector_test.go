@@ -31,7 +31,8 @@ func TestCollectorBuildsBoundedSanitizedOperationsSnapshot(t *testing.T) {
 	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1", IsLinkedWorktree: true},
 		ProjectName: "Mindrail", WorktreeRoot: "/repo", Profiles: map[string]config.ValidationProfile{"ci": {Type: "CI_VERIFICATION", Paths: []string{"."}, Commands: [][]string{{"make", "gate"}}}},
 		Readiness: status.Report{Readiness: status.ReadinessReady, Components: map[status.ComponentName]status.Component{status.ComponentRuntimeDB: {Summary: "runtime at super-secret"}}},
-		Environ:   []string{"TYPESAFE_API_KEY=super-secret"}, Redact: func(value string) string {
+		JEV:       JEVState{Configured: true, Source: "environment", Provider: "typesafe", Mode: "optional_advisory"},
+		StartedAt: time.Date(2026, 9, 27, 9, 30, 0, 0, time.UTC), Redact: func(value string) string {
 			return strings.NewReplacer("evidence", "[REDACTED]", "super-secret", "[REDACTED]").Replace(value)
 		}, Now: func() time.Time { return now }})
 	if err != nil {
@@ -55,6 +56,22 @@ func TestCollectorBuildsBoundedSanitizedOperationsSnapshot(t *testing.T) {
 	}
 	if !snapshot.JEV.Configured || snapshot.JEV.Source != "environment" {
 		t.Fatalf("JEV metadata = %#v", snapshot.JEV)
+	}
+	if snapshot.Dashboard.StartedAt != time.Date(2026, 9, 27, 9, 30, 0, 0, time.UTC) || snapshot.Dashboard.UptimeSeconds != 9_000 {
+		t.Fatalf("dashboard runtime = %#v", snapshot.Dashboard)
+	}
+	if len(snapshot.Sessions) != 1 {
+		t.Fatalf("sessions = %#v", snapshot.Sessions)
+	}
+	session := snapshot.Sessions[0]
+	if session.ActivityStatus != "active_signal" || session.CurrentTaskCount != 1 || len(session.CurrentTasks) != 1 || session.CurrentTasks[0].ID != "TSK-1" {
+		t.Fatalf("session activity = %#v", session)
+	}
+	if session.LatestActivityAt == nil || !session.LatestActivityAt.Equal(time.Date(2026, 9, 27, 11, 30, 0, 0, time.UTC)) {
+		t.Fatalf("latest activity = %#v", session.LatestActivityAt)
+	}
+	if session.LatestLeaseRenewedAt == nil || session.NextLeaseExpiresAt == nil || !session.NextLeaseExpiresAt.Equal(time.Date(2026, 9, 27, 12, 20, 0, 0, time.UTC)) {
+		t.Fatalf("lease projection = %#v", session)
 	}
 	if snapshot.CI.Status != "persisted_pass_unverified" || snapshot.Merge.Status != "unavailable" || snapshot.Completion.Status != "on_demand" {
 		t.Fatalf("provider states = %#v %#v %#v", snapshot.CI, snapshot.Merge, snapshot.Completion)
@@ -111,6 +128,177 @@ func TestCollectorSummaryIsExactWhenDetailIsTruncated(t *testing.T) {
 	}
 	if len(snapshot.Tasks) != maxTasks || snapshot.Summary.States["OPEN"] != maxTasks+5 || !snapshot.Truncated["tasks"] {
 		t.Fatalf("details=%d summary=%#v truncated=%v", len(snapshot.Tasks), snapshot.Summary, snapshot.Truncated)
+	}
+}
+
+func TestCollectorSessionActivityIsIndependentOfTaskDetailTruncation(t *testing.T) {
+	db := dashboardDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-1','WS-1','worker','2026-09-27T08:00:00Z')`)
+	mustExec(t, db, `INSERT INTO tasks VALUES ('TSK-CURRENT','PRJ-1','current work','IN_PROGRESS',NULL,'SES-1','SES-1','2026-09-27T08:00:00Z','2026-09-27T08:30:00Z',1)`)
+	mustExec(t, db, `INSERT INTO leases VALUES ('LSE-EXPIRED','PRJ-1','task','TSK-CURRENT','SES-1','2026-09-27T08:00:00Z','2026-09-27T08:10:00Z','2026-09-27T09:00:00Z',NULL,NULL)`)
+	for i := 0; i < maxTasks+5; i++ {
+		mustExec(t, db, `INSERT INTO tasks VALUES (?, 'PRJ-1','newer noise','OPEN',NULL,'SES-1',NULL,'2026-09-27T10:00:00Z','2026-09-27T11:00:00Z',1)`, fmt.Sprintf("TSK-NOISE-%03d", i))
+	}
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo", Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Truncated["tasks"] {
+		t.Fatalf("task details were not truncated: %v", snapshot.Truncated)
+	}
+	for _, task := range snapshot.Tasks {
+		if task.ID == "TSK-CURRENT" {
+			t.Fatal("test setup did not push current task out of bounded top-level details")
+		}
+	}
+	session := snapshot.Sessions[0]
+	if session.CurrentTaskCount != 1 || len(session.CurrentTasks) != 1 || session.CurrentTasks[0].ID != "TSK-CURRENT" {
+		t.Fatalf("current task projection = %#v", session)
+	}
+	if session.LeaseCount != 0 || session.ActivityStatus != "claim_only" || session.LatestLeaseRenewedAt != nil || session.NextLeaseExpiresAt != nil {
+		t.Fatalf("expired lease was presented as active: %#v", session)
+	}
+}
+
+func TestCollectorSessionCurrentTaskProjectionDisclosesItsOwnBound(t *testing.T) {
+	db := dashboardDB(t)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-1','WS-1','worker','2026-09-27T08:00:00Z')`)
+	for i := 0; i < maxSessionTasks+3; i++ {
+		mustExec(t, db, `INSERT INTO tasks VALUES (?, 'PRJ-1','claimed task','IN_PROGRESS',NULL,'SES-1','SES-1','2026-09-27T10:00:00Z','2026-09-27T11:00:00Z',1)`, fmt.Sprintf("TSK-%03d", i))
+	}
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := snapshot.Sessions[0]
+	if session.CurrentTaskCount != maxSessionTasks+3 || len(session.CurrentTasks) != maxSessionTasks || !session.CurrentTasksTruncated {
+		t.Fatalf("current task bound = %#v", session)
+	}
+}
+
+func TestCollectorLongTaskTitleDoesNotClaimAnotherTaskWasOmitted(t *testing.T) {
+	db := dashboardDB(t)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-1','WS-1','worker','2026-09-27T08:00:00Z')`)
+	mustExec(t, db, `INSERT INTO tasks VALUES ('TSK-1','PRJ-1',?,'IN_PROGRESS',NULL,'SES-1','SES-1','2026-09-27T10:00:00Z','2026-09-27T11:00:00Z',1)`, strings.Repeat("x", maxTextRunes+1))
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := snapshot.Sessions[0]
+	if session.CurrentTaskCount != 1 || len(session.CurrentTasks) != 1 || session.CurrentTasksTruncated {
+		t.Fatalf("long title changed list truncation semantics: %#v", session)
+	}
+	if session.CurrentTasks[0].Title != "[TRUNCATED]" {
+		t.Fatalf("bounded title = %q", session.CurrentTasks[0].Title)
+	}
+}
+
+func TestCollectorLatestActivityOrdersRFC3339NanoExactly(t *testing.T) {
+	db := dashboardDB(t)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-1','WS-1','worker','2026-09-27T08:00:00Z')`)
+	mustExec(t, db, `INSERT INTO tasks VALUES ('TSK-1','PRJ-1','task','IN_PROGRESS',NULL,'SES-1','SES-1','2026-09-27T10:00:00Z','2026-09-27T11:00:00Z',1)`)
+	mustExec(t, db, `INSERT INTO checkpoints VALUES ('CKP-1','TSK-1','SES-1','WS-1','',0,'2026-09-27T11:00:00.1Z')`)
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 9, 27, 11, 0, 0, 100_000_000, time.UTC)
+	if got := snapshot.Sessions[0].LatestActivityAt; got == nil || !got.Equal(want) {
+		t.Fatalf("latest activity = %v, want %v", got, want)
+	}
+}
+
+func TestCollectorTaskActivityDistinguishesOpenerFromClaimant(t *testing.T) {
+	db := dashboardDB(t)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-OPENER','WS-1','opener','2026-09-27T08:00:00Z')`)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-CLAIMANT','WS-1','claimant','2026-09-27T09:00:00Z')`)
+	mustExec(t, db, `INSERT INTO tasks VALUES ('TSK-1','PRJ-1','task','IN_PROGRESS',NULL,'SES-OPENER','SES-CLAIMANT','2026-09-27T10:00:00Z','2026-09-27T11:00:00Z',2)`)
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Session{}
+	for _, session := range snapshot.Sessions {
+		byID[session.ID] = session
+	}
+	openerWant := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	if got := byID["SES-OPENER"].LatestActivityAt; got == nil || !got.Equal(openerWant) {
+		t.Fatalf("opener latest activity = %v, want task creation %v", got, openerWant)
+	}
+	claimantWant := time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC)
+	if got := byID["SES-CLAIMANT"].LatestActivityAt; got == nil || !got.Equal(claimantWant) {
+		t.Fatalf("claimant latest activity = %v, want task update %v", got, claimantWant)
+	}
+}
+
+func TestSessionQueryScopeBuildsOnlyDisplayedSessionArguments(t *testing.T) {
+	placeholders, args := sessionQueryScope([]Session{{ID: "SES-A"}, {ID: "SES-B"}, {ID: "SES-C"}})
+	if placeholders != "?,?,?" {
+		t.Fatalf("placeholders = %q", placeholders)
+	}
+	want := []any{"SES-A", "SES-B", "SES-C"}
+	if fmt.Sprint(args) != fmt.Sprint(want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	if placeholders, args := sessionQueryScope(nil); placeholders != "" || args != nil {
+		t.Fatalf("empty scope = %q %#v", placeholders, args)
+	}
+}
+
+func TestSessionActivityScopeIsStableWithLargeInvisibleHistory(t *testing.T) {
+	db := dashboardDB(t)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	visible := Session{ID: "SES-VISIBLE", WorkspaceID: "WS-1", StartedAt: time.Date(2026, 9, 27, 8, 0, 0, 0, time.UTC)}
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-VISIBLE','WS-1','visible','2026-09-27T08:00:00Z')`)
+	mustExec(t, db, `INSERT INTO tasks VALUES ('TSK-VISIBLE','PRJ-1','visible task','IN_PROGRESS',NULL,'SES-VISIBLE','SES-VISIBLE','2026-09-27T09:00:00Z','2026-09-27T10:00:00Z',1)`)
+	mustExec(t, db, `INSERT INTO leases VALUES ('LSE-VISIBLE','PRJ-1','task','TSK-VISIBLE','SES-VISIBLE','2026-09-27T09:00:00Z','2026-09-27T10:30:00Z','2026-09-27T12:30:00Z',NULL,NULL)`)
+	for i := 0; i < maxSessions*3; i++ {
+		sessionID := fmt.Sprintf("SES-HIST-%03d", i)
+		taskID := fmt.Sprintf("TSK-HIST-%03d", i)
+		mustExec(t, db, `INSERT INTO sessions VALUES (?,'WS-1','history','2026-01-01T00:00:00Z')`, sessionID)
+		mustExec(t, db, `INSERT INTO tasks VALUES (?, 'PRJ-1','historical task','IN_PROGRESS',NULL,?,?, '2026-01-01T00:00:00Z','2026-09-27T11:59:59Z',1)`, taskID, sessionID, sessionID)
+		mustExec(t, db, `INSERT INTO leases VALUES (?, 'PRJ-1','task',?,?,'2026-01-01T00:00:00Z','2026-09-27T11:59:59Z','2026-09-27T12:30:00Z',NULL,NULL)`, "LSE-HIST-"+taskID, taskID, sessionID)
+	}
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	activity, err := collector.sessionActivity(context.Background(), tx, []Session{visible}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activity) != 1 {
+		t.Fatalf("activity sessions = %d, want 1", len(activity))
+	}
+	got := activity[visible.ID]
+	if got.currentTaskCount != 1 || len(got.currentTasks) != 1 || got.activeLeaseCount != 1 {
+		t.Fatalf("visible activity was expanded by invisible history: %#v", got)
 	}
 }
 

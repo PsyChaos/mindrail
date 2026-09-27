@@ -98,6 +98,10 @@ func resolveJEVKey(ctx context.Context, store credential.Store) (string, string)
 	if key := os.Getenv("TYPESAFE_API_KEY"); strings.TrimSpace(key) != "" {
 		return key, "available"
 	}
+	return readJEVKey(ctx, store)
+}
+
+func readJEVKey(ctx context.Context, store credential.Store) (string, string) {
 	if store == nil {
 		return "", "missing"
 	}

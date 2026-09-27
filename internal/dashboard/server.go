@@ -46,7 +46,7 @@ type RunOptions struct {
 	LinkedWorktree bool
 	Profiles       map[string]config.ValidationProfile
 	Readiness      status.Report
-	Environ        []string
+	JEV            JEVState
 	SecretNames    []string
 	Port           int
 	Output         io.Writer
@@ -65,7 +65,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 	collector, err := NewCollector(CollectorOptions{
 		DB: opts.DB, ProjectID: opts.ProjectID, ProjectName: opts.ProjectName,
 		Workspace:    workspace.Workspace{ID: opts.WorkspaceID, ProjectID: opts.ProjectID, IsLinkedWorktree: opts.LinkedWorktree},
-		WorktreeRoot: opts.WorktreeRoot, Profiles: opts.Profiles, Readiness: opts.Readiness, Environ: opts.Environ, Redact: redactor.Redact,
+		WorktreeRoot: opts.WorktreeRoot, Profiles: opts.Profiles, Readiness: opts.Readiness, JEV: opts.JEV,
+		StartedAt: time.Now().UTC(), Redact: redactor.Redact,
 	})
 	if err != nil {
 		return err
