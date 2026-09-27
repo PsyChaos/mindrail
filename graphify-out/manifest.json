@@ -1,8 +1,8 @@
 {
   "AGENTS.md": {
-    "mtime": 1790432720.6433136,
-    "seen": 1790432802.3853765,
-    "ast_hash": "f2f160c6dc0650912cf38ef93b5d0669",
+    "mtime": 1790494980.2521312,
+    "seen": 1790497507.7971501,
+    "ast_hash": "99aac76a5239e89f7105776b1cb0eb58",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -54,8 +54,8 @@
     "semantic_hash": ""
   },
   "go.mod": {
-    "mtime": 1790492723.2435899,
-    "seen": 1790493220.4597511,
+    "mtime": 1790497008.5666153,
+    "seen": 1790497507.7909594,
     "ast_hash": "2e92d05ca6dc76ed6e13acaec175ca08",
     "semantic_hash": ""
   },
@@ -144,9 +144,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/engineering-orchestrator/SKILL.md": {
-    "mtime": 1789020892.0,
-    "seen": 1789379003.0993545,
-    "ast_hash": "36e3d0e88c9310639c0e0078879a2384",
+    "mtime": 1790494980.1661313,
+    "seen": 1790497507.796856,
+    "ast_hash": "69e692fa900dbd6799f2d7edbe5fccc8",
     "semantic_hash": ""
   },
   ".claude/skills/engineering-orchestrator/references/audit-and-acceptance.md": {
@@ -931,8 +931,8 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1790493220.4649105,
-    "ast_hash": "",
+    "seen": 1790497548.168013,
+    "ast_hash": "4a2c9badbdc3871cb223878711a614db",
     "semantic_hash": ""
   },
   "internal/cli/representable.go": {
@@ -1651,8 +1651,8 @@
   },
   "migrations/000002_coordination.sql": {
     "mtime": 1789379955.1471324,
-    "seen": 1790493220.4649115,
-    "ast_hash": "",
+    "seen": 1790497548.1680145,
+    "ast_hash": "fa66d745092e8384e004eecdcb1efc9b",
     "semantic_hash": ""
   },
   "internal/cli/checkpoint.go": {
@@ -1867,8 +1867,8 @@
   },
   "migrations/000003_lease_idempotency.sql": {
     "mtime": 1789412848.636025,
-    "seen": 1790493220.4649122,
-    "ast_hash": "",
+    "seen": 1790497548.168016,
+    "ast_hash": "b1f9c5d02d097b3d7a96d6476ac8865b",
     "semantic_hash": ""
   },
   "internal/coordination/lease.go": {
@@ -2017,8 +2017,8 @@
   },
   "migrations/000004_index.sql": {
     "mtime": 1789730820.9643753,
-    "seen": 1790493220.4649131,
-    "ast_hash": "",
+    "seen": 1790497548.168017,
+    "ast_hash": "5ccc6b47a97aae590ed92a569f1a9f38",
     "semantic_hash": ""
   },
   "internal/index/parser/adapter.go": {
@@ -2203,8 +2203,8 @@
   },
   "migrations/000005_symbol_identity.sql": {
     "mtime": 1790071147.0840511,
-    "seen": 1790493220.464914,
-    "ast_hash": "",
+    "seen": 1790497548.1680179,
+    "ast_hash": "3440b3f15afffbefb31b02847483be31",
     "semantic_hash": ""
   },
   "internal/index/identity.go": {
@@ -2323,8 +2323,8 @@
   },
   "migrations/000006_changes.sql": {
     "mtime": 1790097209.7048697,
-    "seen": 1790493220.464915,
-    "ast_hash": "",
+    "seen": 1790497548.1680186,
+    "ast_hash": "893f3a56e862341cf4c87feabcd64f36",
     "semantic_hash": ""
   },
   "internal/changes/baselines.go": {
@@ -2431,8 +2431,8 @@
   },
   "migrations/000007_scope_attribution.sql": {
     "mtime": 1790105470.7596946,
-    "seen": 1790493220.4649155,
-    "ast_hash": "",
+    "seen": 1790497548.1680195,
+    "ast_hash": "6852065118b87e2bbc3753a5fcc9d247",
     "semantic_hash": ""
   },
   "internal/changes/attribution.go": {
@@ -2623,8 +2623,8 @@
   },
   "migrations/000008_evidence.sql": {
     "mtime": 1790146723.0340698,
-    "seen": 1790493220.4649162,
-    "ast_hash": "",
+    "seen": 1790497548.1680202,
+    "ast_hash": "3f384fc5579b162388f58f139b8553bd",
     "semantic_hash": ""
   },
   "docs/engineering/mr-011-design.md": {
@@ -3457,14 +3457,62 @@
   },
   "migrations/000009_guard_baselines.sql": {
     "mtime": 1790415904.022028,
-    "seen": 1790493259.3006263,
-    "ast_hash": "",
+    "seen": 1790497548.1680214,
+    "ast_hash": "009aff220d3759eca0307063f118b6c3",
     "semantic_hash": ""
   },
   "migrations/000010_file_index_generations.sql": {
     "mtime": 1790431874.2686872,
-    "seen": 1790493259.3006277,
-    "ast_hash": "",
+    "seen": 1790497548.1680222,
+    "ast_hash": "011432b36b4788475ed86feedcac8731",
+    "semantic_hash": ""
+  },
+  ".claude/skills/engineering-orchestrator/scripts/jev_route.py": {
+    "mtime": 1790496501.6087754,
+    "seen": 1790497507.7908487,
+    "ast_hash": "27bf87128fa84956a2e631e1e25be576",
+    "semantic_hash": ""
+  },
+  ".claude/skills/engineering-orchestrator/scripts/test_jev_route.py": {
+    "mtime": 1790496603.3169541,
+    "seen": 1790497507.7908502,
+    "ast_hash": "48c876099ce901ec6dcf43390fcc4107",
+    "semantic_hash": ""
+  },
+  "docs/audits/2026-09-27-optional-jev/audit-plan.md": {
+    "mtime": 1790495327.2295625,
+    "seen": 1790497507.7975175,
+    "ast_hash": "4f62aa5ed2a4ad63437fd9cbd5c4591f",
+    "semantic_hash": ""
+  },
+  "docs/audits/2026-09-27-optional-jev/breaker-delta.md": {
+    "mtime": 1790496961.7160053,
+    "seen": 1790497507.7975185,
+    "ast_hash": "a02479e82a9e84dacba687e57b6330ef",
+    "semantic_hash": ""
+  },
+  "docs/audits/2026-09-27-optional-jev/breaker.md": {
+    "mtime": 1790495881.0934727,
+    "seen": 1790497507.7975192,
+    "ast_hash": "c3001b66fcc30e051755b3be6a6f103e",
+    "semantic_hash": ""
+  },
+  "docs/audits/2026-09-27-optional-jev/reader.md": {
+    "mtime": 1790495487.0238614,
+    "seen": 1790497507.79752,
+    "ast_hash": "e692caaf54fb7a560e7538eaaacedcf8",
+    "semantic_hash": ""
+  },
+  "docs/audits/2026-09-27-optional-jev/reconciliation.md": {
+    "mtime": 1790496990.621765,
+    "seen": 1790497507.7975206,
+    "ast_hash": "e84442bb6ce278579a57f4fc5240aca6",
+    "semantic_hash": ""
+  },
+  "docs/engineering/optional-jev-routing-2026-09-27.md": {
+    "mtime": 1790494314.3357246,
+    "seen": 1790497507.7984295,
+    "ast_hash": "e3c9574dd2100cab57cea04a0a7f9215",
     "semantic_hash": ""
   }
 }
