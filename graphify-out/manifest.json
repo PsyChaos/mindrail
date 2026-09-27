@@ -1,8 +1,8 @@
 {
   "AGENTS.md": {
-    "mtime": 1790509625.898327,
-    "seen": 1790512703.8457432,
-    "ast_hash": "29e0aed862fe47360c7a88d8466ef0b1",
+    "mtime": 1790512851.604965,
+    "seen": 1790514483.0728023,
+    "ast_hash": "e95131d5b42cdfa26c593022b7fa1861",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -931,8 +931,8 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1790512773.2882586,
-    "ast_hash": "",
+    "seen": 1790514504.0222373,
+    "ast_hash": "4a2c9badbdc3871cb223878711a614db",
     "semantic_hash": ""
   },
   "internal/cli/representable.go": {
@@ -1651,8 +1651,8 @@
   },
   "migrations/000002_coordination.sql": {
     "mtime": 1789379955.1471324,
-    "seen": 1790512773.28826,
-    "ast_hash": "",
+    "seen": 1790514504.02224,
+    "ast_hash": "fa66d745092e8384e004eecdcb1efc9b",
     "semantic_hash": ""
   },
   "internal/cli/checkpoint.go": {
@@ -1867,8 +1867,8 @@
   },
   "migrations/000003_lease_idempotency.sql": {
     "mtime": 1789412848.636025,
-    "seen": 1790512773.2882612,
-    "ast_hash": "",
+    "seen": 1790514504.0222425,
+    "ast_hash": "b1f9c5d02d097b3d7a96d6476ac8865b",
     "semantic_hash": ""
   },
   "internal/coordination/lease.go": {
@@ -2017,8 +2017,8 @@
   },
   "migrations/000004_index.sql": {
     "mtime": 1789730820.9643753,
-    "seen": 1790512773.288262,
-    "ast_hash": "",
+    "seen": 1790514504.022245,
+    "ast_hash": "5ccc6b47a97aae590ed92a569f1a9f38",
     "semantic_hash": ""
   },
   "internal/index/parser/adapter.go": {
@@ -2203,8 +2203,8 @@
   },
   "migrations/000005_symbol_identity.sql": {
     "mtime": 1790071147.0840511,
-    "seen": 1790512773.2882626,
-    "ast_hash": "",
+    "seen": 1790514504.0222466,
+    "ast_hash": "3440b3f15afffbefb31b02847483be31",
     "semantic_hash": ""
   },
   "internal/index/identity.go": {
@@ -2323,8 +2323,8 @@
   },
   "migrations/000006_changes.sql": {
     "mtime": 1790097209.7048697,
-    "seen": 1790512773.2882638,
-    "ast_hash": "",
+    "seen": 1790514504.0222485,
+    "ast_hash": "893f3a56e862341cf4c87feabcd64f36",
     "semantic_hash": ""
   },
   "internal/changes/baselines.go": {
@@ -2431,8 +2431,8 @@
   },
   "migrations/000007_scope_attribution.sql": {
     "mtime": 1790105470.7596946,
-    "seen": 1790512773.2882643,
-    "ast_hash": "",
+    "seen": 1790514504.02225,
+    "ast_hash": "6852065118b87e2bbc3753a5fcc9d247",
     "semantic_hash": ""
   },
   "internal/changes/attribution.go": {
@@ -2623,8 +2623,8 @@
   },
   "migrations/000008_evidence.sql": {
     "mtime": 1790146723.0340698,
-    "seen": 1790512773.288265,
-    "ast_hash": "",
+    "seen": 1790514504.0222516,
+    "ast_hash": "3f384fc5579b162388f58f139b8553bd",
     "semantic_hash": ""
   },
   "docs/engineering/mr-011-design.md": {
@@ -3457,14 +3457,14 @@
   },
   "migrations/000009_guard_baselines.sql": {
     "mtime": 1790415904.022028,
-    "seen": 1790512773.288266,
-    "ast_hash": "",
+    "seen": 1790514504.0222538,
+    "ast_hash": "009aff220d3759eca0307063f118b6c3",
     "semantic_hash": ""
   },
   "migrations/000010_file_index_generations.sql": {
     "mtime": 1790431874.2686872,
-    "seen": 1790512773.2882664,
-    "ast_hash": "",
+    "seen": 1790514504.0222554,
+    "ast_hash": "011432b36b4788475ed86feedcac8731",
     "semantic_hash": ""
   },
   "docs/audits/2026-09-27-optional-jev/audit-plan.md": {
@@ -3672,15 +3672,15 @@
     "semantic_hash": ""
   },
   "internal/jevconnect/connect.go": {
-    "mtime": 1790511484.482134,
-    "seen": 1790512703.8416731,
-    "ast_hash": "03ac41e95bfd20fe9dc1a79627a2d381",
+    "mtime": 1790514080.3554819,
+    "seen": 1790514483.0697346,
+    "ast_hash": "85a436d999cf44020557e86ecabc95c6",
     "semantic_hash": ""
   },
   "internal/jevconnect/connect_test.go": {
-    "mtime": 1790511521.3364553,
-    "seen": 1790512703.8416743,
-    "ast_hash": "61e9408698cde24707e95ac402a10f6a",
+    "mtime": 1790514090.3434331,
+    "seen": 1790514483.0697362,
+    "ast_hash": "2c919b060f331397231663b83e45c9a7",
     "semantic_hash": ""
   },
   "docs/audits/client-neutral-jev-breaker-2026-09-27.md": {
