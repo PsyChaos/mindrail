@@ -1,6 +1,8 @@
 package status
 
 import (
+	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -11,8 +13,10 @@ import (
 	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
 	"github.com/PsyChaos/mindrail/internal/workspace"
@@ -76,6 +80,187 @@ func TestBuildReadyOnHealthySubject(t *testing.T) {
 	if !report.Workspace.Registered || report.Workspace.ID == "" || report.Workspace.ProjectID == "" {
 		t.Errorf("workspace = %+v", report.Workspace)
 	}
+}
+
+func TestBuildReportsInventoryPhaseWithoutRescanning(t *testing.T) {
+	subject := healthySubject()
+	subject.InventoryObserved = true
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q when syntax has only reached inventory", report.Readiness, ReadinessPartialReady)
+	}
+	inventory := report.Components[ComponentInventory]
+	if inventory.State != doctor.StateOK || inventory.Summary != "0 project units discovered" {
+		t.Errorf("inventory component = %+v, want observed zero-unit discovery", inventory)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateOK || syntax.Phase != "INVENTORY" {
+		t.Errorf("syntax component = %+v, want the explicit INVENTORY phase", syntax)
+	}
+}
+
+func indexedSubject() doctor.Subject {
+	subject := healthySubject()
+	subject.InventoryObserved = true
+	subject.Inventory = []index.ProjectUnit{{ID: "UNT-01", Path: "/repo/pkg", Kind: index.UnitPython}}
+	return subject
+}
+
+func assertComponentRemedy(t *testing.T, name ComponentName, component Component) {
+	t.Helper()
+	if component.Code == "" {
+		t.Errorf("component %q reported %q with no code", name, component.State)
+	}
+	if component.Code != "" && !app.IsRegistered(component.Code) {
+		t.Errorf("component %q reported unregistered code %q", name, component.Code)
+	}
+	if len(component.NextAction) == 0 {
+		t.Errorf("component %q reported %q with no next_action", name, component.State)
+	}
+	for i, action := range component.NextAction {
+		assertActionable(t, string(name), i, action)
+	}
+}
+
+// TestBuildReportsIndexingPartialReady is the task list's fifth acceptance
+// criterion: a running cold index is explicit pending work with a count, not a
+// silent gap and not a blocker.
+func TestBuildReportsIndexingPartialReady(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StatePending: 3, index.StateIndexed: 5}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q while files are pending", report.Readiness, ReadinessPartialReady)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateOK || syntax.Phase != "INDEXING" {
+		t.Errorf("syntax component = %+v, want OK INDEXING", syntax)
+	}
+	if syntax.Pending == nil || *syntax.Pending != 3 {
+		t.Errorf("syntax pending = %v, want 3", syntax.Pending)
+	}
+	if syntax.Failed == nil || *syntax.Failed != 0 {
+		t.Errorf("syntax failed = %v, want explicit 0", syntax.Failed)
+	}
+	inventory := report.Components[ComponentInventory]
+	if inventory.Units == nil || *inventory.Units != 1 {
+		t.Errorf("inventory units = %v, want 1", inventory.Units)
+	}
+}
+
+// TestSyntaxComponentCarriesNoTimingKeys is REQ-12 at the status surface:
+// the census adds counts, never timings. The golden key list pins this
+// globally; this test names the reason beside the wire shape.
+func TestSyntaxComponentCarriesNoTimingKeys(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StatePending: 2, index.StateIndexed: 4}
+
+	encoded, err := json.Marshal(Build(subject, time.Millisecond).Components[ComponentSyntax])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for key := range keys {
+		switch key {
+		case "state", "phase", "summary", "code", "next_action", "pending", "failed":
+		default:
+			t.Errorf("syntax component carries unexpected key %q", key)
+		}
+	}
+	for _, timing := range []string{"timing", "parse", "extract", "duration", "waited", "held"} {
+		if strings.Contains(string(encoded), `"`+timing) {
+			t.Errorf("syntax component carries timing key %q: %s", timing, encoded)
+		}
+	}
+}
+
+// TestBuildInventoryPhaseWithEmptyCensus pins the observed-but-empty census:
+// units discovered, no file rows yet — still INVENTORY, with explicit zero
+// counts rather than absent keys.
+func TestBuildInventoryPhaseWithEmptyCensus(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want %q before the first file row", report.Readiness, ReadinessPartialReady)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateOK || syntax.Phase != "INVENTORY" {
+		t.Errorf("syntax component = %+v, want OK INVENTORY", syntax)
+	}
+	if syntax.Pending == nil || *syntax.Pending != 0 || syntax.Failed == nil || *syntax.Failed != 0 {
+		t.Errorf("syntax counts = %v/%v, want explicit zeros", syntax.Pending, syntax.Failed)
+	}
+}
+
+// TestBuildReadyWhenIndexDrained proves READY returns once the cold remainder
+// is gone: PARTIAL_READY must not stick after the work finishes.
+func TestBuildReadyWhenIndexDrained(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StateIndexed: 8}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessReady {
+		t.Fatalf("readiness = %q, want %q when nothing is pending", report.Readiness, ReadinessReady)
+	}
+	if phase := report.Components[ComponentSyntax].Phase; phase != "READY" {
+		t.Errorf("syntax phase = %q, want %q", phase, "READY")
+	}
+}
+
+// TestBuildDegradedOnFailedIndexRows is spec-1.0 §108: any failed row degrades
+// syntax health while the row stays pending work for the scheduler.
+func TestBuildDegradedOnFailedIndexRows(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexObserved = true
+	subject.IndexCounts = map[index.FileState]int{index.StateFailed: 1, index.StatePending: 2}
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessDegraded {
+		t.Fatalf("readiness = %q, want %q with failed index rows", report.Readiness, ReadinessDegraded)
+	}
+	if report.BlockingComponent != "" {
+		t.Errorf("blocking_component = %q, want none: DEGRADED still works", report.BlockingComponent)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateDegraded || syntax.Phase != "INDEXING" {
+		t.Errorf("syntax component = %+v, want DEGRADED INDEXING", syntax)
+	}
+	if syntax.Code != app.CodeSyntaxParseFailed {
+		t.Errorf("syntax code = %q, want %q", syntax.Code, app.CodeSyntaxParseFailed)
+	}
+	if syntax.Pending == nil || *syntax.Pending != 2 || syntax.Failed == nil || *syntax.Failed != 1 {
+		t.Errorf("syntax counts = %v/%v, want pending 2 failed 1", syntax.Pending, syntax.Failed)
+	}
+	assertComponentRemedy(t, ComponentSyntax, syntax)
+}
+
+// TestBuildDegradedOnUnreadableIndexCensus keeps "looked and failed" apart
+// from "nobody looked": a census that ran and failed degrades the component
+// instead of publishing uninspected zeros as findings.
+func TestBuildDegradedOnUnreadableIndexCensus(t *testing.T) {
+	subject := indexedSubject()
+	subject.IndexErr = errors.New("index census unavailable")
+
+	report := Build(subject, time.Millisecond)
+	if report.Readiness != ReadinessDegraded {
+		t.Fatalf("readiness = %q, want %q with an unreadable census", report.Readiness, ReadinessDegraded)
+	}
+	syntax := report.Components[ComponentSyntax]
+	if syntax.State != doctor.StateDegraded || syntax.Code != app.CodeIndexStateCorrupt {
+		t.Errorf("syntax component = %+v, want DEGRADED INDEX_STATE_CORRUPT", syntax)
+	}
+	assertComponentRemedy(t, ComponentSyntax, syntax)
 }
 
 // TestBuildBlockedOnUnopenableDB is acceptance criterion 4 for the runtime
@@ -216,6 +401,8 @@ func buildSubjects() map[string]doctor.Subject {
 		"uninitialized":       uninitializedSubject(),
 		"unreadable record":   subjectWithKnowledgeProblem(false),
 		"unsupported schema":  subjectWithKnowledgeProblem(true),
+		"invalid record":      subjectWithKnowledgeFinding(false),
+		"supersede cycle":     subjectWithKnowledgeFinding(true),
 		"repository unusable": subjectWithoutRepository(),
 		"halted at sqlite":    haltedAtSQLiteSubject(),
 	}
@@ -462,6 +649,18 @@ func healthySubject() doctor.Subject {
 			RegisteredAt: fixedInstant,
 			LastSeenAt:   fixedInstant,
 		},
+		// A healthy repository is one where the coordination summary was read,
+		// and the counts being zero is the reading rather than the absence of
+		// one. Leaving the flag false published `not_observed` on a report the
+		// observation tests require to carry no caveat at all — which is exactly
+		// what those tests are for, and they caught it.
+		//
+		// For a while the flag was true here and unreachable from `init`, which
+		// returned from step 7 before reading the summary (finding F10): the
+		// fixture described a world the command could not produce. Both commands
+		// read it now, and the two fixtures that genuinely have not observed it —
+		// uninitializedSubject and haltedAtSQLiteSubject — say so.
+		CoordinationObserved: true,
 		// Declaring the probe answers keeps this fixture a value: doctor.Probe
 		// passes an already-probed subject through, so no test here needs the
 		// /repo tree to exist on the machine running it.
@@ -487,6 +686,12 @@ func uninitializedSubject() doctor.Subject {
 	s.Migrations = nil
 	s.Workspace = workspace.Workspace{}
 	s.WorkspaceErr = workspace.ErrNotRegistered
+	// Nobody looked at coordination here, and this is the case that sentence
+	// describes: there is no database, so step 7 never reached the summary. The
+	// flag was inherited from healthySubject, where it is true because `init`
+	// and `status` both do read it (finding F10) — leaving it true here made
+	// "observed, zero tasks" the reading for a repository with nothing to read.
+	s.CoordinationObserved = false
 	// The path was inspected and is genuinely empty, which is the one condition
 	// `mindrail init` actually fixes.
 	s.Probes.DBPath = storage.PresenceAbsent
@@ -504,6 +709,10 @@ func haltedAtSQLiteSubject() doctor.Subject {
 	s.Migrations = nil
 	s.Knowledge = loader.Store{}
 	s.Workspace = workspace.Workspace{}
+	// The sequence stopped at step 5, so steps 6 and 7 never ran and nobody
+	// looked at coordination. This is the fixture the `not_observed` rendering
+	// exists for.
+	s.CoordinationObserved = false
 	s.DBErr = app.NewError(app.CodeRuntimeDBCorrupt, app.KindUnavailable,
 		"the runtime database file is not a valid SQLite database",
 		"All recorded workspace state is unreadable.",
@@ -523,6 +732,16 @@ func subjectWithKnowledgeProblem(fatal bool) doctor.Subject {
 		Message: "record rejected",
 		Fatal:   fatal,
 	}}
+	return s
+}
+
+// subjectWithKnowledgeFinding is a store this binary read whole and found
+// wrong. It is deliberately not subjectWithKnowledgeProblem: that one is a
+// record nothing could read, and decision D-38 keeps the two apart because
+// their remedies are opposite.
+func subjectWithKnowledgeFinding(cycle bool) doctor.Subject {
+	s := healthySubject()
+	s.KnowledgeFindings = []validate.Finding{findingOn(".mindrail/knowledge/decisions/dec-1.json", cycle)}
 	return s
 }
 

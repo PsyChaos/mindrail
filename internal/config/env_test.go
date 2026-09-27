@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestUnknownMindrailEnvVarWarnsNotFails(t *testing.T) {
 		t.Errorf("warning message = %q, must not echo the value (spec §19)", warning.Message)
 	}
 
-	if loaded.Config != config.Defaults() {
+	if !reflect.DeepEqual(loaded.Config, config.Defaults()) {
 		t.Errorf("Config = %+v, want defaults untouched", loaded.Config)
 	}
 }
@@ -90,7 +91,7 @@ func TestKnownMindrailEnvVarsMapToTypedFields(t *testing.T) {
 			if len(loaded.Warnings) != 0 {
 				t.Errorf("Warnings = %v, want none for a known variable", loaded.Warnings)
 			}
-			if loaded.Config != tt.want {
+			if !reflect.DeepEqual(loaded.Config, tt.want) {
 				t.Errorf("Config = %+v, want %+v", loaded.Config, tt.want)
 			}
 			if got := loaded.Provenance[tt.wantKey]; got != config.SourceEnv {

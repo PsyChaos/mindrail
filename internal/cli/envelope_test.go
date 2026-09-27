@@ -28,11 +28,20 @@ import (
 // decision D-03's one zero-exit row — "you have not run init yet" is a state to
 // report — and a fatal envelope carrying it would be the opposite regression to
 // the one this file exists for.
+//
+// KNOWLEDGE_INVALID joins that class for the same reason and by decision D-43:
+// a record this binary read and found wrong leaves the knowledge component
+// DEGRADED, and doctor.Report.Err builds an error object from ERROR readings
+// only. A repository with one malformed Decision must stay usable, so the row
+// being ExitSuccess is the assertion that it does. Its sibling
+// KNOWLEDGE_SUPERSEDE_CYCLE is ExitFailed instead: D-39 makes a lineage with no
+// end fatal, because every answer to "which Decision is current" is then wrong.
 var exitForCode = map[app.Code]int{
 	app.CodeNotAGitRepository:           app.ExitUsage,
 	app.CodeBareRepository:              app.ExitUsage,
 	app.CodeCommandLineInvalid:          app.ExitUsage,
 	app.CodeConfigInvalid:               app.ExitUsage,
+	app.CodeNotImplementedInThisVersion: app.ExitUsage,
 	app.CodePathEscapesRoot:             app.ExitUsage,
 	app.CodePathNotRepresentable:        app.ExitUsage,
 	app.CodeGitUnavailable:              app.ExitUnavailable,
@@ -47,8 +56,90 @@ var exitForCode = map[app.Code]int{
 	app.CodeWorkspaceRegistrationFailed: app.ExitFailed,
 	app.CodeKnowledgeUnreadable:         app.ExitFailed,
 	app.CodeKnowledgeSchemaUnsupported:  app.ExitFailed,
+	app.CodeKnowledgeSupersedeCycle:     app.ExitFailed,
 	app.CodeWorkspaceNotInitialized:     app.ExitSuccess,
 	app.CodeConfigUnknownEnvVar:         app.ExitSuccess,
+	app.CodeKnowledgeInvalid:            app.ExitSuccess,
+
+	// MR-003's seven, all ExitFailed (requirement AC-05.3). Five were added by
+	// the milestone; COORDINATION_UNAVAILABLE was the sixth, added during
+	// TASK-05 and recorded under AC-06.7, and COORDINATION_READ_FAILED the
+	// seventh, added by the round-1 remediation and recorded under AC-05.1.
+	//
+	// Not all of them are "the id names nothing" — the class description used
+	// to say so, and two of the rows are not that. Four are operations that ran
+	// against a healthy repository and could not do what they were asked: the
+	// id names nothing, or the move is not available from where the task is.
+	// COORDINATION_UNAVAILABLE is the repository having no coordination state
+	// to operate on at all. The two write/read failures are the runtime
+	// database refusing a row for a reason the storage layer does not name.
+	//
+	// None is ExitUsage. The command line was well formed — `task state TSK-…
+	// --to COMPLETED` is a sentence this binary understands — and the refusal
+	// depends on rows, not on spelling. A caller that retried after fixing its
+	// arguments would meet the same answer. The spelling mistakes are caught
+	// earlier and still exit 2 through COMMAND_LINE_INVALID.
+	//
+	// None is ExitUnavailable either, including the two failure codes: the
+	// storage conditions that really are "come back later" are named by
+	// storage.WriteFailure before either code is reached, and what survives is
+	// a read or write that failed for a reason retrying will not fix.
+	app.CodeSessionNotFound:         app.ExitFailed,
+	app.CodeTaskNotFound:            app.ExitFailed,
+	app.CodeTaskStateInvalid:        app.ExitFailed,
+	app.CodeCheckpointNotFound:      app.ExitFailed,
+	app.CodeCoordinationUnavailable: app.ExitFailed,
+	app.CodeCoordinationWriteFailed: app.ExitFailed,
+	app.CodeCoordinationReadFailed:  app.ExitFailed,
+
+	// MR-004's busy code is ExitUnavailable, the class decision D-03 gives a
+	// condition that clears on its own: the lock is released when the other
+	// command finishes, and the remedy is to run this one again (D-74).
+	app.CodeBusyRetryable: app.ExitUnavailable,
+
+	// MR-004's lease codes are ExitFailed like MR-003's task codes (D-76): the
+	// command line was well formed and the refusal depends on rows — who holds
+	// the target, whether a lease has run out, whether an id names one.
+	app.CodeLeaseConflict: app.ExitFailed,
+	app.CodeLeaseNotHeld:  app.ExitFailed,
+	app.CodeLeaseNotFound: app.ExitFailed,
+
+	// And the revision refusal (D-72): the task exists, the session exists,
+	// and the caller's reading of the task is what is stale.
+	app.CodeStateRevisionConflict: app.ExitFailed,
+
+	// And a reused operation id (D-71): the request was well formed, and the
+	// refusal depends on what the operations table already holds.
+	app.CodeOperationIDConflict: app.ExitFailed,
+
+	// MR-005's three index failures: each is a request that cannot be
+	// fulfilled as made, not a transient database lock.
+	app.CodeSyntaxLanguageUnsupported: app.ExitFailed,
+	app.CodeSyntaxParseFailed:         app.ExitFailed,
+	app.CodeIndexStateCorrupt:         app.ExitFailed,
+
+	// MR-006's two identity findings: same class — the request was well
+	// formed and the refusal depends on rows (which candidates a removed
+	// symbol meets, whether a protected symbol still resolves).
+	app.CodeSymbolIdentityAmbiguous: app.ExitFailed,
+	app.CodeOrphanedProtectedSymbol: app.ExitFailed,
+
+	// MR-008's three attribution findings: same class again — a discovered
+	// change asking for an owner it cannot have by itself, resolved by
+	// declaring scope or recording an assignment, never by retrying.
+	app.CodeScopeDrift:         app.ExitFailed,
+	app.CodeUnregisteredChange: app.ExitFailed,
+	app.CodeReconcileAmbiguous: app.ExitFailed,
+
+	// MR-012's guard finding: well-formed request, row-dependent refusal —
+	// a weakened verification test is resolved by restoring the guard or
+	// recording an allowance, never by retrying.
+	app.CodeTestGuardWeakened: app.ExitFailed,
+
+	// MR-013's evidence denial: same class — the request was well formed
+	// and the refusal depends on rows (which required profiles hold current
+	// evidence), resolved by running the named profile, never by retrying.
+	app.CodeRequiredEvidenceNotCurrent: app.ExitFailed,
 }
 
 // TestExitClassTableCoversEveryRegisteredCode makes the table above impossible
@@ -64,6 +155,100 @@ func TestExitClassTableCoversEveryRegisteredCode(t *testing.T) {
 		if !app.IsRegistered(code) {
 			t.Errorf("exitForCode names %q, which this binary does not emit", code)
 		}
+	}
+}
+
+// TestTheKnowledgeExitClassesAreTheOnesTheBinaryTakes ties MR-002's two rows of
+// the table above to a repository the binary was actually driven over.
+//
+// The table is hand-written data, and a row no run ever reads asserts nothing:
+// both knowledge rows could be flipped — KNOWLEDGE_INVALID to ExitFailed,
+// KNOWLEDGE_SUPERSEDE_CYCLE to ExitSuccess — with `go test ./...` staying green,
+// because no envelope scenario produces a knowledge finding and the exit class is
+// only consulted when a code reaches the wire inside an error object. That is the
+// unfalsifiable-guard class the whole of MR-001's second audit round was spent
+// deleting.
+//
+// So each row here observes an exit from the real command tree and compares the
+// table against that, never against a literal. The condition is proved to have
+// reproduced first — by the code on the wire for the fatal row, and by the
+// knowledge component's own code for the exit-0 one — because a repository where
+// nothing went wrong would otherwise satisfy the exit comparison for the wrong
+// reason.
+func TestTheKnowledgeExitClassesAreTheOnesTheBinaryTakes(t *testing.T) {
+	tests := []struct {
+		name string
+		// records is written into the store before `status` is run. The fixtures
+		// are agreement_test.go's, so the two matrices cannot end up describing
+		// different repositories under one name.
+		records map[string]string
+		// wantCode is the code the reading has to carry for the row to be about
+		// anything at all.
+		wantCode app.Code
+		// wantFatal says which carrier publishes it: an error object on the wire,
+		// or a component of a report that reports success.
+		wantFatal bool
+	}{
+		{
+			name: "a supersede cycle is fatal and exits the class D-03 assigns it",
+			records: map[string]string{
+				"DEC-0001.json": cyclicSupersededDecision,
+				"DEC-0002.json": supersedingDecision,
+			},
+			wantCode:  app.CodeKnowledgeSupersedeCycle,
+			wantFatal: true,
+		},
+		{
+			name:      "a record its schema rejects is a state and exits the class D-03 assigns it",
+			records:   map[string]string{"DEC-0001.json": invalidStatusDecision},
+			wantCode:  app.CodeKnowledgeInvalid,
+			wantFatal: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newInitializedRepo(t)
+			for name, content := range tc.records {
+				writeKnowledgeRecord(t, repo, name, content)
+			}
+
+			got := runWith(t, repo, cli.Options{}, "status", "--json")
+			envelope := decodeStrictEnvelope(t, got.stdout)
+
+			if tc.wantFatal {
+				if envelope.Error == nil {
+					t.Fatalf("the condition did not reproduce: `status` reported ok on a repository carrying %q\n%s",
+						tc.wantCode, got.stdout)
+				}
+				if envelope.Error.Code != tc.wantCode {
+					t.Fatalf("`status` reported %q, want %q", envelope.Error.Code, tc.wantCode)
+				}
+			} else {
+				if envelope.Error != nil {
+					t.Fatalf("`status` turned %q into a fatal envelope: %+v", tc.wantCode, *envelope.Error)
+				}
+				var report status.Report
+				decodeData(t, got.stdout, &report)
+				component, present := report.Components[status.ComponentKnowledge]
+				if !present {
+					t.Fatalf("the status report has no %q component: %v", status.ComponentKnowledge, report.Components)
+				}
+				if component.Code != tc.wantCode {
+					t.Fatalf("the condition did not reproduce: the knowledge component reports %q, want %q",
+						component.Code, tc.wantCode)
+				}
+			}
+
+			assigned, known := exitForCode[tc.wantCode]
+			if !known {
+				t.Fatalf("code %q has no exit class in exitForCode", tc.wantCode)
+			}
+			if got.code != assigned {
+				t.Errorf("`status` exited %d carrying %q, but decision D-03's table assigns that code %d",
+					got.code, tc.wantCode, assigned)
+			}
+		})
 	}
 }
 

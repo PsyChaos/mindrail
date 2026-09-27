@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -32,11 +33,15 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/config"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
+	"github.com/PsyChaos/mindrail/internal/index/inventory"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/migration"
 	"github.com/PsyChaos/mindrail/internal/storage"
 	"github.com/PsyChaos/mindrail/internal/workspace"
@@ -53,19 +58,48 @@ import (
 type Mode int
 
 const (
-	// ModeReadOnly never creates and never migrates: status, doctor, version.
+	// ModeReadOnly never creates, never migrates and opens SQLite read-only:
+	// status, doctor, version.
 	ModeReadOnly Mode = iota
-	// ModeInit is the only writer.
+	// ModeInit is the only mode that creates the database, applies migrations
+	// and registers the worktree.
 	ModeInit
+	// ModeWrite opens an existing database for writing without creating or
+	// migrating it: the coordination commands MR-003 adds, and every later
+	// milestone that records something into a repository `init` has already set
+	// up.
+	//
+	// It exists because the two original modes did not divide the authority the
+	// way decision D-01 does. D-01 gives *setup* authority to `mindrail init`
+	// alone — creating the file, applying migrations, registering the worktree —
+	// and a command that appends a row to a table init already made is not
+	// exercising any of it. Folding those two into one mode meant a coordination
+	// command either opened the database read-only, and could not write at all,
+	// or ran as init and would create a database out from under a user who had
+	// never run it.
+	//
+	// So this mode is read-only in everything except the SQLite handle: a
+	// repository with no database is reported as such, pending migrations are
+	// read and not applied, and an unregistered worktree stays unregistered.
+	ModeWrite
 )
 
 // String renders the mode for logs and diagnostics.
 func (m Mode) String() string {
-	if m == ModeInit {
+	switch m {
+	case ModeInit:
 		return "init"
+	case ModeWrite:
+		return "write"
+	default:
+		return "read-only"
 	}
-	return "read-only"
 }
+
+// creates reports whether this mode may bring a runtime database into existence.
+// Only init may, which is decision D-01 as a predicate rather than as a
+// comparison repeated at four call sites.
+func (m Mode) creates() bool { return m == ModeInit }
 
 // Options carries every input the startup sequence has. A zero value is usable:
 // it starts read-only in the process working directory against the real git,
@@ -84,6 +118,7 @@ type Options struct {
 	MigrationFS        fs.FS // nil => migrations.FS
 	SchemaFS           fs.FS // nil => schemas.KnowledgeFS
 	Recorder           Recorder
+	BusyTimeout        time.Duration // 0 => storage.DefaultBusyTimeout
 }
 
 // InitResult carries what only ModeInit produces. It is separate from
@@ -202,11 +237,10 @@ func (a *App) start(ctx context.Context) error {
 		}
 	}
 
-	// Index state belongs to MR-005. The step is still announced because §87's
-	// sequence is the contract every later milestone slots into, and a stage
-	// that silently disappeared while it had no work would have to be argued
-	// back in later.
-	a.record(StepLoadIndexState)
+	// Index state belongs to MR-005. Discovery is non-blocking work at this
+	// existing §87 step: a malformed or unreadable source tree cannot hide the
+	// repository/knowledge/runtime findings the earlier steps already made.
+	a.loadIndexState(ctx)
 
 	// Managers are constructed on first use, not here (see lazy.go). The step
 	// marks the point in the sequence where that becomes legal.
@@ -415,6 +449,26 @@ func (a *App) DB() *sql.DB {
 	return a.db.DB
 }
 
+// Coordination returns the session/task/checkpoint store, or nil when there is
+// no runtime database to build it over.
+//
+// It is constructed here rather than by each command (requirement AC-08.1) for
+// the reason every other seam in this file is: a command that built its own
+// would be free to hand it a different clock, and two commands disagreeing about
+// what time it is would write rows whose order does not match the order they
+// happened in.
+//
+// nil rather than an error, because "there is no database" is not a failure of
+// this call. In ModeReadOnly it means the repository has never been initialised
+// (decision D-01), which is a state the caller reports with `mindrail init` as
+// the remedy — the same shape DB() above already has.
+func (a *App) Coordination() *coordination.Store {
+	if a.db == nil {
+		return nil
+	}
+	return coordination.NewStore(a.db.DB, a.clock)
+}
+
 // Repo returns the resolved Git layout, zero when discovery failed.
 func (a *App) Repo() git.Repository { return a.subject.Repo }
 
@@ -598,14 +652,15 @@ func (a *App) resolveRuntimePaths(context.Context) error {
 func (a *App) openSQLite(ctx context.Context) error {
 	a.record(StepOpenSQLite)
 
-	if a.opts.Mode == ModeReadOnly && !a.runtimeDatabaseExists() {
+	if !a.opts.Mode.creates() && !a.runtimeDatabaseExists() {
 		a.subject.DBPresent = false
 		return nil
 	}
 
 	db, err := storage.Open(ctx, storage.Options{
-		Path:     a.subject.Paths.DBPath,
-		ReadOnly: a.opts.Mode == ModeReadOnly,
+		Path:        a.subject.Paths.DBPath,
+		ReadOnly:    a.opts.Mode == ModeReadOnly,
+		BusyTimeout: a.opts.BusyTimeout,
 	})
 	if err != nil {
 		a.subject.DBErr = err
@@ -749,8 +804,14 @@ func verifyLedger(set []migration.Migration, ledger []migration.Applied) error {
 	return nil
 }
 
-// validateKnowledge is step 6. It performs spec §95 steps 1-4 only; the rest of
-// the pipeline belongs to MR-002 (decision D-27).
+// validateKnowledge is step 6. The loader performs spec §95 steps 1-4; steps
+// 5-11 run here, once, immediately afterwards (decision D-42).
+//
+// This is the reporting path's sole validate.Check call. Doctor checks and
+// status.Build read the resolved Subject without opening or validating files
+// themselves (D-41/D-42). The separate completion safety boundary reloads and
+// validates current knowledge before deciding, rather than trusting this
+// potentially stale startup observation in a long-lived process (REQ-003).
 func (a *App) validateKnowledge(ctx context.Context) error {
 	a.record(StepValidateKnowledge)
 
@@ -773,7 +834,42 @@ func (a *App) validateKnowledge(ctx context.Context) error {
 	}
 	a.subject.Knowledge = store
 
+	// The findings are data, never an error (decision D-42). A store full of
+	// invalid records leaves KnowledgeErr nil and the sequence running: the
+	// records the repository owns are wrong and the binary is fine, and halting
+	// here would make every later step report itself as never taken — publishing
+	// a fabricated absence in place of a finding this step actually made.
+	a.subject.KnowledgeFindings = validate.Check(store, mustCompileSchemas(registry))
+
 	return nil
+}
+
+// mustCompileSchemas builds the validator steps 5-11 evaluate against, and
+// refuses to continue when the documents this binary embeds do not compile.
+//
+// A failure here is a defect in the binary, not a condition of the repository
+// (AC-08.2), and the two must not be confused. Folding it into KnowledgeErr
+// would publish it as KNOWLEDGE_UNREADABLE with "Make .mindrail/knowledge
+// readable." beside it — a diagnosis of a repository that is fine and a remedy
+// that cannot work. There is no registered app.Code for "this binary cannot
+// build its own validator", and REQ-05 freezes the code vocabulary MR-002 adds
+// at two, so there is no honest envelope to put it in either.
+//
+// Returning a nil validator is worse still: validate.Check panics on one
+// precisely because reporting unvalidated records as clean is the fabricated
+// pass this whole milestone exists to prevent. So the failure is raised here,
+// in the binary's own voice, naming the compile error it came from — the same
+// reasoning, and the same shape, as validate.Check's own refusal.
+//
+// It is reachable only through Options.SchemaFS. The embedded documents compile,
+// which internal/knowledge/schema's own tests assert; an injected filesystem
+// that ships something else is how this path is exercised.
+func mustCompileSchemas(registry *schema.Registry) *schema.Validator {
+	validator, err := schema.NewValidator(registry)
+	if err != nil {
+		panic(fmt.Errorf("mindrail: the knowledge schema documents this binary ships do not compile, so no record can be validated: %w", err))
+	}
+	return validator
 }
 
 // registerWorkspace is step 7. Registration is a write, so ModeReadOnly only
@@ -800,6 +896,13 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 			return a.subject.WorkspaceErr
 		}
 		a.subject.Workspace = ws
+
+		// Init reads the summary too. Returning here was why `mindrail init`
+		// published "not observed — startup stopped before this subsystem was
+		// read" three lines above READY FOR TARGETED WORK, with zeros for a
+		// repository `status` reported one open task in seconds later (finding
+		// F10). The sequence had not stopped; it had simply never asked.
+		a.readCoordination(ctx)
 		return nil
 	}
 
@@ -810,7 +913,14 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 	// line of a WORKSPACE_REGISTRATION_FAILED error (finding F16). The condition
 	// is "not initialised yet", and the migration ledger already says so, so the
 	// lookup is simply not made.
-	if a.subject.PendingCount > 0 {
+	//
+	// The test is which migration is pending, not whether any is. It used to be
+	// the count, which was the same question while there was one migration and
+	// stopped being it the moment MR-003 added a second: every database written
+	// by an earlier binary is one behind, its workspaces table is there and
+	// holds the row, and the blanket skip reported the worktree as unregistered
+	// on the first run after an upgrade (finding F01).
+	if !a.schemaHasWorkspaceTable() {
 		a.logger.Debug("workspace lookup skipped: runtime schema not established",
 			slog.Int("pending_migrations", a.subject.PendingCount))
 		return nil
@@ -827,7 +937,108 @@ func (a *App) registerWorkspace(ctx context.Context) error {
 	}
 	a.subject.Workspace = ws
 
+	a.readCoordination(ctx)
 	return nil
+}
+
+// schemaHasWorkspaceTable reports whether the migration that creates the
+// workspaces table has been applied to this database.
+//
+// It reads the applied ledger rather than a schema_version number, because the
+// ledger is what the migrator itself is answerable for and a version derived
+// somewhere else would be a second reader of the same fact.
+func (a *App) schemaHasWorkspaceTable() bool {
+	for _, applied := range a.subject.Migrations {
+		if applied.Version >= workspace.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
+}
+
+// loadIndexState runs the first inventory pass when startup may write and reads
+// the persisted result for a read-only status. It intentionally never changes
+// the §87 step list: MR-005 fills the load_index_state neighbourhood that has
+// been named since MR-001 rather than inserting a new blocking stage.
+func (a *App) loadIndexState(ctx context.Context) {
+	a.record(StepLoadIndexState)
+	if a.db == nil || !a.schemaHasIndexTables() {
+		return
+	}
+
+	store := index.NewStore(a.db.DB, a.clock)
+	root, rootErr := inventory.CanonicalRoot(a.subject.Repo.WorktreeRoot)
+	if rootErr != nil {
+		a.subject.InventoryErr = rootErr
+		a.logger.Debug("index inventory root unavailable", slog.String("error", rootErr.Error()))
+		return
+	}
+	var units []index.ProjectUnit
+	var err error
+	if a.opts.Mode == ModeReadOnly {
+		units, err = store.ListUnits(ctx, root)
+	} else {
+		var result inventory.Result
+		result, err = inventory.Discover(ctx, root, store)
+		units = result.Units
+	}
+	if err != nil {
+		a.subject.InventoryErr = err
+		a.logger.Debug("index inventory unavailable", slog.String("error", err.Error()))
+		return
+	}
+	a.subject.Inventory = units
+	a.subject.InventoryObserved = true
+
+	// The census is a second persisted reading, not a second walk: status
+	// reports pending/failed counts from these rows, and re-derivation happens
+	// in the scheduler's normal work. A census that cannot be read degrades
+	// the syntax component rather than stopping a sequence that already
+	// answered every question before it.
+	counts, err := store.CountByState(ctx, "")
+	if err != nil {
+		a.subject.IndexErr = err
+		a.logger.Debug("index census unavailable", slog.String("error", err.Error()))
+		return
+	}
+	a.subject.IndexCounts = counts
+	a.subject.IndexObserved = true
+}
+
+func (a *App) schemaHasIndexTables() bool {
+	for _, applied := range a.subject.Migrations {
+		if applied.Version >= index.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
+}
+
+// readCoordination fills the summary `status` publishes.
+//
+// It sits at the end of step 7 rather than in a step of its own because it has
+// exactly step 7's prerequisite — a registered workspace, and therefore a
+// project to count tasks in — and because tech-stack §87's sequence is the
+// contract every later milestone slots into: a step added for a read that
+// nothing gates on would have to be argued back out again when MR-004 wants the
+// slot.
+//
+// Every failure here is swallowed into "nobody looked". Coordination cannot move
+// readiness (decision D-62), so a summary that could not be read has nothing to
+// block, and turning it into a startup failure would let a task count take down
+// a report about the repository.
+func (a *App) readCoordination(ctx context.Context) {
+	summary, err := coordination.NewStore(a.db.DB, a.clock).Summarize(ctx, a.subject.Workspace.ProjectID)
+	if err != nil {
+		// Kept, not only logged. A read that ran and failed is a different
+		// answer from a read that never happened, and folding both into the
+		// flag published "nobody looked" about a query that did (finding F46).
+		a.subject.CoordinationErr = err
+		a.logger.Debug("coordination summary unavailable", slog.String("error", err.Error()))
+		return
+	}
+	a.subject.Coordination = summary
+	a.subject.CoordinationObserved = true
 }
 
 // --- seams ------------------------------------------------------------------

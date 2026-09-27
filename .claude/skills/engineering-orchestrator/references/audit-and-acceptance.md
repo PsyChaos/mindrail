@@ -19,6 +19,12 @@ Then assemble the audit package:
 - **Change references** — files, commits, diffs.
 - **Test evidence** — exact commands and their output.
 - **Decision log** — relevant `DEC-*`.
+- **Audit plan** — the per-cluster depth table from `references/audit-scoping.md`
+  (draft it with `scripts/audit_scope.py`, then correct it from the diff): depth A/B/C
+  per cluster with reasons, `test_cmd` per cluster, which conditional Breaker moves
+  are triggered, refs of any checkpoint audits already done, and any downgrades or
+  sampling with their justification. Scope is decided here, once, on the record —
+  not renegotiated by whichever auditor is short on time.
 
 Do not tell the auditors what conclusion to reach, and do not include your own
 assessment of quality. An audit package that argues for its own correctness produces
@@ -28,8 +34,17 @@ an auditor that grades the argument instead of the code.
 
 ## Phase 19 — Mandatory dual-agent audit
 
-Invoke the `dual-agent-task-audit` skill with the package above. This step is not
-optional and is not skipped because the change is small or the fix looked obvious.
+Invoke the `dual-agent-task-audit` skill **once** with the package above. This step
+is not optional and is not skipped because the change is small or the fix looked
+obvious — but it is also not repeated per task, and it is not run at uniform depth
+over everything. The audit plan tells the auditors which clusters get the full
+six-move Breaker and which get targeted or Reader-only treatment; clusters already
+checkpoint-audited and untouched since are cited, not redone.
+
+Depth is a floor. If an auditor produces evidence that a depth-B cluster carries a
+contract or a guard the plan didn't see, it raises the depth and says so. What it
+may not do is lower one: a depth-A cluster that received a Reader-only pass because
+the audit was running long is an unaudited cluster, and the report must say so.
 
 If that skill isn't available, run its protocol inline at minimum: two independent
 passes over the implementation that do not see each other's conclusions, each
@@ -81,7 +96,13 @@ validation criteria.
 
 Assign each to the appropriate team or agent; parallelize independent fixes. Then:
 targeted tests → regression tests → integrate → full validation → re-invoke the
-audit.
+audit **on the delta only** (`audit_scope.py --base <last-audited-ref> --delta`):
+the `FIX-*` changes, their callers, the `REQ-*` they map to, and the class-sweep
+siblings the original finding named. Findings refuted with evidence last round stay
+refuted; requirements verified last round stay verified unless their verification
+path changed. The full suite runs once per round; the mutation harness does not
+revisit guards the fix never touched. Re-running the whole audit after every fix is
+how three remediation rounds cost three times the original audit.
 
 **Cap the loop at 3 rounds.** If the audit still hasn't reached `VERIFIED` or
 `VERIFIED_WITH_MINOR_ISSUES`, stop and report to the user with what remains and what
@@ -134,6 +155,10 @@ production.
 ## 7. Dual-agent audit
 Agent A verdict, Agent B verdict, consensus verdict, confirmed findings, rejected
 false positives, number of remediation rounds. Note if the separation was simulated.
+Include the audit plan summary: which clusters received depth A / B / C, which were
+checkpoint-audited and at what ref, what each remediation round re-audited, and any
+downgrade or sampling decision with its reason. A reader should be able to tell
+what was *not* subjected to the Breaker without asking.
 
 ## 8. Remaining issues
 Only genuine unresolved issues. If none: `None.`

@@ -179,6 +179,129 @@ func TestInTxTakesTheWriteLockAtBegin(t *testing.T) {
 	}
 }
 
+// TestInTxReportsItsWaitAndHoldWhenAsked is AC-01.4 (decision D-75, as amended
+// by TASK-01's gate): a caller that asks gets the two numbers spec §11 wants
+// measured, by value, a committed transaction fills them, and a refused one
+// reports zero — there is no Write to carry them on, and a number from a
+// transaction that did not land would be the write-wait figure of nothing.
+func TestInTxReportsItsWaitAndHoldWhenAsked(t *testing.T) {
+	db := openTemp(t, storage.Options{})
+
+	const hold = 20 * time.Millisecond
+	stats, err := storage.InTxMeasured(t.Context(), db.DB, func(context.Context, *sql.Tx) error {
+		time.Sleep(hold)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("InTxMeasured = %v, want no error", err)
+	}
+	if stats.Held < hold {
+		t.Errorf("stats.Held = %v, want at least the %v the body held the lock", stats.Held, hold)
+	}
+	if stats.Waited <= 0 || stats.Waited > time.Second {
+		t.Errorf("stats.Waited = %v on an idle database, want a small positive wait", stats.Waited)
+	}
+
+	// Each call reports its own transaction: an empty one after a held one
+	// does not carry the earlier hold.
+	again, err := storage.InTxMeasured(t.Context(), db.DB, func(context.Context, *sql.Tx) error { return nil })
+	if err != nil {
+		t.Fatalf("second InTxMeasured = %v, want no error", err)
+	}
+	if again.Held >= hold {
+		t.Errorf("stats.Held = %v for an empty transaction, want less than the %v the previous one held", again.Held, hold)
+	}
+
+	// A refused transaction reports nothing.
+	refused := errors.New("caller decided to abort")
+	rolledBack, err := storage.InTxMeasured(t.Context(), db.DB, func(context.Context, *sql.Tx) error {
+		time.Sleep(hold)
+		return refused
+	})
+	if !errors.Is(err, refused) {
+		t.Fatalf("InTxMeasured = %v, want the caller's refusal", err)
+	}
+	if rolledBack != (storage.TxStats{}) {
+		t.Errorf("stats = %+v for a rolled-back transaction, want zero", rolledBack)
+	}
+
+	// And InTx is the same transaction without the numbers.
+	if err := storage.InTx(t.Context(), db.DB, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+		t.Fatalf("InTx = %v, want no error", err)
+	}
+}
+
+// TestInTxMeasuredSharesNothingBetweenCallers is the Breaker finding that
+// reshaped the seam: the first version planted one *TxStats in a context, and
+// two goroutines under that context raced on it. By value there is nothing to
+// share; this runs under -race in `make verify` and is the assertion that stays
+// true.
+func TestInTxMeasuredSharesNothingBetweenCallers(t *testing.T) {
+	db := openTemp(t, storage.Options{})
+	ctx := t.Context()
+
+	const goroutines, each = 4, 20
+	var wg sync.WaitGroup
+	results := make([][]storage.TxStats, goroutines)
+	for g := range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range each {
+				stats, err := storage.InTxMeasured(ctx, db.DB, func(context.Context, *sql.Tx) error { return nil })
+				if err != nil {
+					t.Errorf("InTxMeasured = %v, want no error", err)
+					return
+				}
+				results[g] = append(results[g], stats)
+			}
+		}()
+	}
+	wg.Wait()
+
+	for g, stats := range results {
+		if len(stats) != each {
+			t.Errorf("goroutine %d recorded %d transactions, want %d", g, len(stats), each)
+		}
+	}
+}
+
+// TestInTxDoesNotRetryBegin is AC-01.5 and the negative half of decision D-74:
+// the busy budget is the connection's, spent inside SQLite's own handler, and a
+// refusal that reaches Go is final. A ladder here would multiply the budget.
+func TestInTxDoesNotRetryBegin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mindrail.db")
+	holder := openTemp(t, storage.Options{Path: path})
+	tx, err := holder.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx = %v, want no error", err)
+	}
+
+	// The lock is held for six budgets and then released. One attempt is
+	// refused at the first budget, well before the release; a loop that tried
+	// again would meet the released lock and succeed, which is the shape this
+	// test is written to turn red on — by outcome rather than by a stopwatch,
+	// so a slow machine cannot fake either answer.
+	const (
+		budget = 50 * time.Millisecond
+		hold   = 6 * budget
+	)
+	release := time.AfterFunc(hold, func() { _ = tx.Rollback() })
+	t.Cleanup(func() { release.Stop(); _ = tx.Rollback() })
+
+	contender := openTemp(t, storage.Options{Path: path, BusyTimeout: budget})
+
+	started := time.Now()
+	err = storage.InTx(t.Context(), contender.DB, func(context.Context, *sql.Tx) error { return nil })
+	elapsed := time.Since(started)
+	if !storage.IsBusy(err) {
+		t.Fatalf("InTx = %v after %v, want SQLITE_BUSY: BEGIN was tried again until the lock was released", err, elapsed)
+	}
+	if elapsed < budget {
+		t.Errorf("InTx refused after %v, before the %v budget the driver was told to wait", elapsed, budget)
+	}
+}
+
 // TestParameterizedSQLSurvivesInjectionLiteral is the spec §113 assertion: the
 // value below is data on every hop, never fragment of a statement.
 func TestParameterizedSQLSurvivesInjectionLiteral(t *testing.T) {

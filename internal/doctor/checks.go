@@ -8,12 +8,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/config"
 	"github.com/PsyChaos/mindrail/internal/git"
 	"github.com/PsyChaos/mindrail/internal/knowledge/loader"
 	"github.com/PsyChaos/mindrail/internal/knowledge/schema"
+	"github.com/PsyChaos/mindrail/internal/knowledge/validate"
 	"github.com/PsyChaos/mindrail/internal/workspace"
 )
 
@@ -681,27 +683,103 @@ func knowledgeResult(s Subject) Result {
 
 	fatal, degraded := splitProblems(s.Knowledge.Problems)
 	if len(fatal) > 0 {
-		result := failure(StateError, "Knowledge store not fully readable by this binary", diagnosis{
-			code: app.CodeKnowledgeSchemaUnsupported,
-			// The reader window belongs in the diagnostic, not among the
-			// remedies: "This binary reads schema 1." is a fact about the
-			// binary, and a next_action that cannot be carried out is not a
-			// next action (finding R8).
-			diagnostic: describeProblems(fatal) + "\nThis binary reads schema " + window + ".",
+		reading := unreadableAlso(diagnosis{
+			code:       app.CodeKnowledgeSchemaUnsupported,
+			diagnostic: describeProblems(fatal),
 			impact:     "This binary sees only part of the store, and acting on a partial view of the invariants is worse than refusing to act.",
 			next: []string{
 				"Upgrade Mindrail to a version whose reader window covers these records.",
 			},
+		}, degraded)
+		// The reader window belongs in the diagnostic, not among the remedies:
+		// "This binary reads schema 1." is a fact about the binary, and a
+		// next_action that cannot be carried out is not a next action (finding
+		// R8). It is appended last so it closes the account whether or not the
+		// loader also reported records it could not read for another reason.
+		reading.diagnostic += "\nThis binary reads schema " + window + "."
+
+		result := failure(StateError, "Knowledge store not fully readable by this binary", reading)
+		result.Details = details
+		return result
+	}
+
+	// Decision D-44: a fatal loader Problem outranks every finding, which is why
+	// the branch above returns before this one is reached. Steps 5-11 judge the
+	// records this binary read; a verdict computed over a store the binary has
+	// just admitted it cannot fully read would be a claim from incomplete data.
+	cycles, invalid := splitFindings(s.KnowledgeFindings)
+
+	// A cycle is the one fatal finding (decision D-39). It is reported ahead of
+	// every other finding because it costs the repository a different thing: a
+	// malformed record costs the records it names, while a lineage that closes
+	// on itself makes "which decision is current" unanswerable for every record
+	// in it.
+	if len(cycles) > 0 {
+		result := failure(StateError, "Knowledge store has a supersede cycle", unreadableAlso(diagnosis{
+			code:       app.CodeKnowledgeSupersedeCycle,
+			diagnostic: describeFindings(cycles, len(s.KnowledgeFindings)),
+			impact:     "No record in the cycle has a newest version, so every answer about which decision is current is wrong rather than merely incomplete.",
+			next:       findingRemedies(cycles),
+		}, degraded))
+		result.Details = details
+		return result
+	}
+
+	if len(invalid) > 0 {
+		result := failure(StateDegraded, "Knowledge store has invalid records", unreadableAlso(diagnosis{
+			code:       app.CodeKnowledgeInvalid,
+			diagnostic: describeFindings(invalid, len(s.KnowledgeFindings)),
+			impact:     invalidRecordsImpact(degraded),
+			next:       findingRemedies(invalid),
+		}, degraded))
+		result.Details = details
+		return result
+	}
+
+	// Decision D-51. A record that resolves outside the repository was never
+	// opened; what happened to it is that Mindrail declined to treat it as
+	// repository content, on the path alone. The loader draws that distinction
+	// deliberately (loader.escapingRecord) and publishes PATH_ESCAPES_ROOT for it,
+	// and this is the only place a consumer can observe it: a reading carries one
+	// Code, and until this branch existed every such record arrived under
+	// KNOWLEDGE_UNREADABLE with the summary "Knowledge store has unreadable
+	// records" and the remedy "Fix or remove <path>" — an account of a read
+	// failure that never happened, with a remedy that names nothing to fix
+	// (findings R-05, B-A6).
+	//
+	// This paragraph used to say the record "reads perfectly", and so did
+	// recordRemedy's. That is the claim escapingDiagnostic below now calls
+	// fabricated, and it was wrong for the same reason KNOWLEDGE_UNREADABLE was:
+	// a link pointing at a deleted or unopenable target reaches this branch
+	// identically, and nothing here has ever held its bytes. What the reading may
+	// say is where the record is, not what is in it (finding R4-M22).
+	//
+	// It is a homogeneity test and not a per-record one because a reading
+	// publishes exactly one Code. A store holding both classes keeps
+	// KNOWLEDGE_UNREADABLE — the reading that is wrong about neither, since a
+	// record the loader could not read is genuinely unreadable — and its summary
+	// and impact then name both classes rather than hiding one behind the other.
+	//
+	// Its rung is the degraded-problem rung it shares with the branch below: a
+	// fatal loader Problem still outranks it (D-44) and so does a cycle
+	// (D-39/D-43), and in those readings the escaping record is named by
+	// unreadableAlso in the words of its own class.
+	if allEscapeRoot(degraded) {
+		result := failure(StateDegraded, "Knowledge store has records that resolve outside the repository", diagnosis{
+			code:       app.CodePathEscapesRoot,
+			diagnostic: escapingDiagnostic(degraded),
+			impact:     escapingImpact(len(degraded)),
+			next:       recordRemedies(degraded),
 		})
 		result.Details = details
 		return result
 	}
 
 	if len(degraded) > 0 {
-		result := failure(StateDegraded, "Knowledge store has unreadable records", diagnosis{
+		result := failure(StateDegraded, degradedSummary(degraded), diagnosis{
 			code:       app.CodeKnowledgeUnreadable,
 			diagnostic: describeProblems(degraded),
-			impact:     "The reported records are invisible to every command; the rest of the store is unaffected.",
+			impact:     degradedImpact(degraded),
 			next:       recordRemedies(degraded),
 		})
 		result.Details = details
@@ -734,6 +812,18 @@ func WorkspaceCheck(s Subject) Check {
 		CheckSection: sectionWorkspace,
 		Fn:           func(context.Context) Result { return s.supersede(workspaceResult(s)) },
 	}
+}
+
+// schemaHasWorkspaceTable reports whether this database has the migration that
+// creates the workspaces table, which is the difference between "there is
+// nothing to query" and "the query found no row".
+func schemaHasWorkspaceTable(s Subject) bool {
+	for _, applied := range s.Migrations {
+		if applied.Version >= workspace.TableSchemaVersion {
+			return true
+		}
+	}
+	return false
 }
 
 func workspaceResult(s Subject) Result {
@@ -777,8 +867,18 @@ func workspaceResult(s Subject) Result {
 		// from a second process that opened the file between the create and the
 		// migration commit. Saying "the database was queried and holds no row"
 		// there asserts a query that could not have run (finding F16).
-		if s.PendingCount > 0 {
-			return failure(StateUnavailable, "Workspace not registered", diagnosis{
+		//
+		// The test is whether the migration that creates the table has been
+		// applied, not whether any migration is pending. Those were the same
+		// question until MR-003 added a second migration, and then the count
+		// answered "the table is missing" for every database an older binary had
+		// written — where the table is present and holds the row (finding F01).
+		//
+		// The reading is marked as no reading at all, because that is what it
+		// is: nothing was looked up, so `status` publishes not_observed rather
+		// than "observed, registered: false" (finding F41).
+		if !schemaHasWorkspaceTable(s) {
+			result := failure(StateUnavailable, "Workspace not registered", diagnosis{
 				code: app.CodeWorkspaceNotInitialized,
 				diagnostic: fmt.Sprintf(
 					"The runtime schema is not established — %d %s still pending — so there is no workspace table to query for %s.",
@@ -786,6 +886,11 @@ func workspaceResult(s Subject) Result {
 				impact: "Mindrail cannot attribute runtime state to this worktree until the runtime schema is in place.",
 				next:   []string{initCommand},
 			})
+			if result.Metadata == nil {
+				result.Metadata = map[string]string{}
+			}
+			result.Metadata[MetadataNothingRead] = "true"
+			return result
 		}
 
 		return failure(StateUnavailable, "Workspace not registered", diagnosis{
@@ -883,12 +988,332 @@ func splitProblems(problems []loader.Problem) (fatal, nonFatal []loader.Problem)
 	return fatal, nonFatal
 }
 
+// escapeRootCount counts the records in a set that Mindrail declined to treat as
+// repository content, as opposed to the ones it could not read.
+//
+// The key is loader.Problem.Code and not the prose in Message, for the reason
+// splitFindings keys on Code: the code is the value a consumer branches on, and
+// a classification taken from a sentence would disagree with the published code
+// the first time the sentence is reworded.
+func escapeRootCount(problems []loader.Problem) int {
+	escaping := 0
+	for _, problem := range problems {
+		if problem.Code == app.CodePathEscapesRoot {
+			escaping++
+		}
+	}
+	return escaping
+}
+
+// allEscapeRoot reports whether every record in a non-empty set resolves outside
+// the repository. An empty set is not homogeneously anything, so it is false:
+// the branch guarded by this function must not fire on a store with nothing
+// wrong with it.
+func allEscapeRoot(problems []loader.Problem) bool {
+	return len(problems) > 0 && escapeRootCount(problems) == len(problems)
+}
+
+// recordNouns names what a set of loader problems is, so that a tail counting
+// them counts something the reader can identify.
+//
+// A set that is homogeneously escaping is not a set of records this binary could
+// not read, and "... and 5 further unreadable records" said about five files
+// that were never opened is the same false statement the KNOWLEDGE_UNREADABLE
+// code was making about them (decision D-51).
+//
+// A mixed set gets a third noun rather than borrowing one of the two. Borrowing
+// the unreadable one is what the mixed reading does with the *code*, and that is
+// sound because the code has to be a single value and KNOWLEDGE_UNREADABLE is
+// wrong about none of the set — but a noun is not a code. It appears in a
+// counting sentence directly below an impact that has just split the same set
+// into "N could not be read" and "M resolve outside the repository", so filing
+// all of them under one of those two words makes the reading contradict itself
+// about records the reader can see listed above.
+func recordNouns(problems []loader.Problem) (one, many string) {
+	escaping := escapeRootCount(problems)
+	switch {
+	case escaping == 0:
+		return "unreadable record", "unreadable records"
+	case escaping == len(problems):
+		return "record resolving outside the repository", "records resolving outside the repository"
+	default:
+		return "unreadable or declined record", "unreadable or declined records"
+	}
+}
+
 func describeProblems(problems []loader.Problem) string {
 	lines := make([]string, 0, len(problems))
 	for _, problem := range problems {
 		lines = append(lines, problem.Path+": "+problem.Message)
 	}
-	return strings.Join(lines, "\n")
+	one, many := recordNouns(problems)
+	// The set this sentence counts is the slice it was handed and not every
+	// problem in the store, because the reading prints the loader's problems in
+	// blocks that partition them: the fatal-branch reading renders the fatal
+	// records here, and the degraded ones a few lines below under alsoHeading,
+	// which carries their own count. A store-wide total here would say "not
+	// listed here" about records listed immediately underneath.
+	return describeBounded(lines, len(lines), one, many)
+}
+
+// unreadableAlso names the records the loader could not read on a reading the
+// precedence ladder has already given to something else.
+//
+// AC-06.1 fixes that ladder — a fatal loader problem outranks every finding, a
+// cycle outranks every other finding, and any finding outranks a merely
+// unreadable record — so this function changes no State, no Code and no Summary.
+// The ladder decides which condition names the reading. It does not license
+// silence about the others, and silence is what was there: a store carrying both
+// an unreadable record and a finding reported KNOWLEDGE_INVALID and named the
+// unreadable file in no diagnostic and no next_action on any command. `status`
+// published the count without the name, `doctor` published neither, so the file
+// the reader had to open appeared nowhere at all.
+//
+// The name goes in both fields because neither is sufficient alone.
+// status.componentFrom keeps next_action and drops Diagnostic and Impact (MR-001
+// finding R6), so a file named only in the diagnostic is invisible exactly where
+// status prints the reading; and a remedy with no account behind it does not say
+// why the file is named. recordRemedies supplies the sentence rather than a new
+// one, so the phrasing stays the one the CLI's remedy classifier already reads
+// and the two renderings of an unreadable record do not drift apart.
+func unreadableAlso(d diagnosis, degraded []loader.Problem) diagnosis {
+	if len(degraded) == 0 {
+		return d
+	}
+
+	d.diagnostic += "\n" + alsoHeading(degraded) + "\n" + describeProblems(degraded)
+	d.next = slices.Concat(d.next, recordRemedies(degraded))
+	return d
+}
+
+// alsoHeading introduces the degraded records on a reading the ladder gave to
+// something else, in the words of the class they belong to.
+//
+// "The loader could not read 1 further record" is a false sentence about a
+// record that resolves outside the repository: the loader read nothing from it
+// because Mindrail declined to treat it as repository content, not because it
+// could not (decision D-51). The distinction survives the ladder — a record
+// reported below a cycle is still the same record — so the heading has to carry
+// it, and a mixed set names both counts rather than filing one class under the
+// other's sentence.
+func alsoHeading(degraded []loader.Problem) string {
+	escaping := escapeRootCount(degraded)
+	unread := len(degraded) - escaping
+
+	switch {
+	case escaping == 0:
+		return fmt.Sprintf("The loader could not read %d further %s:",
+			unread, plural(unread, "record", "records"))
+	case unread == 0:
+		return fmt.Sprintf("Mindrail declined %d further %s as repository content, because %s outside the repository root:",
+			escaping, plural(escaping, "record", "records"), plural(escaping, "it resolves", "they resolve"))
+	default:
+		return fmt.Sprintf("The loader could not read %d further %s, and Mindrail declined %d more that %s outside the repository root:",
+			unread, plural(unread, "record", "records"), escaping, plural(escaping, "resolves", "resolve"))
+	}
+}
+
+// degradedSummary is the one-line reading for a degraded set that is not
+// homogeneously escaping.
+//
+// A mixed set stays under KNOWLEDGE_UNREADABLE (decision D-51) because that code
+// is wrong about none of it, but the summary is the only field `status` prints
+// beside the code, so a mixed set that read "Knowledge store has unreadable
+// records" would hide the escaping half entirely.
+func degradedSummary(degraded []loader.Problem) string {
+	if escapeRootCount(degraded) > 0 {
+		return "Knowledge store has unreadable records and records that resolve outside the repository"
+	}
+	return "Knowledge store has unreadable records"
+}
+
+// degradedImpact says what a degraded set costs. The homogeneous unreadable
+// sentence is the one this reading has always printed and is left exactly as it
+// was, down to the byte; a set that also holds escaping records earns the
+// account that counts both classes, because "the reported records are invisible
+// because they could not be read" is false about half of that set.
+func degradedImpact(degraded []loader.Problem) string {
+	if escapeRootCount(degraded) > 0 {
+		return degradedAccount(degraded) + "; the rest of the store is unaffected."
+	}
+	return "The reported records are invisible to every command; the rest of the store is unaffected."
+}
+
+// escapingDiagnostic is this package's own account of a homogeneously escaping
+// degraded set.
+//
+// The lead sentence is written here rather than assembled from the loader's
+// Problem.Message alone. The loader's message does say it today, and a
+// diagnostic that only said it because that sentence happened to would be a
+// property of another package's prose: a fixture carrying a bare message would
+// leave this reading claiming nothing at all about what happened. The per-record
+// accounts follow it, so the file names AC-06.2 requires are still there.
+//
+// It says the file was not opened, and deliberately does not say the file is
+// readable. The two sound alike and only one of them is something this binary
+// knows: PATH_ESCAPES_ROOT is decided by resolving the path, before any read is
+// attempted (loader.recordFile), so a link pointing at a target that does not
+// exist, or that cannot be opened, arrives here exactly like one pointing at a
+// perfect record. Asserting "the file is readable" about that link is the same
+// fabricated claim about a file this run never held that decision D-51 exists to
+// remove, inverted — the reading would be wrong in the other direction and just
+// as confidently.
+func escapingDiagnostic(escaping []loader.Problem) string {
+	n := len(escaping)
+	return fmt.Sprintf(
+		"Mindrail declined to treat %d %s under %s as repository content, because %s outside the repository root. %s not opened at all: what is wrong is where the bytes live, not what they say.\n",
+		n, plural(n, "record", "records"), loader.StoreRoot,
+		plural(n, "it resolves", "they resolve"),
+		plural(n, "The file was", "The files were"),
+	) + describeProblems(escaping)
+}
+
+// escapingImpact says what declining a record costs, which is the record and
+// nothing else (decision D-06). It does not say the record could not be read,
+// because that is not what happened to it.
+//
+// Both verbs are pluralised with their subject. That is not fussiness: this
+// field is published verbatim in `doctor --json` and shown to a reader, and the
+// subject moved to the plural in the D-51 branch while the verbs stayed
+// singular, so every store with two or more declined records printed a sentence
+// that does not parse. It went unnoticed because no test read this field at all
+// — TestTheDeclinedImpactAgreesWithItsOwnSubject is now the one that does.
+func escapingImpact(n int) string {
+	return fmt.Sprintf("%s no decision and no invariant into this repository, so whatever %s is not in force here; the rest of the store is unaffected.",
+		plural(n, "The declined record carries", "The declined records carry"),
+		plural(n, "it records", "they record"))
+}
+
+// invalidRecordsImpact says what a store of invalid records costs, and does not
+// say the rest of it is intact when part of it could not be read.
+//
+// The clause is computed rather than constant because it is a claim: "the rest
+// of the store is unaffected" is true of a store whose only defect is records
+// that break their schema, and false of one that also holds records no command
+// can see. Asserting it on both was the same shape as the finding above — the
+// reading told the reader about one condition and quietly denied the other.
+func invalidRecordsImpact(degraded []loader.Problem) string {
+	const wrong = "The reported records are readable but wrong, so anything derived from them rests on a record that breaks the contract this repository declares"
+	if len(degraded) == 0 {
+		return wrong + "; the rest of the store is unaffected."
+	}
+	return fmt.Sprintf("%s, and the rest of the store is not intact either: %s.", wrong, degradedAccount(degraded))
+}
+
+// degradedAccount says what a degraded set costs, counting each class in its own
+// words.
+//
+// "could not be read at all" is a claim about the loader's attempt, and it is
+// false of a record that resolves outside the repository: there was no attempt —
+// Mindrail declined it on its path, before opening anything (decision D-51, as
+// amended after audit round 4). The account is shared by every reading
+// that has to describe a degraded set, so two readings of one store cannot drift
+// into describing it differently.
+func degradedAccount(degraded []loader.Problem) string {
+	escaping := escapeRootCount(degraded)
+	unread := len(degraded) - escaping
+
+	switch {
+	case escaping == 0:
+		return fmt.Sprintf("%d %s could not be read at all and %s invisible to every command",
+			unread, plural(unread, "record", "records"), plural(unread, "is", "are"))
+	case unread == 0:
+		return fmt.Sprintf("%d %s outside the repository root and %s declined rather than read, so %s invisible to every command",
+			escaping, plural(escaping, "record resolves", "records resolve"),
+			plural(escaping, "was", "were"), plural(escaping, "it is", "they are"))
+	default:
+		return fmt.Sprintf("%d %s could not be read at all, and %d %s outside the repository root and %s declined rather than read, leaving all %d invisible to every command",
+			unread, plural(unread, "record", "records"),
+			escaping, plural(escaping, "record resolves", "records resolve"),
+			plural(escaping, "was", "were"), len(degraded))
+	}
+}
+
+// maxDiagnosticLines and maxDiagnosticLineBytes bound the account a knowledge
+// reading prints. maxNamedRecords bounds the remedies beside it.
+//
+// AC-06.4 asked for that remedy cap and it was applied where it was asked for;
+// this pair is not an extension of it but the bound the diagnostic never had.
+// The diagnostic was unbounded in two independent directions, and closing either
+// alone leaves the other open.
+//
+// The first direction is how many accounts are printed: describeProblems and
+// describeFindings joined every problem and every finding in the store, so the
+// report grew with the repository. Measured on this tree, `doctor --json` over a
+// healthy store is 2,164 / 2,175 / 2,186 bytes at 10 / 100 / 1000 records — flat
+// — and was 6,009 / 28,140 / 248,652 bytes over the same counts of records
+// carrying one short finding each.
+//
+// The second is how long one account is. The message comes from the package that
+// detected the condition, and a finding that names every record it collides with
+// is a single line that grows with the store on its own: 1000 records sharing
+// one id produced a 45,386,439-byte report from 1,999 lines, 1,000 of which were
+// 45,134 bytes each. Capping the number of lines alone would still have printed
+// 451 KB of it.
+//
+// Both bounds sit far above anything this binary writes for a store that is
+// merely broken — the longest real account measured is 240 bytes — so an
+// ordinary failing repository renders exactly as it did before, and only a
+// report that has stopped being readable is abbreviated.
+const (
+	maxDiagnosticLines     = 10
+	maxDiagnosticLineBytes = 1000
+)
+
+// describeBounded renders the accounts a reading can print and counts the ones
+// it cannot.
+//
+// Nothing is dropped in silence. Accounts past the line cap are counted in a
+// tail that says where they are, and an account past the byte cap keeps its
+// head and carries the number of bytes it lost. Keeping the head is what makes
+// the truncation safe to do here: both callers write the record path first and
+// the rule second, so the part a cut can reach is the end of the prose and never
+// the file name AC-06.2 requires the reading to carry.
+//
+// total is the size of the set the tail sentence names, which is not always
+// len(lines). The tail says "and N further <noun> under .mindrail/knowledge" —
+// a statement about the store, not about the block — and it was computed from
+// the block: a 25-record cycle beside five schema-invalid records rendered the
+// ten cycle accounts the cap allows and published "... and 15 further findings",
+// while `status` published 30 for the same store (finding B-A2). The number and
+// the words now name one set, and every caller states which set that is.
+//
+// A total below the number of accounts on hand needs no guard of its own: the
+// tail is printed on a positive omission, so a caller that understates prints
+// every account it has and claims nothing beyond them. The floor that was
+// written here for it was a branch nothing could reach and nothing could
+// falsify, which is the shape of guard MR-001's second audit round was spent
+// deleting.
+func describeBounded(lines []string, total int, one, many string) string {
+	shown := min(len(lines), maxDiagnosticLines)
+
+	out := make([]string, 0, shown+1)
+	for _, line := range lines[:shown] {
+		out = append(out, truncateAccount(line))
+	}
+	if omitted := total - shown; omitted > 0 {
+		out = append(out, fmt.Sprintf("... and %d further %s under %s, not listed here.",
+			omitted, plural(omitted, one, many), loader.StoreRoot))
+	}
+	return strings.Join(out, "\n")
+}
+
+// truncateAccount cuts one account to maxDiagnosticLineBytes and says how much
+// it cut.
+//
+// The cut lands on a rune boundary: a diagnostic is carried through a JSON
+// envelope, and half a rune there is a byte sequence the encoder has to replace
+// rather than a shorter sentence.
+func truncateAccount(line string) string {
+	if len(line) <= maxDiagnosticLineBytes {
+		return line
+	}
+
+	cut := maxDiagnosticLineBytes
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut] + fmt.Sprintf("... (%d further bytes not shown)", len(line)-cut)
 }
 
 // maxNamedRecords bounds how many offending files a remedy lists by name. A
@@ -906,14 +1331,209 @@ func recordRemedies(problems []loader.Problem) []string {
 	actions := make([]string, 0, min(len(problems), maxNamedRecords)+1)
 	for i, problem := range problems {
 		if i == maxNamedRecords {
-			remaining := len(problems) - maxNamedRecords
-			actions = append(actions, fmt.Sprintf("Fix or remove the remaining %d unreadable %s under %s.",
+			actions = append(actions, remainingRecordRemedy(problems[maxNamedRecords:]))
+			break
+		}
+		actions = append(actions, recordRemedy(problem))
+	}
+	return actions
+}
+
+// recordRemedy is what one degraded record asks of the reader.
+//
+// The two classes ask for different things, and that difference is the whole of
+// decision D-51. "Fix or remove <path>" is the right sentence for a file this
+// binary could not read; it is the wrong one for a file that was declined
+// because it resolves outside the repository, where the thing to act on is the
+// link and nothing in the file is under discussion at all.
+//
+// The reason is where the record is, not that its contents are fine. This
+// comment used to say the declined file "reads perfectly", which is the claim
+// escapingDiagnostic calls fabricated: a link pointing at a deleted target is
+// declined identically, and the remedy below is right for it too — replace the
+// link, or remove it — precisely because the remedy is about the link.
+func recordRemedy(problem loader.Problem) string {
+	if problem.Code == app.CodePathEscapesRoot {
+		return "Replace the link at " + problem.Path + " with the record itself, or remove it."
+	}
+	return "Fix or remove " + problem.Path + "."
+}
+
+// remainingRecordRemedy closes the remedy list once maxNamedRecords paths have
+// been named.
+//
+// It counts the records it did not name and no others: the set is exactly the
+// tail of the slice recordRemedies was handed, so shown + remaining is that
+// slice and never the store. That matters on the fatal branch, where the
+// degraded records are the only ones this sentence applies to — the fatal ones
+// are repaired by upgrading the binary, and counting them into an instruction to
+// fix or remove files would ask the reader to delete records that are merely too
+// new to read.
+//
+// The arms match recordRemedy's, one class at a time, because they are the same
+// instruction addressed to a group. A mixed tail earns both halves: the ten
+// remedies immediately above it were each written in their own record's words,
+// and a tail that told the reader to "fix or remove the remaining 4 unreadable
+// records" when two of them are links that were never opened asks for an edit to
+// a file with nothing in it to edit — which is the exact sentence decision D-51
+// exists to stop this package printing.
+func remainingRecordRemedy(rest []loader.Problem) string {
+	escaping := escapeRootCount(rest)
+	unread := len(rest) - escaping
+
+	switch {
+	case escaping == 0:
+		return fmt.Sprintf("Fix or remove the remaining %d unreadable %s under %s.",
+			unread, plural(unread, "record", "records"), loader.StoreRoot)
+	case unread == 0:
+		return fmt.Sprintf("Replace or remove the remaining %d %s under %s that %s outside the repository root.",
+			escaping, plural(escaping, "link", "links"), loader.StoreRoot,
+			plural(escaping, "resolves", "resolve"))
+	default:
+		return fmt.Sprintf("Fix or remove the remaining %d unreadable %s under %s, and replace or remove the %d %s there that %s outside the repository root.",
+			unread, plural(unread, "record", "records"), loader.StoreRoot,
+			escaping, plural(escaping, "link", "links"),
+			plural(escaping, "resolves", "resolve"))
+	}
+}
+
+// splitFindings separates the one fatal finding class from the rest, keyed on
+// the Code the branch above publishes rather than on the Fatal flag beside it.
+//
+// The code is the right key because it is the value a consumer branches on:
+// `status` publishes exactly one Code per component, and a finding filed here as
+// a cycle is a finding reported to the world as KNOWLEDGE_SUPERSEDE_CYCLE. Using
+// Fatal instead would let the two disagree, and the disagreement would be
+// invisible — the state would say ERROR while the code said the records were
+// merely invalid (decisions D-39, D-43).
+func splitFindings(findings []validate.Finding) (cycles, invalid []validate.Finding) {
+	for _, finding := range findings {
+		if finding.Code == app.CodeKnowledgeSupersedeCycle {
+			cycles = append(cycles, finding)
+			continue
+		}
+		invalid = append(invalid, finding)
+	}
+	return cycles, invalid
+}
+
+// knowledgeStepNames spells spec §95's pipeline steps in the words the
+// specification, the design and internal/knowledge/validate's package doc all
+// use. A report that says "step 6 (filename <-> kind/id consistency)" names the
+// same rule those three documents name, which is the point of the step numbers
+// being the specification's.
+var knowledgeStepNames = map[validate.Step]string{
+	validate.StepSchema:                 "JSON Schema validation",
+	validate.StepFilenameConsistency:    "filename <-> kind/id consistency",
+	validate.StepUniqueID:               "unique ID",
+	validate.StepSupersedeTarget:        "supersede target",
+	validate.StepSupersedeCycle:         "supersede DAG/cycle",
+	validate.StepDuplicateActiveLineage: "duplicate active lineage",
+	validate.StepScopeSyntax:            "scope syntax",
+}
+
+// knowledgeStep renders one step for a reader.
+//
+// A step this binary has no name for is still reported by its number rather
+// than dropped or renamed. Steps 12, 13 and 14 exist in the specification and
+// are deferred, not absent (AC-12.2), so the day one of them starts producing
+// findings the report says "step 12" instead of quietly attributing it to a
+// rule this table does know.
+func knowledgeStep(step validate.Step) string {
+	name, known := knowledgeStepNames[step]
+	if !known {
+		return fmt.Sprintf("step %d", int(step))
+	}
+	return fmt.Sprintf("step %d (%s)", int(step), name)
+}
+
+// describeFindings renders what steps 5-11 found.
+//
+// It is deliberately not describeProblems (AC-06.2). That function renders the
+// loader's account, every line of which means "this binary could not read the
+// record"; every line here means "this binary read it and it is wrong", and the
+// two have opposite remedies (decision D-38). The rule that was broken is named
+// as well as the file, because "wrong" without "which rule" leaves the reader
+// with nothing to correct.
+//
+// The path is written by this function rather than left to the finding's own
+// message. The messages do carry it today, but a diagnostic that names the file
+// only when the sentence inside it happens to would be a property of prose
+// rather than of the report.
+//
+// total is every finding steps 5-11 produced for the store, not just the class
+// this reading is rendering. The precedence ladder hands one class to the
+// diagnostic and says nothing about the other, so the omission tail is the only
+// place the rest of them are counted at all; counting the block instead made the
+// tail understate the store by the whole of the other class (finding B-A2).
+func describeFindings(findings []validate.Finding, total int) string {
+	lines := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		lines = append(lines, finding.Path+": "+knowledgeStep(finding.Step)+": "+finding.Message)
+	}
+	return describeBounded(lines, total, "finding", "findings")
+}
+
+// findingRemedyByStep is the action each rule asks of the reader.
+//
+// One sentence per step rather than one shared "fix the reported records": the
+// steps break in different ways and are repaired differently, and a remedy that
+// does not say what to change is the same unactionable field finding R6 was
+// about. Each carries a %s for the offending path, because status.componentFrom
+// drops Diagnostic and Impact and keeps only these sentences (AC-06.4).
+var findingRemedyByStep = map[validate.Step]string{
+	validate.StepSchema:                 "Correct %s so it satisfies the knowledge schema document for its kind.",
+	validate.StepFilenameConsistency:    "Rename %s, or change the id inside it, so the file name and the id agree.",
+	validate.StepUniqueID:               "Give %s an id no other record carries, or delete whichever copy is redundant.",
+	validate.StepSupersedeTarget:        "Add the record %s supersedes, or drop that id from its supersedes list.",
+	validate.StepSupersedeCycle:         "Break the supersede cycle by dropping the superseded id from %s.",
+	validate.StepDuplicateActiveLineage: "Set status \"superseded\" on %s if it is not the current record of its lineage.",
+	validate.StepScopeSyntax:            "Correct the scope in %s to a level from the enum and a repository-relative forward-slash target.",
+}
+
+// findingRemedies names the records to fix, one action per record.
+//
+// One action per *record*, not per finding: a record that breaks six schema
+// rules is one file to open, and printing the same path six times pushes the
+// other offending files off the end of the maxNamedRecords cap. The step whose
+// remedy is printed is the first one reported against that path, which is the
+// lowest-numbered step because Check sorts by (Path, Step, ...) — and the lowest
+// step is the right one to lead with, since a record that fails step 5 was never
+// asked steps 6-11 (decision D-40).
+func findingRemedies(findings []validate.Finding) []string {
+	paths := make([]string, 0, len(findings))
+	step := make(map[string]validate.Step, len(findings))
+	for _, finding := range findings {
+		if _, seen := step[finding.Path]; seen {
+			continue
+		}
+		step[finding.Path] = finding.Step
+		paths = append(paths, finding.Path)
+	}
+
+	actions := make([]string, 0, min(len(paths), maxNamedRecords)+1)
+	for i, path := range paths {
+		if i == maxNamedRecords {
+			remaining := len(paths) - maxNamedRecords
+			actions = append(actions, fmt.Sprintf("Correct the remaining %d reported %s under %s.",
 				remaining, plural(remaining, "record", "records"), loader.StoreRoot))
 			break
 		}
-		actions = append(actions, "Fix or remove "+problem.Path+".")
+		actions = append(actions, fmt.Sprintf(remedyFormatFor(step[path]), path))
 	}
 	return actions
+}
+
+// remedyFormatFor falls back to naming the file alone when a step has no remedy
+// of its own. It is reachable the same day knowledgeStep's fallback is — a
+// deferred step starting to report — and it exists for the same reason: a
+// finding with no sentence for it must still leave the reader a file to open,
+// not an empty next_action that assertDiagnosable would be right to reject.
+func remedyFormatFor(step validate.Step) string {
+	if format, known := findingRemedyByStep[step]; known {
+		return format
+	}
+	return "Correct %s, which this binary read and rejected."
 }
 
 // KnowledgeWriteSchemaVersion reports the schema version this binary stamps on

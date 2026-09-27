@@ -10,13 +10,17 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/cli"
+	mindrailMCP "github.com/PsyChaos/mindrail/internal/mcp"
 )
 
 func main() {
 	ctx, stop := app.RootContext()
 	defer stop()
 
-	err := cli.Execute(ctx)
+	err := cli.ExecuteWith(ctx, os.Args[1:], cli.Options{
+		RunMCP:       mindrailMCP.RunStdio,
+		RunDashboard: mindrailMCP.RunDashboard,
+	})
 
 	// The command has drained its own application by the time Execute returns:
 	// every command registers the shutdown before it starts anything, so the

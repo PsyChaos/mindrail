@@ -98,12 +98,6 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	return openWithinBusyBudget(ctx, opts, maxConns)
 }
 
-// openPollInterval is how long a blocked Open waits before looking again. It is
-// a flat interval on purpose: the bounded exponential ladder and
-// MINDRAIL_BUSY_RETRYABLE belong to MR-004, and shipping half of that ladder
-// here would make the real one harder to introduce, not easier.
-const openPollInterval = 20 * time.Millisecond
-
 // openWithinBusyBudget is decision D-24's "the loser blocks on
 // busy_timeout=5000 and then observes the applied set", applied at the point
 // where it actually breaks.
@@ -118,32 +112,33 @@ const openPollInterval = 20 * time.Millisecond
 //
 // The budget is the same busy_timeout the connection itself would have honoured,
 // so the total time a caller can spend inside Open stays inside the D-08
-// shutdown budget.
+// shutdown budget. The wait between attempts is the jittered ladder of spec
+// §11 (decision D-74); it was a flat 20 ms poll until MR-004, because the
+// ladder and the code that names its exhaustion were that milestone's.
 func openWithinBusyBudget(ctx context.Context, opts Options, maxConns int) (*DB, error) {
-	deadline := time.Now().Add(busyBudget(opts.BusyTimeout))
+	return waitOpen(ctx, opts.Path, busyBudget(opts.BusyTimeout), defaultRetrier,
+		func() (*DB, error) { return openOnce(ctx, opts, maxConns) })
+}
 
-	for {
-		db, err := openOnce(ctx, opts, maxConns)
-		if err == nil {
-			return db, nil
-		}
-		if !isBusyError(err) || ctx.Err() != nil {
-			return nil, err
-		}
+// waitOpen is the retrying half of openWithinBusyBudget, with the attempt and
+// the retrier as parameters so the ladder and the exhaustion can be asserted
+// without a second process and without sleeping.
+func waitOpen(ctx context.Context, path string, budget time.Duration, r retrier,
+	attempt func() (*DB, error)) (*DB, error) {
 
-		wait := min(openPollInterval, time.Until(deadline))
-		if wait <= 0 {
-			return nil, err
-		}
-
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, err
-		case <-timer.C:
-		}
+	var db *DB
+	waited, err := waitBusy(ctx, budget, r, func() error {
+		var attemptErr error
+		db, attemptErr = attempt()
+		return attemptErr
+	})
+	if err == nil {
+		return db, nil
 	}
+	if isBusyError(err) {
+		return nil, busyOpenFailure(path, waited, err)
+	}
+	return nil, err
 }
 
 // busyBudget is the wall-clock the caller has agreed to wait for a lock, which
@@ -348,14 +343,18 @@ func classifyOpenError(path string, cause error) error {
 	case isDiskFullError(cause):
 		return diskFullOpenFailure(path, cause)
 	case isBusyError(cause):
-		// Left alone deliberately, and this is the guard rather than an
-		// optimisation. openWithinBusyBudget decides whether to wait by asking
-		// isBusyError of what this returns, so a diagnosis that replaced the
-		// driver's error here would turn a lock another `mindrail init` releases
-		// a millisecond later into a permanent failure. It also keeps the probe
-		// below off the retry loop, which runs this every 20ms for up to five
-		// seconds.
-		return openFailure(path, cause)
+		// Handed through bare, and this is the guard rather than an
+		// optimisation. waitOpen decides whether to wait by asking isBusyError
+		// of what this returns, so a diagnosis that replaced the driver's error
+		// here would turn a lock another `mindrail init` releases a millisecond
+		// later into a permanent failure; and waitOpen is the one caller, so
+		// it is waitOpen that names the exhaustion, once. This branch used to
+		// return openFailure, and the busy exhaustion then carried that object
+		// in its cause — one error naming two codes, RUNTIME_DB_UNAVAILABLE
+		// inside MINDRAIL_BUSY_RETRYABLE (TASK-01's Breaker). It also keeps the
+		// probe below off the retry loop, which runs this on every step of the
+		// ladder for up to five seconds.
+		return cause
 	}
 
 	// One condition the driver's result code cannot name, so the filesystem is
@@ -505,6 +504,30 @@ func openFailure(path string, cause error) error {
 		"Check that the Git common directory exists and is writable.",
 		"Run `mindrail init` if this repository has not been initialised yet.",
 	).WithMetadata("path", path).WithCause(fmt.Errorf("%w: %w", ErrOpenFailed, cause))
+}
+
+// busyOpenFailure reports a database another process held for the whole open
+// budget.
+//
+// It is MINDRAIL_BUSY_RETRYABLE, not RUNTIME_DB_UNAVAILABLE: nothing is wrong
+// with the database, and the remedy openFailure prints for that code — check
+// the Git common directory, run `mindrail init` — is a dead end over a file
+// that another `mindrail init` is creating at this moment. The one thing the
+// caller can do is come back, and the code says so (decision D-74). The wait
+// is published so a caller can tell a five-second budget from a cancelled one.
+func busyOpenFailure(path string, waited time.Duration, cause error) error {
+	return app.NewError(
+		app.CodeBusyRetryable,
+		app.KindUnavailable,
+		"another process held the runtime database at "+path+" for the whole "+
+			waited.Round(time.Millisecond).String()+" Mindrail waited to open it",
+		"Nothing was written and nothing is damaged; the database is being created or written by another Mindrail command.",
+		"Run the command again once the other Mindrail command has finished.",
+	).
+		WithMetadata("path", path).
+		WithMetadata("condition", "locked").
+		WithMetadata("waited_ms", strconv.FormatInt(waited.Milliseconds(), 10)).
+		WithCause(fmt.Errorf("%w: %w", ErrBusy, cause))
 }
 
 // corruptFailure reports a file that is not a usable SQLite database.

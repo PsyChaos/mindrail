@@ -265,15 +265,25 @@ func haltError(h halt) error {
 // The mapping lives here rather than in app because app is a leaf that knows
 // nothing about which subsystem raised a code; doctor is the first layer that
 // sees them all together. Codes not listed are ordinary operation failures:
-// a migration that did not run, a schema this binary cannot read, a workspace
-// that could not be recorded. All of those ran and failed, which is exit 1.
+// a migration that did not run, a schema this binary cannot read, a supersede
+// lineage with no end, a workspace that could not be recorded. All of those ran
+// and failed, which is exit 1.
+//
+// Two registered codes never reach this function, and are deliberately absent
+// rather than listed: WORKSPACE_NOT_INITIALIZED and KNOWLEDGE_INVALID are
+// carried by readings that are not ERROR, and errorFrom is only ever asked
+// about an ERROR one (Report.Err) or about the reading that halted the startup
+// sequence. Adding a case for either would be a branch no mutation could
+// falsify, which is the kind of guard MR-001's second audit round was spent
+// removing. The fall-through is what they get, and it is unreachable.
 func kindForCode(c app.Code) app.Kind {
 	switch c {
 	case app.CodeNotAGitRepository, app.CodeBareRepository, app.CodeConfigInvalid, app.CodePathEscapesRoot:
 		// Deterministic, user-correctable placement or configuration.
 		return app.KindUsage
 	case app.CodeGitUnavailable, app.CodeGitTimeout, app.CodeRuntimePathUnwritable,
-		app.CodeRuntimeDBUnavailable, app.CodeRuntimeDBCorrupt, app.CodeStartupIncomplete:
+		app.CodeRuntimeDBUnavailable, app.CodeRuntimeDBCorrupt, app.CodeStartupIncomplete,
+		app.CodeBusyRetryable:
 		// Environment conditions: a missing tool, an unwritable path, a database
 		// that is locked or damaged.
 		return app.KindUnavailable

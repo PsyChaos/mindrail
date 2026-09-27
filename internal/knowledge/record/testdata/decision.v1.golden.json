@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "decision",
+  "id": "DEC-0042",
+  "status": "active",
+  "created_at": "2026-01-02T03:04:05Z",
+  "title": "Validate knowledge records against the shipped schema documents",
+  "context": "Two implementations of one rule drift, and then both claim to be the rule.",
+  "decision": "Step 5 evaluates every record against the embedded JSON Schema document its kind names.",
+  "consequences": "Changing a rule edits one document rather than a document and a package.",
+  "supersedes": [
+    "DEC-0007",
+    "DEC-0011"
+  ],
+  "scope": {
+    "level": "PROJECT"
+  },
+  "tags": [
+    "knowledge",
+    "validation"
+  ]
+}

@@ -97,14 +97,29 @@ func WriteFailure(ctx context.Context, q Querier, what string, cause error) *app
 // clear on its own, which is why decision D-03 rates it unavailable rather than
 // failed. The remedy is to run the command again, and it can succeed -- the
 // other process finishes and the lock is released.
+//
+// The code is MINDRAIL_BUSY_RETRYABLE, spec §11's name for exactly this, which
+// decision D-18 reserved under the MINDRAIL_ prefix and decision D-74 assigns.
+// It was RUNTIME_DB_UNAVAILABLE until MR-004, sharing a code with a corrupt
+// path and a missing directory — conditions whose remedies cannot succeed here
+// — and a caller that retries on a lock could not tell it apart from them
+// without reading the metadata. The wait is published when the refusal came
+// from BEGIN, which knows it; a busy from a later statement carries no wait,
+// because none was measured.
 func busyFailure(what string, cause error) *app.DomainError {
-	return app.NewError(
-		app.CodeRuntimeDBUnavailable,
+	failure := app.NewError(
+		app.CodeBusyRetryable,
 		app.KindUnavailable,
 		"another process holds the runtime database's write lock, so Mindrail could not "+what,
 		"Nothing was written and nothing is damaged; the database is in use by another Mindrail command.",
 		"Wait for the other Mindrail command to finish, then run this one again.",
 	).WithMetadata("condition", "locked").WithCause(fmt.Errorf("%w: %w", ErrBusy, cause))
+
+	var refused *beginBusy
+	if errors.As(cause, &refused) {
+		failure = failure.WithMetadata("waited_ms", strconv.FormatInt(refused.waited.Milliseconds(), 10))
+	}
+	return failure
 }
 
 // readOnlyWriteFailure reports a database that can be read and not written.

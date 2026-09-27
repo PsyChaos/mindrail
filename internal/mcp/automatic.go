@@ -1,0 +1,315 @@
+package mcp
+
+import (
+	"context"
+	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/changes"
+	"github.com/PsyChaos/mindrail/internal/coordination"
+	"github.com/PsyChaos/mindrail/internal/status"
+	"github.com/PsyChaos/mindrail/internal/workflow"
+)
+
+// automaticHeartbeat is the narrow lifecycle the MCP adapter needs. Keeping
+// it behind this interface makes connection cleanup testable without teaching
+// the SDK-neutral workflow service about MCP sessions.
+type automaticHeartbeat interface {
+	Stop()
+	Health() error
+}
+
+// workflowPort is deliberately the workflow service's public orchestration
+// surface and no more. MCP maps wire requests to it; domain composition and
+// durable replay remain in internal/workflow.
+type workflowPort interface {
+	Start(context.Context, workflow.StartInput) (workflow.Run, error)
+	Resolve(context.Context, string) (workflow.Run, error)
+	ExtendScope(context.Context, string, []string) (workflow.Run, error)
+	Reconcile(context.Context, string) (changes.ReconcileResult, error)
+	Finalize(context.Context, workflow.FinalizeInput) (workflow.Finalization, error)
+	Checkpoint(context.Context, string, string, bool) (coordination.Noted, error)
+	StartHeartbeat(context.Context, string, time.Duration) (automaticHeartbeat, error)
+}
+
+type workflowAdapter struct{ *workflow.Service }
+
+func (a workflowAdapter) StartHeartbeat(ctx context.Context, runKey string, interval time.Duration) (automaticHeartbeat, error) {
+	return a.Service.StartHeartbeat(ctx, runKey, interval)
+}
+
+type automaticContext struct {
+	run       workflow.Run
+	heartbeat automaticHeartbeat
+	watched   bool
+}
+
+const automaticHeartbeatInterval = coordination.LeaseTTL / 3
+
+func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, in BootstrapIn) (BootstrapOut, error) {
+	if req == nil || req.Session == nil {
+		return BootstrapOut{}, Invalid("automatic bootstrap needs an MCP connection")
+	}
+	// workflow.Start is already serialized at the domain layer. Mirror that
+	// here so two simultaneous bootstrap calls on one MCP connection cannot
+	// both create durable runs before the connection chooses one of them.
+	s.autoStartMu.Lock()
+	defer s.autoStartMu.Unlock()
+	current, hasCurrent := s.automaticSnapshot(req.Session)
+	goal, runKey := *in.Goal, *in.RunKey
+	var paths []string
+	if in.Paths != nil {
+		paths = *in.Paths
+	}
+	var resumeTaskID string
+	if in.ResumeTaskID != nil {
+		resumeTaskID = *in.ResumeTaskID
+	}
+	if hasCurrent && current.run.RunKey != runKey && !terminalRun(current.run) {
+		return BootstrapOut{}, Invalid("this MCP connection already has an automatic run")
+	}
+	run, startErr := s.workflow.Start(ctx, workflow.StartInput{
+		Goal: goal, RunKey: runKey, Paths: paths, ResumeTaskID: resumeTaskID,
+	})
+	out := s.bootstrapRunOut(run)
+	if startErr != nil {
+		if run.RunKey == "" {
+			return BootstrapOut{}, startErr
+		}
+		if hasCurrent && (run.TaskID == "" || run.SessionID == "") {
+			out = s.bootstrapRunOut(current.run)
+		}
+		out.Failure = automaticFailure(startErr)
+		return out, nil
+	}
+
+	s.autoMu.Lock()
+	currentPtr := s.automatic[req.Session]
+	if currentPtr != nil && currentPtr.run.RunKey != run.RunKey && !terminalRun(currentPtr.run) {
+		s.autoMu.Unlock()
+		return BootstrapOut{}, Invalid("this MCP connection already has an automatic run")
+	}
+	if currentPtr != nil && currentPtr.run.RunKey == run.RunKey && currentPtr.run.Revision > run.Revision {
+		// A concurrent finalization/scope response may have published newer
+		// durable state while Start's response was in flight.
+		run = currentPtr.run
+		out = s.bootstrapRunOut(run)
+	}
+	if currentPtr != nil && currentPtr.run.RunKey == run.RunKey && terminalRun(run) {
+		currentPtr.run = run
+		heartbeat := currentPtr.heartbeat
+		currentPtr.heartbeat = nil
+		s.autoMu.Unlock()
+		if heartbeat != nil {
+			heartbeat.Stop()
+		}
+		out.Started = true
+		return out, nil
+	}
+	if currentPtr != nil && currentPtr.run.RunKey == run.RunKey && currentPtr.heartbeat != nil && currentPtr.heartbeat.Health() == nil {
+		currentPtr.run = run
+		s.autoMu.Unlock()
+		out.Started = true
+		return out, nil
+	}
+	s.autoMu.Unlock()
+
+	var heartbeat automaticHeartbeat
+	var heartbeatErr error
+	if !terminalRun(run) {
+		heartbeat, heartbeatErr = s.workflow.StartHeartbeat(context.Background(), run.RunKey, automaticHeartbeatInterval)
+	}
+	published, accepted := s.rememberAutomatic(req.Session, automaticContext{run: run, heartbeat: heartbeat})
+	if published.run.RunKey != run.RunKey {
+		return BootstrapOut{}, Invalid("this MCP connection already has an automatic run")
+	}
+	out = s.bootstrapRunOut(published.run)
+	if accepted && heartbeatErr != nil {
+		out.Failure = automaticFailure(heartbeatErr)
+		return out, nil
+	}
+	out.Started = true
+	return out, nil
+}
+
+func (s *Server) automaticSnapshot(session *sdk.ServerSession) (automaticContext, bool) {
+	s.autoMu.RLock()
+	defer s.autoMu.RUnlock()
+	current := s.automatic[session]
+	if current == nil {
+		return automaticContext{}, false
+	}
+	return *current, true
+}
+
+func automaticFailure(err error) *AutomaticFailure {
+	failure := &AutomaticFailure{Message: err.Error()}
+	if payload, ok := app.PayloadOf(err); ok {
+		failure.Code = string(payload.Code)
+		failure.Why = payload.Why
+		failure.Impact = payload.Impact
+		failure.NextAction = payload.NextAction
+		failure.Metadata = payload.Metadata
+	}
+	if failure.NextAction == nil {
+		failure.NextAction = []string{}
+	}
+	return failure
+}
+
+func terminalRun(run workflow.Run) bool {
+	return run.State == coordination.StateCompleted || run.State == coordination.StateAbandoned
+}
+
+func (s *Server) rememberAutomatic(session *sdk.ServerSession, next automaticContext) (automaticContext, bool) {
+	s.autoMu.Lock()
+	current := s.automatic[session]
+	if current != nil && ((current.run.RunKey == next.run.RunKey && current.run.Revision > next.run.Revision) ||
+		(current.run.RunKey != next.run.RunKey && !terminalRun(current.run))) {
+		// Recheck at publication, including the gap while a heartbeat starts.
+		// A discarded reply must not replace or stop the current run's owner.
+		preserved := *current
+		s.autoMu.Unlock()
+		if next.heartbeat != nil && next.heartbeat != preserved.heartbeat {
+			next.heartbeat.Stop()
+		}
+		return preserved, false
+	}
+	if current != nil {
+		next.watched = current.watched
+		if current.heartbeat != nil && current.heartbeat != next.heartbeat {
+			current.heartbeat.Stop()
+		}
+	}
+	if !next.watched {
+		next.watched = true
+		go func() {
+			_ = session.Wait()
+			s.forgetAutomatic(session)
+		}()
+	}
+	s.automatic[session] = &next
+	s.autoMu.Unlock()
+	return next, true
+}
+
+func (s *Server) automaticRun(ctx context.Context, req *sdk.CallToolRequest, explicitRunKey string) (workflow.Run, automaticHeartbeat, error) {
+	if req == nil || req.Session == nil {
+		return workflow.Run{}, nil, Invalid("automatic operation needs an MCP connection")
+	}
+	s.autoMu.RLock()
+	current := s.automatic[req.Session]
+	if current == nil {
+		s.autoMu.RUnlock()
+		if explicitRunKey == "" {
+			return workflow.Run{}, nil, Invalid("automatic operation needs mindrail_bootstrap on this connection")
+		}
+		run, err := s.workflow.Resolve(ctx, explicitRunKey)
+		if err != nil {
+			return workflow.Run{}, nil, err
+		}
+		var heartbeat automaticHeartbeat
+		if !terminalRun(run) {
+			heartbeat, err = s.workflow.StartHeartbeat(context.Background(), run.RunKey, automaticHeartbeatInterval)
+			if err != nil {
+				return workflow.Run{}, nil, err
+			}
+		}
+		published, _ := s.rememberAutomatic(req.Session, automaticContext{run: run, heartbeat: heartbeat})
+		if published.run.RunKey != explicitRunKey {
+			return workflow.Run{}, nil, Invalid("run_key does not match this MCP connection")
+		}
+		return published.run, published.heartbeat, nil
+	}
+	run := current.run
+	heartbeat := current.heartbeat
+	s.autoMu.RUnlock()
+	if explicitRunKey != "" && explicitRunKey != run.RunKey {
+		return workflow.Run{}, nil, Invalid("run_key does not match this MCP connection")
+	}
+	return run, heartbeat, nil
+}
+
+func (s *Server) updateAutomatic(session *sdk.ServerSession, run workflow.Run) {
+	s.autoMu.Lock()
+	if current := s.automatic[session]; current != nil && current.run.RunKey == run.RunKey && current.run.Revision <= run.Revision {
+		current.run = run
+	}
+	s.autoMu.Unlock()
+}
+
+// retainTerminalAutomatic keeps the connection-to-run binding for an exact
+// ID-free finalize retry, while stopping renewal for work that is complete.
+// A later bootstrap may replace this terminal binding with a fresh run.
+func (s *Server) retainTerminalAutomatic(session *sdk.ServerSession, run workflow.Run) {
+	s.autoMu.Lock()
+	current := s.automatic[session]
+	var heartbeat automaticHeartbeat
+	if current != nil && current.run.RunKey == run.RunKey && current.run.Revision <= run.Revision {
+		current.run = run
+		heartbeat = current.heartbeat
+		current.heartbeat = nil
+	}
+	s.autoMu.Unlock()
+	if heartbeat != nil {
+		heartbeat.Stop()
+	}
+}
+
+func (s *Server) forgetAutomatic(session *sdk.ServerSession) {
+	s.autoMu.Lock()
+	current := s.automatic[session]
+	delete(s.automatic, session)
+	s.autoMu.Unlock()
+	if current != nil && current.heartbeat != nil {
+		current.heartbeat.Stop()
+	}
+}
+
+// forgetAutomaticIfCurrent belongs to a completed request, unlike connection
+// shutdown. A delayed handoff reply must not remove a newer binding or stop
+// the heartbeat another run/revision installed on the same connection.
+func (s *Server) forgetAutomaticIfCurrent(session *sdk.ServerSession, expected workflow.Run) {
+	s.autoMu.Lock()
+	current := s.automatic[session]
+	if current == nil || current.run.RunKey != expected.RunKey || current.run.Revision != expected.Revision {
+		s.autoMu.Unlock()
+		return
+	}
+	delete(s.automatic, session)
+	s.autoMu.Unlock()
+	if current.heartbeat != nil {
+		current.heartbeat.Stop()
+	}
+}
+
+func (s *Server) closeAutomatic() {
+	s.autoMu.Lock()
+	contexts := s.automatic
+	s.automatic = make(map[*sdk.ServerSession]*automaticContext)
+	s.autoMu.Unlock()
+	for _, current := range contexts {
+		if current.heartbeat != nil {
+			current.heartbeat.Stop()
+		}
+	}
+}
+
+func (s *Server) bootstrapRunOut(run workflow.Run) BootstrapOut {
+	paths := s.app.Paths()
+	return BootstrapOut{
+		WorktreeRoot: paths.WorktreeRoot,
+		RuntimeRoot:  paths.RuntimeRoot,
+		DBPath:       paths.DBPath,
+		Readiness:    string(status.Build(s.app.Subject(), time.Since(s.started)).Readiness),
+		Automatic:    true,
+		RunKey:       run.RunKey,
+		SessionID:    run.SessionID,
+		TaskID:       run.TaskID,
+		State:        string(run.State),
+		Revision:     run.Revision,
+		Paths:        run.Paths,
+	}
+}

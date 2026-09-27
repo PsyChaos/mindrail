@@ -34,12 +34,19 @@ type Migration struct {
 	// "the table is the table this migration made" (finding F9).
 	Columns map[string][]string
 
-	// Altered names the tables this file changes with ALTER TABLE, in any of
-	// its forms. It is a deliberate bail-out, not a description: a recorded
-	// migration that alters a table means the shape recorded at CREATE time is
-	// no longer what the schema should look like, and the checker gives up on
-	// that table rather than growing a column-level replay of its own -- which
-	// is exactly the trap finding F4 was about, one level down.
+	// Added lists the columns this file adds to each table with
+	// ALTER TABLE ... ADD COLUMN, the one form of ALTER the checker follows
+	// (decision D-73): it adds a name and moves nothing, so the expected shape
+	// is the CREATE's names plus these.
+	Added map[string][]string
+
+	// Altered names the tables this file changes with any other form of ALTER
+	// TABLE. It is a deliberate bail-out, not a description: a recorded
+	// migration that drops or renames a column means the shape recorded at
+	// CREATE time is no longer what the schema should look like, and the
+	// checker gives up on that table rather than growing a column-level replay
+	// of its own -- which is exactly the trap finding F4 was about, one level
+	// down.
 	Altered []string
 }
 
@@ -141,6 +148,7 @@ func Load(fsys fs.FS) ([]Migration, error) {
 		checksum := sha256.Sum256(body)
 		seen[version] = name
 		effects := schemaEffects(string(body))
+		added, forgotten := alterations(string(body))
 		loaded = append(loaded, Migration{
 			Version:  version,
 			Name:     match[2],
@@ -149,7 +157,8 @@ func Load(fsys fs.FS) ([]Migration, error) {
 			Objects:  createdObjects(effects),
 			Effects:  effects,
 			Columns:  tableColumns(string(body)),
-			Altered:  alteredTables(string(body)),
+			Added:    added,
+			Altered:  forgotten,
 		})
 	}
 

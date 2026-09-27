@@ -1,0 +1,1199 @@
+# MR-004 — Findings and per-task record
+
+- **Contract:** [mr-004-requirements.md](mr-004-requirements.md) (frozen at
+  `e4bad83`) and [mr-004-design.md](mr-004-design.md).
+- **Baseline:** `6a78f8d`, 807 top-level test functions, `make verify` and
+  `make tidy-check` green (requirements §0).
+
+This milestone is run one task at a time. Each task below ends with the
+mutations that turn its new tests red — run before they were recorded — a
+commit, and a gate: a Reader that checks this record against the code and
+git sentence by sentence, refuting when uncertain, and a Breaker that attacks
+the production change and reports only what it demonstrated. The gate's
+findings are recorded under the task, with what was done about each, before
+the next task is begun. That is the process change MR-003's second round was
+run to justify (requirements, preamble).
+
+Rules the record keeps: a proposed finding is not a confirmed one and a
+confirmed one is not a distinct one; every sentence here is something that was
+run, not something believed; a number is given where a claim needs one and
+nowhere else.
+
+Every test count in this record is `go test -list '.*' ./... | grep -c
+'^Test'`, the command the definition of done names: the tests the default
+build runs. A static count of `^func Test` over the tracked files is seven
+higher at every commit — five `TestMain` functions and two tests behind the
+`smoke` build tag — and TASK-05's Reader, counting that way, read both of
+that task's numbers as off by exactly seven. Neither count is wrong; they
+count different things, and this is the one the record uses.
+
+---
+
+## 1. TASK-01 — the bounded wait, named and measured
+
+Commit `abd1c3e`, and `a06cd42` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **815** top-level test
+functions after the first, from 807, and **817** after the second. Owns
+REQ-01 and the one code of REQ-07 it emits.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/storage/backoff.go` (new) | `Backoff` — the jittered ladder, 25 → 400 ms doubling, each step drawn from `[step/2, step]`; `DefaultBackoff`; `waitBusy`, the loop that retries an attempt on `SQLITE_BUSY` until a budget measured on an injectable clock is spent, with the last sleep cut to the deadline; `retrier`, the seam carrying ladder, sleep and clock |
+| `internal/storage/db.go` | `openPollInterval` (20 ms, flat) is gone. `openWithinBusyBudget` delegates to `waitOpen`, which runs `openOnce` under `waitBusy` and names an exhaustion `busyOpenFailure`: `MINDRAIL_BUSY_RETRYABLE`, `KindUnavailable`, `metadata.path`, `condition = "locked"`, `waited_ms`, remedy "run the command again once the other Mindrail command has finished". Before, the exhaustion was `openFailure` — `RUNTIME_DB_UNAVAILABLE` with the remedy to check the Git common directory and run `mindrail init` |
+| `internal/storage/tx.go` | `InTx` times `BeginTx`; a busy refusal is returned as `beginBusy{waited}` with the driver's error underneath, so `IsBusy` still answers; a committed transaction reports `Waited` and `Held`, a rolled-back one reports zero. No retry of `BEGIN` (D-74). *At `abd1c3e` the numbers went into a `*TxStats` planted in the context by `WithTxStats`; since `a06cd42` (the gate) `InTxMeasured` returns them by value and `InTx` discards them* |
+| `internal/storage/classify.go` | `busyFailure` publishes `MINDRAIL_BUSY_RETRYABLE` instead of `RUNTIME_DB_UNAVAILABLE`, keeps `condition = "locked"` and its sentences, and adds `waited_ms` when the cause is a `beginBusy` |
+| `internal/app/code.go` | `CodeBusyRetryable = "MINDRAIL_BUSY_RETRYABLE"`, registered |
+| `internal/doctor/check.go` | `kindForCode` places the new code in the unavailable class beside `RUNTIME_DB_UNAVAILABLE`, so a `status` halted by a locked database still exits 4 |
+| Tests | `backoff_internal_test.go` (five, new); `tx_test.go` +2 (`TestInTxReportsItsWaitAndHoldWhenAsked`, `TestInTxDoesNotRetryBegin`); `classify_test.go` +1 (`TestABusyFromAStatementCarriesNoInventedWait`) and `TestWriteFailureRatesContentionUnavailable` now asserts the new code, `condition` and a `waited_ms` no smaller than the contender's 50 ms budget; `migration/schema_ledger_test.go`'s contention test asserts the new code on the same exit class; `cli/envelope_test.go`'s exit table gains the row (`TestExitClassTableCoversEveryRegisteredCode` fails without it) |
+
+Every existing `RUNTIME_DB_UNAVAILABLE` row of the CLI contract matrix is
+unchanged: the code moved for the locked condition only (AC-01.3, D-74).
+
+### The mutations, and what each turned red
+
+Each was applied to the committed code with `sed` or `perl`, the named tests
+run under `systemd-run --user --scope -p MemoryMax=1G` and `timeout`, and the
+file restored from a byte-compared backup. The red line is quoted as the test
+printed it.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `Backoff.Step` never doubles (`step = step`) | `TestTheLadderStepsByTheSpecsExample`: `Step(1) with Rand=0 = 12.5ms, want the lower bound 25ms`, and every later step the same |
+| M2 | `waitBusy` takes the full step instead of `min(step, time left)` | `TestWaitBusySleepsByTheLadderAndStopsAtTheBudget`: `sleeps = [12.5ms 25ms 50ms 100ms 200ms …×60], want [12.5ms 25ms 50ms 100ms 12.5ms]`. See the fixture note below: the first run of this mutation did not print a red line |
+| M3 | `busyFailure` back to `CodeRuntimeDBUnavailable` | `TestWriteFailureRatesContentionUnavailable` and `TestABusyFromAStatementCarriesNoInventedWait`: `payload.Code = "RUNTIME_DB_UNAVAILABLE", want "MINDRAIL_BUSY_RETRYABLE"` |
+| M3b | `waitOpen` returns `openFailure` instead of `busyOpenFailure` | `TestAnOpenRefusedForTheWholeBudgetIsRetryable`, four lines: `want errors.Is(err, ErrBusy)`, the code, `metadata.condition = "", want "locked"`, `metadata.waited_ms = "", want "200"` |
+| M4 | `InTx` returns a plain `fmt.Errorf` for a busy `BEGIN`, dropping the wait | `TestWriteFailureRatesContentionUnavailable`: `metadata.waited_ms = "", want the milliseconds BEGIN waited` |
+| M5 | `stats.Held +=` instead of `=` | `TestInTxReportsItsWaitAndHoldWhenAsked`: `stats.Held = 20.07ms after an empty transaction, want it replaced rather than accumulated` |
+| M5b | stats written on the rollback path too | the same test: `stats = {Waited:6µs Held:20.1ms} after a rolled-back transaction, want {…} untouched` |
+| M6 | `BeginTx` wrapped in `waitBusy` with the 5 s default budget — the second ladder D-74 refuses | `TestInTxDoesNotRetryBegin`: `InTx = <nil> after 312.9ms, want SQLITE_BUSY: BEGIN was tried again until the lock was released`. `TestInTxTakesTheWriteLockAtBegin` stayed green and took 5.3 s instead of 0.05 s, which is the budget multiplication the decision describes |
+
+**A fixture rule this task learned.** M2's first run had no cap on the virtual
+clock: the mutated loop had no exit left — the attempt always refused, the
+context was never cancelled, and the fake sleep passed time instantly while
+recording each sleep — so it spun until the kernel's out-of-memory killer ended
+the test binary and the desktop session running it (exit 137, twice). A fake
+that passes time in zero time must refuse eventually: `virtualClock.sleep` now
+returns an error after 64 sleeps, more than five times the twelve steps a
+five-second budget holds at the cap, and M2 turns into the red line above in
+0.01 s. Every mutation from M2 on was run as
+`systemd-run --user --scope -p MemoryMax=1G timeout 300 go test -count=1 -timeout 240s -run <test> <pkg>`
+with the file restored afterwards from a backup and compared with `cmp`; the
+shell script that does this lives under `/tmp`, not in the tree, and the
+rest of this milestone runs mutations the same way. *(The Reader of this task
+refuted the first version of these two sentences: "five times twelve" is
+sixty, not sixty-four, and "the runner script" named a file the repository
+does not contain.)*
+
+### Where this task departed from the freeze, and why
+
+- **AC-01.2 is proved on a virtual clock, not a wall clock.** The criterion
+  asks for at least three attempts with rising gaps and none after the budget
+  plus one jittered step. The test observes six attempts under a 200 ms budget
+  with gaps 12.5, 25, 50, 100 and 12.5 ms — the last one cut to the deadline —
+  and the final attempt exactly at the budget, not after it. The stronger
+  statement is what the code does, and a wall clock could not have asserted
+  the gaps.
+- **AC-01.5 is decided by outcome rather than by the stopwatch it names.** The
+  criterion says a 50 ms contender "still fails within 250 ms". A stopwatch
+  bound is either loose enough to miss a two-attempt loop (100 ms plus jitter)
+  or tight enough to flake under `-race` and a parallel `make check`.
+  `TestInTxDoesNotRetryBegin` holds the lock for six budgets and releases it: a
+  single attempt is refused at one budget; any loop that tried again meets the
+  released lock and succeeds, which is what M6 shows. `TestInTxTakesTheWriteLockAtBegin`
+  keeps its 50 ms contender and still runs in 0.05 s.
+- **`waited_ms` is absent on a busy that `BEGIN` did not measure.** AC-01.3
+  names two sites, `BEGIN` and open, and both publish it. Others exist and
+  publish no number, because none was measured
+  (`TestABusyFromAStatementCarriesNoInventedWait`): a statement inside the
+  transaction, the WAL checkpoint at shutdown — and, as the Breaker showed, a
+  whole command: `session open` inserts with a bare `ExecContext` rather than
+  through `InTx` (`internal/coordination/store.go`, `OpenSession`), so under
+  the same held lock it exits 4 with the same code and no `waited_ms` where
+  `task open` and `checkpoint write` print `5008`. That path predates MR-004
+  and is closed by TASK-03, the first task that touches the store; a guessed
+  budget in its place would be the kind of sentence this record exists to keep
+  out. *(The first version of this bullet said "a third exists"; the gate
+  counted a fourth.)*
+- **`schema_ledger_test.go` was edited.** It is `internal/migration`'s
+  contention test and asserted the old code; it now asserts the new one on
+  the same exit class. Nothing else in that package changed.
+
+### The gate
+
+Two agents over `abd1c3e` and this record at `d7188ef`: a Reader (Sonnet)
+checking the record sentence by sentence, a Breaker (Fable) attacking the
+change from a built binary against scratch repositories under `/tmp`, with
+throwaway tests in its own worktree. Both told to refute when uncertain and to
+report only what they demonstrated. Fixes: `a06cd42`; `make check` (19 `ok`)
+and `make tidy-check` green after it; **817** top-level test functions, from
+815.
+
+**The Reader** checked 30 claims: 19 confirmed, 2 false, 9 unconfirmed. The
+two false were this record's own sentences — "five times the twelve steps"
+for sixty-four, and "the runner script" for a file that lives under `/tmp`
+and not in the tree — and are corrected in place above, marked. The nine
+unconfirmed are the whole-suite and process claims it was not allowed to run
+(`make check`, `make tidy-check`, the OOM kills, five mutations it did not
+re-run); the three it re-ran (M1, M3, M4) matched the recorded red lines. Its
+contract verdict: AC-01.1, AC-01.3, AC-01.4 met; AC-01.2 and AC-01.5 met with
+the departures recorded above; D-74 and D-75 met for what TASK-01 owns.
+
+**The Breaker** produced five findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | Two goroutines running `InTx` under one `WithTxStats` context race on the shared `*TxStats` (`tx.go:101`, `-race`: `WARNING: DATA RACE … Write at … by goroutine 11 … Previous write … by goroutine 13`). No production caller shared one; the coordination store was about to | `abd1c3e` | The seam is reshaped rather than documented: `InTxMeasured` returns the stats **by value** beside the outcome and `InTx` discards them, so there is nothing to share (`a06cd42`; D-75 and AC-01.4 amended in place). `TestInTxMeasuredSharesNothingBetweenCallers` runs four goroutines × twenty transactions under `-race`; its falsifier is `abd1c3e`'s own seam, on which the Breaker's equivalent test printed the race above |
+| MEDIUM | Same held lock, two answers: `session open` writes with a bare `ExecContext`, waits the whole budget, exits 4 with the code and **no** `waited_ms` (`elapsed_ms=5062`, `"metadata":{"condition":"locked","subject_id":"SES-…"}`), where `checkpoint write` prints `"waited_ms":"5007"` | predates (MR-003's `OpenSession`) | Recorded above and carried to **TASK-03**, the first task that edits the store: every writer goes through `InTx`, and TASK-05 needs that anyway for the operation record |
+| LOW | The busy open failure's `cause` still named the retired code — `"cause":"runtime database is locked by another process: RUNTIME_DB_UNAVAILABLE: the runtime database could not be opened"` on `status --json` under a rollback-mode EXCLUSIVE lock — because `classifyOpenError`'s busy branch wrapped the driver's error in `openFailure` and `busyOpenFailure` then wrapped that | `abd1c3e` | The busy branch hands the driver's error through bare; `waitOpen` is its one caller and names the exhaustion once (`a06cd42`). `TestABusyOpenIsNamedOnce`; mutation M7 below |
+| LOW | `init` under a foreign lock spends two open budgets — the read-only probe bootstrap, then the write-mode one — `init_elapsed_ms=10031`, two `startup stopped … MINDRAIL_BUSY_RETRYABLE` lines five seconds apart. Outcome correct, exit 4 | predates (MR-001's two-phase `init`) | Recorded, not fixed: it is `init`'s shape, not this task's; the backlog item is to let the write-mode start reuse the probe's verdict on a locked database |
+| LOW | `TxStats.Waited` is measured from the call, so it includes database/sql handing out a pooled connection: pool of one, 50 ms busy budget, a holder sleeping 300 ms inside `InTx` → the contender's `stats={Waited:300.19ms Held:97µs}` with no busy refusal | `abd1c3e` | Documented on `TxStats` and in D-75 as amended: it is the wait an interactive writer experiences; AC-10.6's bound is on `Held` |
+
+Attacked and not broken, in one line each. **D-74's falsifier failed**: with a
+200 ms budget, a second handle holding `BEGIN IMMEDIATE` refused `InTx` after
+`201.9 ms`, the same pool after `200.9 ms`, a `TRUNCATE` checkpoint holding the
+WAL write lock after `202.2 ms` — the only immediate busy on this driver is a
+deferred read transaction upgraded after a foreign commit (`11.3 µs`,
+`database is locked (517)`), unreachable through `_txlock=immediate`. WAL
+recovery after `kill -9` of a writer with an 80 MB log: two `task open` started
+together both exited 0 in 147 and 122 ms. Eight concurrent `init` in a fresh
+repository all exited 0. An 8 s foreign lock: `task open` exit 4,
+`waited_ms 5008`, then exit 0 in 20 ms after release; `checkpoint write` the
+same; a 2 s hold, exit 0 after 1551 ms; `status` and `doctor` exit 0 in 20 ms
+with the write lock held; `init` on an initialised repository under the lock
+exits 4 with the code and "could not register this worktree". A rollback-mode
+EXCLUSIVE lock on a fresh file: `status` and `doctor` exit 4 with the code,
+`condition = locked`, `waited_ms ≈ 5000` and the "run the command again" remedy;
+`init` exits 0 after release. Every busy object on the wire exited 4. The
+ladder's edge values — zero `Backoff`, `Base > Cap`, `Cap = 0`, negatives,
+`Rand` of 1.0 and −1.0 — return a step at or below the cap or at or below zero,
+so `waitBusy` stops after one attempt and never spins; `Step` is linear in the
+attempt number, which a five-second budget cannot push past about thirty.
+`Held` and `Waited` were never zero or negative on a committed transaction;
+zero on a rolled-back one. `TestInTxTakesTheWriteLockAtBegin` ran in 0.06 s
+and `TestInTxDoesNotRetryBegin` in 0.05 s.
+
+Not demonstrated, worth a later look: `SQLITE_LOCKED` (6) is in `isBusyError`,
+so a same-connection table lock would be reported as retryable contention; one
+attempt to provoke it on this driver returned nil. Predates.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| M7 | `classifyOpenError`'s busy branch wraps in `openFailure` again | `TestABusyOpenIsNamedOnce`: `classifyOpenError(busy) = RUNTIME_DB_UNAVAILABLE: …, want no diagnosis of its own`, and `payload.Cause = "… RUNTIME_DB_UNAVAILABLE: the runtime database could not be opened", names the code this condition no longer carries` |
+| M8 | `InTxMeasured` returns the numbers on the rollback path | `TestInTxReportsItsWaitAndHoldWhenAsked`: `stats = {Waited:5.781µs Held:20.078126ms} for a rolled-back transaction, want zero` |
+
+**Carried forward from this gate:** `session open` through `InTx` (TASK-03);
+`init`'s second open budget under a lock (backlog); `SQLITE_LOCKED` in
+`isBusyError` (backlog).
+
+---
+
+## 2. TASK-02 — migration 000003, and a ledger that can read `ADD COLUMN`
+
+Commit `aa8d1a2`, and `fccc94f` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **822** top-level test
+functions after the first, from 817, and **825** after the second. Owns
+REQ-02.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `migrations/000003_lease_idempotency.sql` (new) | Design §5 as written: `leases` and `operations`, both `STRICT`; `idx_leases_active` — unique on `(project_id, target_kind, target_key) WHERE released_at IS NULL`; `idx_leases_holder`; `ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`. Its comments carry the decisions the columns rest on (D-64, D-65, D-71, D-72, D-73). `000001` and `000002` are untouched |
+| `migrations/shipped_test.go` | The third file's sha256 joins the pin, with the note that until MR-004 ships a change to that row is a change to a file no repository has applied, and is recorded here when it happens |
+| `internal/migration/columns.go` | `alterTablePattern` reads the added column's name when the form is `ADD [COLUMN]`; `alterations` sorts every `ALTER TABLE` into `added` (table → columns, lower-cased like the `CREATE` names) and `forgotten` (every other form). `alteredTables` is gone |
+| `internal/migration/load.go` | `Migration.Added`; `Altered` now means "altered in a form the checker cannot follow" |
+| `internal/migration/migrator.go` | `declaredColumns` extends a tracked table by its added columns before it forgets the tables other forms touched; a table an earlier form made it forget, or one with no `CREATE` to extend, gets nothing invented |
+| `internal/coordination/store.go` | `TableSchemaVersion` is 3, so `coordinationScope`'s gate refuses a ledger at 2 the way it refused a ledger at 1 (AC-02.5) |
+| `internal/cli/testdata/*.golden` | Four lines, exactly the ones D-73 named: `Schema version: 2 → 3` in `status_human`, and `version 2 → 3`, `applied: 2 → 3`, `current_version: 2 → 3` in `doctor_human`. `write_schema_version` and `readable_schema_versions` stay at 1 on the lines beside them |
+| `internal/cli/upgrade_test.go` | `TestCoordinationCommandsSendASchemaBehindDatabaseToInit` runs its two commands against two downgrades — to schema 1 (the MR-002 binary's database) and to schema 2 (the MR-003 binary's: every table present, no leases, no operations, no `revision`) — and asserts `MIGRATION_FAILED`, the `mindrail init` remedy, no raw `no such table` or `no such column` in `why`, and that `init` then clears it. `downgradeToSchemaOne` is now built on `downgradeToSchemaTwo` |
+| `internal/cli/agreement_hostilefs_linux_test.go` | The ready-band sweep's wide end moves from 256 KiB to 512, with the reason measured (below); the sweep gains the points 224, 240, 272, 288 around the two edges |
+| Tests | `internal/migration`: `TestStatusExpectsAColumnAMigrationAdded` and `TestStatusStillForgetsATableAnotherAlterTouched` (both arms of D-73, both spellings of `ADD COLUMN`), `TestATaskWrittenBeforeTheRevisionColumnStartsAtOne` (AC-02.3 on a row written at schema 2), `TestLoadReadsTheColumnsOfTheEmbeddedSchema` pins the two new tables' columns and that the embedded set's only `ALTER` is read as `{tasks: [revision]}` and forgets nothing, `tablesPerMilestone` gains version 3. `internal/coordination/lease_schema_test.go`: `TestTheDatabaseRefusesASecondActiveLeaseOnOneTarget` (AC-02.1 by direct `INSERT`, the released row not counting, the same path in a second project allowed) and `TestMigrationThreeLeavesTheObjectsTheDesignNames` (the four objects in `sqlite_master`, both tables `STRICT`, `revision` in `pragma_table_xinfo`, a task opened through the store at revision 1) |
+
+The existing `TestADatabaseAtTheOlderSchemaTakesOnlyTheNewMigration` is written
+over the embedded set's newest migration, so it now proves AC-02.3's first
+sentence — a database at schema 2 applies exactly migration 3 and reports 3 —
+without being edited.
+
+### A number the freeze did not have
+
+The hostile-filesystem test's wide end — "at a quarter-megabyte free everything
+has to work", MR-001's over-fire guard — went red: with three migrations
+`init` exited 4 (`RUNTIME_PATH_UNWRITABLE`) at 256 KiB free. Sweeping in
+16 KiB steps on the test's own tmpfs, with the migration file temporarily
+removed and then restored: with two migrations `init` fits at 240 KiB and not
+at 224; with three it fits at 288 and not at 272. The third migration costs
+about 48 KiB of headroom — two tables, two indexes and a schema rewrite, each a
+page in the database file and a frame in the log that is checkpointed after
+them. The wide end is now 512 KiB and the test's comment carries both edges,
+so the next migration's author starts with the number rather than with a red
+test. This is a consequence of D-73 the freeze did not name; it names no user
+condition, since a repository with under 300 KiB of free space was already
+inside the band where `init`'s answer and `status`'s answer are what the test
+holds together.
+
+### The mutations, and what each turned red
+
+Run as in §1: `sed` on the committed code under a 1 GB memory scope and a
+timeout, file restored and `cmp`'d. The migration-file mutations also turn the
+shipped-file pin red, as they should; that line is given once.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `alterations` never reads the column (`&& false` on the `ADD` branch) — every `ALTER` forgets, as before this task | `TestLoadReadsTheColumnsOfTheEmbeddedSchema`: `Added = map[], want exactly {tasks: [revision]}` and `migration 3 forgets [tasks]`; `TestStatusExpectsAColumnAMigrationAdded`: `Added[thing] = [], want [revision note]` |
+| M2 | `declaredColumns` never applies `Added` | `TestStatusExpectsAColumnAMigrationAdded`: `Status = <nil>, want ErrSchemaShapeChanged: the added column is gone and the checker must say so` |
+| M3 | `TableSchemaVersion` back to 2 | `TestCoordinationCommandsSendASchemaBehindDatabaseToInit`: `task list at schema 2 exited 0 on a schema-behind database, want 1` — the store does not read `revision` yet, so without the gate a schema-2 database answers as if it were current |
+| M4 | the index loses its `WHERE released_at IS NULL` | `TestTheDatabaseRefusesASecondActiveLeaseOnOneTarget`: `active lease after the first was released = … UNIQUE constraint failed: leases.project_id, leases.target_kind, leases.target_key (2067), want no error` |
+| M5 | `DEFAULT 1` → `DEFAULT 0` | `TestATaskWrittenBeforeTheRevisionColumnStartsAtOne`: `revision of a task written before the column = 0, want 1`; `TestMigrationThreeLeavesTheObjectsTheDesignNames`: `a newly opened task is at revision 0, want 1`; and the pin: `000003_lease_idempotency.sql has been edited after it was applied: sha256 9f2886…` |
+| M6 | the pattern requires the `COLUMN` keyword | `TestStatusExpectsAColumnAMigrationAdded`: `Added[thing] = [revision], want [revision note]: both spellings of ADD COLUMN are read` |
+
+### Where this task departed from the freeze, and why
+
+- **The shipped-file pin covers 000003 from today, not from the release.** The
+  pin's own comment said a row is gained "when it ships"; pinning now means an
+  edit to the file during the remaining tasks turns a test red and has to be
+  recorded here, which is the discipline the pin exists for. The comment says
+  so.
+- **AC-02.4's "dropping any of the three is reported as damaged" was first
+  proved on a fixture table, not on `tasks`** — on the claim that dropping
+  `revision` from the real `tasks` under `foreign_keys = 1` needs the rebuild
+  the migration avoided. *That claim was false* (the Breaker ran
+  `ALTER TABLE tasks DROP COLUMN revision` with foreign keys on and it
+  succeeded): SQLite drops a column that no key, index or constraint names,
+  whatever the foreign keys pointing at the table. The gate added
+  `TestTheRealTasksTableIsCheckedForItsAddedColumn`, which drops the real
+  column and gets `ErrSchemaShapeChanged`. The fixture test stays for the
+  spellings, and `TestLoadReadsTheColumnsOfTheEmbeddedSchema` pins that the
+  real set's `ADD COLUMN` is read as `revision` on `tasks`.
+- **The RENAME arm uses `RENAME COLUMN`, not `RENAME TO`.** AC-02.4 said "an
+  `ALTER TABLE … RENAME` in a fixture still forgets the table"; a `RENAME TO`
+  is already a schema *effect* (the old name is removed, the new has no
+  `CREATE`), so it never reached the column ledger. `RENAME COLUMN` is the
+  form that does, and the fixture pairs it with an `ADD COLUMN` in the same
+  file to show the forgetting wins.
+- **One test outside REQ-02's files was edited:** the hostile-filesystem
+  sweep, for the reason measured above.
+
+### The gate
+
+Two agents over `aa8d1a2` and this record at `85bb2f3`: a Reader (Sonnet)
+over the record, a Breaker (Fable) with the new binary and the MR-003 binary
+built from `6a78f8d` in a second worktree, over scratch repositories and a
+throwaway parser test. Fixes: `fccc94f`; `make check` (19 `ok`) and
+`make tidy-check` green after it; **825** top-level test functions, from 822.
+
+**The Reader** checked 34 claims and D-73's four sentences: 27 confirmed,
+**0 false**, 7 unconfirmed (the whole-suite counts it may not run, the
+ready-band edges, and three mutations it did not re-run; the three it re-ran
+— M2, M3, M6 — matched the recorded red lines, and it derived M5's pin hash
+without touching the file). One MEDIUM: the ready-band edges (240/224,
+288/272 KiB) rest on the sweep this record describes, and no test asserts the
+boundary itself. That is deliberate and now said here: the sweep's own comment
+records that the edge moves with the page size, the migration count and the
+log SQLite keeps, so an assertion on it would be a row that stops reproducing;
+the wide end at 512 KiB is the persisted assertion, and the edges are
+measurements, dated by the commit that recorded them. One LOW — quoted
+identifiers in `ADD COLUMN` unexercised — was overtaken by the Breaker's
+first finding below.
+
+**The Breaker** produced twelve findings, three of them HIGH and all three in
+one place, and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| HIGH | `ALTER TABLE t ADD COLUMN [c] TEXT` (and the backtick form) was read as a column named **`column`**: the pattern's optional `COLUMN` group backtracked and the keyword matched as the name. `Added=map[t:[column]]` → `Status: … missing columns … t (column)` on the schema the migration itself built, with a rebuild remedy that replays the same file into the same error | `aa8d1a2` | The added column is read by `firstToken`, the tokenizer the column list uses, which knows SQLite's four quotings; a bare word `column` after `ADD` is the keyword, a quoted one is a name. `TestAddColumnIsReadTheWayTheColumnListIs`, fifteen shapes, each applied and then `Status`-checked on what it built; G2 below |
+| HIGH | A bare name in another script, `sütun`, was read as `s`: the identifier class was ASCII | `aa8d1a2` | Same fix; the `sütun` row of the same test |
+| HIGH | An `ADD COLUMN` at line start inside a `/* */` block, or inside a string literal spanning lines, was read as real — `Added=map[t:[ghost]]` on a healthy schema. Before this task the same text made the checker *forget* the table | `aa8d1a2` (the CREATE side's analogue predates) | Comments are stripped before the scan (`stripComments`, already in the file); G1. The string-literal case is the one shape neither this nor the CREATE side can tell from a real head — a statement head at line start inside a multi-line literal — and is recorded as the shared limit rather than fixed on one side |
+| MEDIUM | `ALTER TABLE t` on one line and `ADD COLUMN c TEXT` on the next was sorted into `forgotten` — the silent removal from the F9 check D-73 says the task fixes, reachable by a line break | `aa8d1a2` | The words after the head are read across whitespace of any kind up to the semicolon; the "split over two lines" row; G3 |
+| MEDIUM | The gate's sentence at ledger 2 was false: "the migration that creates the sessions, tasks and checkpoints tables has not been applied", on a database that had all three (`sqlite3` listed them). Code, exit and remedy were right | `aa8d1a2` | `schemaBehind` names the gap by number — "has applied migrations up to 2 and the coordination commands need 3" — with `applied_version` and `required_version` in the metadata; `TestCoordinationCommandsSendASchemaBehindDatabaseToInit` asserts both at both downgrades; G5 |
+| MEDIUM | This record's sentence that dropping `revision` from the real `tasks` under `foreign_keys = 1` "needs the same rebuild the migration avoided" was false: `ALTER TABLE tasks DROP COLUMN revision` succeeded with foreign keys on, `foreign_key_check` clean, and the new binary then reported `MIGRATION_FAILED … tasks (revision)` | record | Corrected in place above, marked; `TestTheRealTasksTableIsCheckedForItsAddedColumn` proves AC-02.4 on the table that ships |
+| MEDIUM | `CREATE TABLE cnt AS SELECT count(*) AS n FROM src` was read as a column list `[*]` — the parenthesis in `count(*)` — so every healthy schema was "missing" a column named `*` | predates (`tableColumns`) | The `AS` after the name is checked by word; `TestACreateTableAsSelectIsNotReadAsAColumnList`; G4 |
+| LOW | A `revision` column added by hand at ledger 2 makes `init` fail on `duplicate column name` with the remedy "inspect the migration SQL … re-run `mindrail init`", which fails identically | `aa8d1a2` (first `ADD COLUMN`); needs a hand edit | Recorded, not fixed: it is the shape any hand-created object has against the migration that creates it, and the remedy's wording is MR-001's. Backlog |
+| LOW | `Added` is applied after all of a file's effects, so `ADD COLUMN c; DROP TABLE t; CREATE TABLE t (a)` in one file demands `c` | `aa8d1a2`, contrived | Recorded as a limit: `Columns` is per table and the last `CREATE` wins there too; a file that adds a column and then recreates the table without it is a file that should not be written |
+| LOW | Fail-open variants: `CREATE TABLE Tasks` against `ALTER TABLE tasks` (case), `ALTER TABLE main.t` (schema-qualified, forgotten as `main`), a `/* note */` between the table name and `ADD` (now read, since comments are stripped) | case and `main.` predate in class on the CREATE side | The comment case is closed by G1's fix; the other two are recorded as the CREATE side's existing limits |
+| LOW | The missing-column remedy at ledger 3 is a data-losing rebuild ("move the database aside and run `mindrail init`") for a one-column repair | predates; `migrator.go` defers it to "a milestone that stores something irreplaceable" | Recorded. MR-004 is arguably that milestone; the decision is left to the record's reader rather than taken in a gate |
+| LOW | `DROP INDEX idx_leases_active` by hand is invisible: `status` and `doctor` report the database healthy, and AC-02.1's guard is gone | predates (the object check covers tables; indexes were narrowed out by design) | Recorded. TASK-03's store refuses by name before the index would, so the guard's absence is not silent at the write; whether `doctor` should verify indexes is a question for its own work |
+
+Attacked and not broken, in one line each. The real upgrade: a repository the
+MR-003 binary initialised — one session, four tasks in four states, two
+checkpoints — answered `status` 0 (DEGRADED), `doctor` 0, `task list` and
+`task show` 1 before `init`, all 0 and READY at schema 3 after it; the dump
+diff was the ledger row, `,1` on every task and `workspaces.updated_at`, and
+the ledger's checksum for 3 equals the file's. The MR-003 binary over the
+upgraded database: every command `RUNTIME_DB_SCHEMA_TOO_NEW` at exit 1 and
+the data untouched. The gate at ledger 2 wrote nothing: `sessions=1 tasks=4
+checkpoints=2` after every refusal. `leases` or `operations` dropped at ledger
+3: `MIGRATION_FAILED … table leases` on `status`, `doctor`, `task list` and
+`init`. At SQL level: a second unreleased row and an expired-but-unreleased
+row plus a new one both `UNIQUE constraint failed`; release then re-lease
+allowed; another project allowed; `src/A.go` and `src/a.go` are two targets
+(by design); a holder that is no session and a `DELETE FROM sessions` under a
+lease both `FOREIGN KEY constraint failed`; a hand-inserted task is at
+`revision 1`; a text or real `revision` is refused by `STRICT`, `'2'` is
+stored as 2 by STRICT's documented coercion, and `-7` and
+`target_kind = 'symbol'` are accepted (no `CHECK`). The space edges
+reproduced under `unshare -Urm`: with three migrations `init` exits 4 at 224,
+240, 256 and 272 KiB and 0 from 288; the MR-003 binary exits 4 at 224 and 0
+at 240 — both edges as recorded. Two `init` at once over a schema-2 database:
+one applied `[3]`, the other `[]`, one ledger row, four objects, one
+`revision` column. The parser on `"with space"`, lower-case keywords, `ADD`
+without `COLUMN`, CRLF, `c$1`, a generated column, a `CHECK` whose literal
+says `'ADD COLUMN d'`, `IF NOT EXISTS`, a `--` comment; add-then-drop, a
+later `RENAME TO` and an `AS SELECT` forget by design; a duplicate `ADD` and
+an `ADD` on a table that does not exist are `MIGRATION_FAILED` at `Up`.
+
+Not demonstrated, for TASK-03: a hand-planted `released_at = ''` sits outside
+the partial index while a reader that tests `IS NULL` would call it held.
+TASK-03's reader parses the column; an empty string does not parse and the
+row is refused as damaged (`COORDINATION_READ_FAILED`), which is the answer a
+planted value gets everywhere in this package.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G1 | `alterations` scans the body with comments left in | `TestAddColumnIsReadTheWayTheColumnListIs/inside_a_block_comment`: `Added[t] = [ghost], want []` and `Status = MIGRATION_FAILED: … t (ghost) on the schema the migration built` |
+| G2 | the quoted guard dropped: `"column"` in quotes is the keyword again | `…/a_column_named_column,_quoted`: `Added[t] = [text], want [column]` |
+| G3 | the statement ends at the first newline instead of the semicolon | `…/split_over_two_lines`: `Added[t] = [], want [c]` and `Altered = [t], want forgotten = false` |
+| G4 | `tableColumns` no longer checks for `AS` | `TestACreateTableAsSelectIsNotReadAsAColumnList`: `Columns[cnt] = [*], want the AS SELECT table skipped` and `Status = MIGRATION_FAILED: … cnt (*)` |
+| G5 | the gate's threshold back to 2 | `TestCoordinationCommandsSendASchemaBehindDatabaseToInit`: `task list at schema 2 exited 0 on a schema-behind database, want 1` |
+
+**Carried forward from this gate:** the multi-line-literal limit shared with
+the CREATE side; the hand-added-column `init` loop and the data-losing
+rebuild remedy (backlog, both predate in class); index verification in
+`doctor` (unowned).
+
+---
+
+## 3. TASK-03 — the lease: one row per tenure, and the three verbs over a file
+
+Commit `8c7107a`, and `79e8ccb` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **835** top-level test
+functions after the first, from 825, and **837** after the second. Owns
+REQ-03, REQ-04 and the three lease codes of REQ-07, plus the finding TASK-01's
+gate carried here.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/lease.go` (new) | `LeaseTTL` (20 min, D-69); `TargetKind` with `task` and `file` and `ParseTargetKind`; `Target`, `TaskTarget`, `FileTarget` — D-77's normalisation (backslashes read as separators, `path.Clean`, nothing else rewritten) and refusals (blank, invalid UTF-8, absolute, climbing above the root, the root itself), each `COMMAND_LINE_INVALID`; `LeaseStatus` (`active`, `expired`, `released`) judged in Go by `statusAt`; the four release reasons; `Lease` with design §5's column names plus `status`; `Acquisition` — the lease, whether the call renewed, the tenure it superseded |
+| `internal/coordination/lease_store.go` (new) | `AcquireLease` (file targets only; a task target is refused with the remedy to move the task, D-66), `RenewLease`, `ReleaseLease`, `FindLease`, `ListLeases`. Design §6's table is `acquireIn` and `holderWrite`: the clock read inside the transaction under the write lock, the session resolved there, the target's unreleased row read and judged at that instant, and — active/mine renew, active/other `LEASE_CONFLICT`, expired close-with-`expired`-and-insert naming the superseded tenure, none/released insert. `acquireIn` takes the caller's `*sql.Tx` and `now`, so `Transition` can run the same rule for a task target in TASK-04 |
+| `internal/coordination/errors.go` | `ErrLeaseConflict`, `ErrLeaseNotHeld`, `ErrLeaseNotFound`; `leaseConflict` (holder, expiry, lease id, target in metadata; remedy: wait until the expiry it names, or ask the holder to `lease release <id>`), `leaseNotHeld` (status and the remedy per kind — a move for a task, `lease acquire --file <key>` for a file), `leaseNotFound` (`mindrail lease list`), `noProject` beside `noWorkspace` |
+| `internal/coordination/store.go` | `Write.Timing storage.TxStats` (D-75); `OpenSession` runs through `InTxMeasured` — the bare `ExecContext` TASK-01's Breaker found is gone, and a busy `BEGIN` there now carries `waited_ms` like every other writer; `OpenTask`, `Transition` and `WriteCheckpoint` use `InTxMeasured` and fill `Timing` |
+| `internal/app/code.go`, `internal/cli/envelope_test.go` | `LEASE_CONFLICT`, `LEASE_NOT_HELD`, `LEASE_NOT_FOUND`, registered, all `ExitFailed` |
+| Tests | `internal/coordination/lease_store_test.go` (ten, new): `TestFileTargetIsNormalisedAndRefusedByTheRule` (ten keys normalised, nine refused, `ParseTargetKind` both arms), `TestTheLeaseTTLIsTwentyMinutes` (on the row written), `TestEveryCellOfTheLeaseTable` (AC-04.2: fifteen cells, each built the way a repository reaches it, the successes asserted on the re-read row and the refusals on the code, the metadata and the row left as found), `TestAcquiringOverAnExpiredTenureClosesItAndSaysSo` (AC-04.3, one second before expiry refused, at expiry taken over, the old row closed at the takeover's instant, one unreleased row), `TestAnAcquisitionByTheHolderRenewsUnderTheSameID`, `TestListLeasesReportsActiveOnesOldestFirstAndMarksNothing` (AC-04.4, D-79), `TestLeaseRefusalsCarryWhatACallerActsOn` (AC-04.5), `TestATaskTargetIsNotAcquiredDirectly` (D-66), `TestLeaseWritersMintAndRefuseSessionsLikeTheOthers` (D-61 on the new writers, `Timing` filled), `TestSessionOpenIsOneTransactionWithItsWait` (the carried finding) |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| L1 | `acquireIn` treats another session's active lease as the caller's own | `TestEveryCellOfTheLeaseTable/active,_another's_/_acquire`: `want LEASE_CONFLICT, got no error` |
+| L2 | `statusAt` uses `now.After(expires)` instead of `!now.Before(expires)` — the boundary instant counts as held | `TestAcquiringOverAnExpiredTenureClosesItAndSaysSo`: `AcquireLease at expiry = LEASE_CONFLICT: file src/auth.go is held by session SES-… until 2026-09-09T08:50:00Z, want the takeover` |
+| L3 | the takeover does not close the expired row before inserting | the same test: `AcquireLease at expiry = COORDINATION_WRITE_FAILED: the lease could not be written …` — the partial unique index refusing the second unreleased row, which is AC-02.1's guard holding behind a Go defect |
+| L4 | `holderWrite` skips the holder check | `…/active,_another's_/_renew` and `…/_release`: `want LEASE_CONFLICT, got no error` |
+| L5 | `ListLeases` lists every unreleased row | `TestListLeasesReportsActiveOnesOldestFirstAndMarksNothing`: `ListLeases = [{ID:LSE-… TargetKey:a.go …}], want only the second lease, active` |
+| L6 | `FileTarget` stops refusing a key that climbs above the root | `TestFileTargetIsNormalisedAndRefusedByTheRule`: `want COMMAND_LINE_INVALID, got no error` |
+| L7 | `renewIn` moves `renewed_at` and leaves `expires_at` | `…/active,_mine_/_acquire` and `…/_renew`: `expires_at = 2026-09-09 08:50:00 +0000 UTC, want now + TTL = … 08:51:00`; `TestAnAcquisitionByTheHolderRenewsUnderTheSameID`: `expires_at = …, want moved to now + TTL` |
+| L8 | `OpenSession` back to a bare `ExecContext` | `TestSessionOpenIsOneTransactionWithItsWait`: `session open under a held lock publishes no waited_ms: map[condition:locked subject_id:SES-…]` |
+| L9 | `LeaseTTL = 19 * time.Minute` | `TestTheLeaseTTLIsTwentyMinutes`: `LeaseTTL = 19m0s, want 20m (spec §59)` |
+
+### Where this task departed from the freeze, and why
+
+- **`AcquireLease` refuses a task target outright rather than not offering
+  it.** AC-04.1 lists the method without saying what a task target does; D-66
+  says a task lease is acquired only by moving the task. The refusal is a
+  usage error naming `task state`, so a caller of the domain API — MR-015's
+  tools — cannot grow a second entry point by accident.
+- **`AcquireLease` takes a `Target`, not a kind and a key.** The value is
+  built by `FileTarget` or `TaskTarget`, which is where D-77's rule lives; a
+  method taking two strings would let a caller pass a key nothing normalised.
+- **`Operation` is not yet a parameter.** The work breakdown gives it to
+  TASK-05 on every writer at once; the three lease writers will take it then,
+  as the four existing ones will.
+- **Two things beyond REQ-03/04's letter, both from earlier gates:**
+  `OpenSession` through `InTxMeasured` (TASK-01's gate, carried here), and
+  `Write.Timing` on all seven writers (D-75 said the store carries it; this is
+  the first task to touch the store). *The Reader of this task refuted "all
+  seven": at `8c7107a` `OpenSession` returned `(Session, error)` and discarded
+  the measurement. Since `79e8ccb` it returns a `Write` attributed to the
+  session it minted, and the sentence is true.*
+- **`noProject` is a new constructor** for a writer that belongs to a project
+  rather than a worktree; it is `noWorkspace`'s shape under the same code.
+
+### The gate
+
+Two agents over `8c7107a` and this record at `0d74a86`: a Reader (Sonnet) over
+the record, a Breaker (Fable) with a throwaway test over the fixtures, under
+`-race`, and `sqlite3` for planted rows. Fixes: `79e8ccb`; `make check`
+(19 `ok`) and `make tidy-check` green after it; **837** top-level test
+functions, from 835.
+
+**The Reader** checked 35 claims: 26 confirmed, **1 false**, 8 unconfirmed
+(the whole-suite counts and six mutations it did not re-run; L1, L5 and L9
+matched their recorded red lines). The false one was this record's "`Write.Timing`
+on all seven writers": `OpenSession` returned no `Write` and threw the
+measurement away. Corrected in place above and in the code: `OpenSession` now
+returns `(Session, Write, error)`, the `Write` attributed to the session it
+minted, and `TestSessionOpenIsOneTransactionWithItsWait` asserts the
+measurement rides on it (G34 below). Its contract verdict: AC-03.1 … AC-03.4
+and AC-04.2 … AC-04.5 met; AC-04.1 met with the recorded departure that
+`Operation` arrives with TASK-05.
+
+**The Breaker** produced seven findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | The not-held remedy printed the key bare, so for `with space/file.go` the command it told the reader to run leased `with`, and for a key beginning with a dash it was read as an option: carrying out the remedy did not clear the condition | `8c7107a` | `ShellArgument` renders a key as one shell argument — bare when safe, single-quoted otherwise — and the remedy is `--file=<key>`, which a leading dash cannot turn into an option. `TestARemedyNamingAKeyIsACommandLineThatRuns`; G31 |
+| LOW | A Windows drive prefix (`C:\x`, `C:/x`, `c:`) passed the "absolute" refusal | `8c7107a` | Refused as absolute (D-77 amended in the code's own words: absolute where it comes from, relative to nothing here). The refused list of `TestFileTargetIsNormalisedAndRefusedByTheRule` |
+| LOW | Whitespace variants were distinct targets — two agents each held "the" lease on `src/auth.go` and `src/auth.go ` — and `\r`, `\n`, leading and trailing spaces were accepted (a newline landed raw in `why`). A Linux file literally named `weird\name.go` is leased as `weird/name.go` | `8c7107a` | A key that begins or ends with whitespace, or contains a control character, is refused; G33. The backslash reading stays: D-77 chose Windows-style input over a backslash in a Linux name, and the record says so |
+| LOW | `OpenSession` measured its transaction and discarded it | `8c7107a` | As above; G34 |
+| LOW | An unknown project id reaches the foreign key and is published as `COORDINATION_WRITE_FAILED` with the `doctor` remedy that cannot clear it; `noProject` guards only the empty string | `8c7107a`, and `OpenTask` and `OpenSession` with an unknown workspace have had the same shape since MR-003 | Recorded, not fixed here: the command line supplies the project from the registered workspace, so no shipped command reaches it; the domain surface MR-015 calls will need the guard, and the backlog names it |
+| LOW | One lease row with an unparseable `expires_at` makes `ListLeases` fail outright — a healthy lease beside it unlisted — and every verb on that target `COORDINATION_READ_FAILED`; `doctor` reads no lease rows | `8c7107a`, the shape `ListTasks` has had | Recorded. It is the rule of audit round 2 §4.7 applied: a row the store cannot decode is refused as damaged, and the remedy is `doctor`, which does not yet look. The `doctor` damaged-row check stays unowned, now with four readers waiting on it |
+| LOW | A clock that stepped back between acquisition and renewal made the renewal *shorten* the tenure — `expires_at` moved ten minutes earlier, `renewed_at` before `acquired_at` — and a second session then took over ten minutes early | `8c7107a` | `renewIn` only ever moves `expires_at` forward; the renewal is recorded in `renewed_at` alone when the tenure already runs later. `TestARenewalNeverShortensATenure`; G32 |
+
+Attacked and not broken, in one line each. Sixteen sessions racing one
+target under `-race`: `wins=1 conflicts=15 losers-naming-winner=15
+unreleased=1 total-rows=1`. The same race over an expired tenure, sixteen on
+one handle and thirty-two over two `storage.Open` handles, three runs:
+`takeovers=1 conflicts=31 rows-reason-expired=1 unreleased=1 total-rows=2`. A
+mixed race under a ticking clock — eight renewals and four releases by the
+holder, four acquisitions by others — ended with one release, one renewal
+before it, seven `LEASE_NOT_HELD (released)`, three not-held releases, one
+acquisition and three conflicts naming the new holder; `renewed_at` never
+after `released_at`. The boundary at nanosecond precision: one nanosecond
+before `expires_at` a conflict, at it a takeover; `metadata.expires_at` equal
+to the stored column byte for byte. Two stores with clocks twenty-five
+minutes apart over one database: the later-clocked store takes over the
+earlier one's freshly renewed lease, and the earlier one is then told
+`LEASE_NOT_HELD … released at` a time in its own future — D-65's rule that the
+writer's clock judges, chosen and now recorded with its consequence. A
+planted far-future `expires_at` conflicts until the year 9999 and a holder's
+renewal pulls it to now + TTL; a clock at year 9999 writes a five-digit year
+the reader refuses. `MintFor` on a conflict and on a refused renewal leaves
+the session count unchanged; `NamedSession("")` is `SESSION_NOT_FOUND`. Every
+remedy carried out cleared its condition; no `why` carried a driver's or Go's
+words. A planted `released_at = ''` is refused as damaged by `FindLease`,
+hidden by `ListLeases`, and outside the index, so an acquisition inserts
+beside it. A planted `symbol` kind is read and listed as it is, with the
+generic remedy the default arm now prints. A session of another project's
+workspace acquires here (as `OpenTask` allows since MR-003). A NUL byte and
+a ten-thousand-character key are stored and read back equal. Sixteen
+concurrent `OpenSession` mint sixteen ids; a one-mebibyte label is stored.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G31 | `ShellArgument` quotes only what is unsafe *and* does not begin with a dash (`||` for `&&`) | `TestARemedyNamingAKeyIsACommandLineThatRuns`: `ShellArgument("-rf") = -rf, want '-rf'`, `ShellArgument("it's.go") = it's.go, want 'it'\''s.go'`, `ShellArgument("a$b.go") = a$b.go, want 'a$b.go'` |
+| G32 | `renewIn` always sets `expires_at = now + TTL` | `TestARenewalNeverShortensATenure`: `expires_at = 2026-09-09 08:40:00 +0000 UTC after a renewal from an earlier clock, want the original … 08:50:00 kept` and `a second session acquired before the original expiry; the renewal shortened the tenure` |
+| G33 | `FileTarget` stops refusing whitespace at either end | `TestFileTargetIsNormalisedAndRefusedByTheRule`: `want COMMAND_LINE_INVALID, got no error` |
+| G34 | `OpenSession` zeroes `Held` before returning its `Write` | `TestSessionOpenIsOneTransactionWithItsWait`: `OpenSession's Write = {… Minted:true Timing:{Waited:… Held:0s}}, want the minted session and a measured transaction` |
+
+**Carried forward from this gate:** the unknown-project guard on the domain
+surface (MR-015's, backlog); the `doctor` damaged-row check, now with lease
+rows among its readers (unowned); the writer's-clock consequence under D-65
+(recorded, by design).
+
+---
+
+## 4. TASK-04 — the lease and the revision in front of every task move
+
+Commit `ac8f1d0`, and `fa0acc8` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **845** top-level test
+functions after the first, from 837, and **849** after the second. Owns
+REQ-05 and `STATE_REVISION_CONFLICT` of REQ-07.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/store.go` | `Transition` is `TransitionExpecting` with no expectation; `TransitionExpecting` runs design §7's three judgments inside the one transaction, in order — the expected revision (`STATE_REVISION_CONFLICT`, D-72), the task's unreleased lease judged at the clock read under the lock (`LEASE_CONFLICT` for another session's active tenure, D-67), then D-55's table and D-63's reason — and the effect by destination: `CLAIMED` and the working states run `acquireIn` for the mover (renew when held, take over when expired, insert when none) and make the mover the claimant; `OPEN` closes the tenure and clears the claimant; the terminal states close it and keep the claimant (D-68). A tenure that had already expired is closed with reason `expired` whichever path closes it (`closeReason`). The row is written with `revision = revision + 1 WHERE revision = ?` against the revision read in the transaction, and zero rows affected is a defect. Both return `Move{Task, Lease, Superseded}`. `WriteCheckpoint` reads the task whole (the MR-003 §7 LOW: a damaged row took notes), then — for the holder — renews, or on `--handoff` closes with reason `handoff`; anyone else's note touches no lease (D-78); it returns `Noted{Checkpoint, Lease}`. `Handover` carries the task's newest tenure in whatever status, for `task show`. `OpenTask` writes `revision = 1`; `selectTask`/`scanTask` carry it |
+| `internal/coordination/lease_store.go` | `AcquireLease` accepts a task target as **the claim without a move** (D-66 amended, below): `claimWhereItStands` reads the task, refuses `OPEN` and the terminal states with `TASK_STATE_INVALID` (remedy: `--to CLAIMED`, or "final"), runs `acquireIn`, and — unless the holder already held it — writes `claimed_by`, `updated_at` and `revision + 1` on the task row |
+| `internal/coordination/model.go` | `Task.Revision`; `Handover.Lease` |
+| `internal/coordination/errors.go` | `ErrRevisionConflict`, `revisionConflict` (current revision and state, expected revision, remedy `task show` then `--expect-revision <current>`); `taskNotClaimableWhereItStands` |
+| `internal/app/code.go`, `internal/cli/envelope_test.go` | `STATE_REVISION_CONFLICT`, registered, `ExitFailed` |
+| `internal/cli/task.go`, `checkpoint.go` | Read `move.Task` and `noted.Checkpoint`. Two things reach the wire already, through struct fields with JSON tags rather than through anything these commands do: `task.revision` on every task result, and `task show --json`'s `lease` (the newest tenure). Neither is rendered for a person, neither is pinned by a CLI test, and a takeover is not yet reported by `task state`; TASK-06 owns all three *(the first version of this row said nothing new was published; the Breaker read both keys off the wire)* |
+| Tests | `internal/coordination/lifecycle_lease_test.go` (eight, new): `TestEveryDestinationHasItsLeaseEffect` (design §7's table, seven arms), `TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination` (AC-05.2, all seven destinations, row re-read), `TestAStaleRevisionIsRefusedBeforeAnythingElse` (AC-05.4/05.5: judged before the lease, row unchanged, +1 per move and on nothing else, zero expects nothing), `TestTheInvariantHoldsAfterEveryLegalTransition` (AC-05.1: thirteen pairs × two starting states, D-68 checked after each, and the expired tenure's reason on every path), `TestTheTableIsUnchangedByTheLease` (AC-05.7, 36 refusals), `TestAHoldersCheckpointRenewsAndAHandoffReleases` (AC-05.6, three arms — the stranger's arm compares the lease row column for column, `Status` aside — and the handover replayed), `TestACheckpointOnADamagedTaskRowIsRefused`, `TestHandoverReportsTheNewestTenure`. `lease_store_test.go`: `TestATaskTargetIsNotAcquiredDirectly` became `TestATaskIsTakenWhereItStandsOnlyInAWorkingState`. Three MR-003 tests were amended to the rules that changed, with the decision named in each: `TestASecondSessionContinuesTheFirstsTask` and `TestTwoSequentialAgentsContinueOneTaskAcrossAProcessBoundary` (the arriving agent is now the claimant, D-68), `TestASecondClaimNamesTheSessionHoldingIt` (`LEASE_CONFLICT` naming the holder, not `TASK_STATE_INVALID`, D-67) |
+
+### A gap in the freeze, and the amendment it needed
+
+Design §7's handover reads: *A writes `checkpoint write --handoff` and exits —
+the lease is released; agent B, a new session, moves the task to `IN_PROGRESS`
+and acquires it.* That works from `CLAIMED`. The task an agent hands off is
+almost always `IN_PROGRESS`, and D-55 has no `IN_PROGRESS → IN_PROGRESS`: B
+had no move that kept the task where it was, so the first test of the
+handover replay was refused with `TASK_STATE_INVALID … cannot move to
+IN_PROGRESS; it is claimed by session A`. D-66 ("a task lease is acquired only
+by moving the task") had closed the one door B needed.
+
+The amendment, recorded here and in the requirements: **`lease acquire
+--task <id>` is the claim without a move.** It is allowed on a task in a
+working state — `CLAIMED`, `IN_PROGRESS`, `BLOCKED`, `READY_TO_COMPLETE` — and
+it takes the lease where the task stands, makes the holder the claimant and
+raises the revision, without touching the state. An `OPEN` task is refused
+with the remedy `--to CLAIMED` (its claim *is* the move, and `OPEN` has no
+active lease by D-68); a finished task is refused as final. Both entry points
+run `acquireIn` and write `claimed_by` in one transaction, which is what D-68
+rests on; the lifecycle table is still consulted in exactly one place, because
+this path does not move the task. The alternative — letting a self-transition
+mean "take over" — would have changed D-55's table, which forty-nine pairs of
+tests and the CLI's help text state. Design §10's "there is no `lease acquire
+--task`" and AC-08.1's "no `--task`" are amended in place.
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| T41 | the lease judgment skipped | `TestAMoveOnAnotherSessionsHeldTaskIsRefusedForEveryDestination`: `code = TASK_STATE_INVALID, want LEASE_CONFLICT: task TSK-… is IN_PROGRESS and cannot move to OPEN; it is claimed by session SES-…` |
+| T42 | the revision judgment skipped | `TestAStaleRevisionIsRefusedBeforeAnythingElse`: `code = LEASE_CONFLICT, want STATE_REVISION_CONFLICT: task TSK-… is held by session SES-… until …` — the next judgment answering for the one removed |
+| T44 | the `UPDATE` writes `revision = revision` | the same test, the same line: the first move returned revision 2 and left the row at 1, so the stale caller's expectation of 1 was met and the lease answered instead |
+| T45 | `CLAIMED` and the working moves leave `claimed_by` as it was | `TestEveryDestinationHasItsLeaseEffect`: `task = claimed_by "" revision 2, want the mover and revision 2` and `after CLAIMED: claimed_by = "" while the active lease is held by "SES-…"`; the invariant test the same after `IN_PROGRESS` |
+| T46 | `OPEN` does not close the tenure | `the tenure is active (""), want released (released)` and `after OPEN: an OPEN task holds an active lease LSE-…` |
+| T47 | the terminal moves do not close it | `the tenure is active (""), want released (finished)`, twice |
+| T48 | `--handoff` renews instead of releasing | `TestAHoldersCheckpointRenewsAndAHandoffReleases`: `handoff.Lease = &{… Status:active …}` where released with reason handoff was wanted |
+| T49 | a stranger's checkpoint renews too | the same test: `a stranger's checkpoint reports a lease &{…}` |
+| T410 | the task probe back to `SELECT task_id, project_id` | `TestACheckpointOnADamagedTaskRowIsRefused`: `want COORDINATION_READ_FAILED, got no error` |
+| T411 | `Handover` leaves `Lease` nil | `TestHandoverReportsTheNewestTenure`: `Handover(held) = <nil>, <nil>; want the active tenure` |
+| T412 | `claimWhereItStands` admits an `OPEN` task | `TestATaskIsTakenWhereItStandsOnlyInAWorkingState`: `want TASK_STATE_INVALID, got no error` |
+| T413 | `closeReason` always writes the path's reason | `TestTheInvariantHoldsAfterEveryLegalTransition`: `the expired tenure is released ("released") after the move to OPEN, want released (expired)` and `("finished") after the move to ABANDONED` |
+
+### Where this task departed from the freeze, and why
+
+- **D-66 is amended** as described above; the task-target refusal TASK-03
+  recorded is replaced by the working-state rule.
+- **`TransitionExpecting` beside `Transition`**, rather than one method with
+  a revision parameter every caller passes. Twenty-three call sites pass no
+  expectation and never will; the command line will call
+  `TransitionExpecting` with what `--expect-revision` gives it once TASK-06
+  adds the flag, and calls `Transition` until then. *(The Reader of this task
+  refuted the first version of this bullet: it said twenty-one, and said the
+  command line already called `TransitionExpecting`.)*
+- **The revision is judged before the lease** as design §7 orders, and T42
+  shows what the order buys: a stale caller is told its reading is stale, not
+  who holds the task as if its reading were current.
+- **`WriteCheckpoint` judges the lease at the row's own stamp**, which is read
+  before the transaction like the other inserting writers' (verification pass
+  after MR-003's round 2), not at a second reading under the lock. A lease
+  that ran out during the lock wait is renewed if it was the writer's and left
+  alone if it was not, and neither is a wrong answer.
+- **Three MR-003 tests changed their expectation**, each with the decision
+  that changed it in its comment: the arriving agent becomes the claimant
+  (D-68 amends D-58), and a second claim is `LEASE_CONFLICT` naming the holder
+  (D-67 in front of D-55). The claim F22 asked for — that the refusal names
+  the session holding the task — holds under the new code.
+
+### The gate
+
+Two agents over `ac8f1d0` and this record at `3e5bb1b`: a Reader (Sonnet)
+over the record, a Breaker (Fable) with a throwaway test under `-race` and
+the built binary over scratch repositories. Fixes: `fa0acc8`; `make check`
+(19 `ok`) and `make tidy-check` green after it; **849** top-level test
+functions, from 845.
+
+**The Reader** checked 31 claims: 26 confirmed, **2 false**, 3 unconfirmed
+(the whole-suite counts and the previous task's number). The two false were
+one sentence of this record's departures — "twenty-one call sites" for
+twenty-three, and "the command line calls `TransitionExpecting`" for a
+command line that calls `Transition` until TASK-06 adds the flag — corrected
+in place above, marked. Two LOW: T46's re-run prints a third line the table
+does not quote (it fires the invariant's second clause as well), and
+"byte-identical" for a comparison that is column for column with `Status`
+aside — the test list above now says so. The three mutations it re-ran (T41,
+T46, T412) matched. Its contract verdict: AC-05.1 … AC-05.7 met.
+
+**The Breaker** produced seven findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | The claim without a move raised the task's revision and reported nothing about it: `Acquisition` carried neither the task nor the new revision, so a claimant that had read the task before claiming it — every agent arriving by the read-then-expect protocol D-72 describes — was refused on its own next move: `current=3 expected=2`. | `ac8f1d0` | `Acquisition.Task` carries the task as the claim left it — claimant, `updated_at`, revision — for a task target, nil for a file. `TestTheClaimWithoutAMoveReportsTheTaskItClaimed`; G41 |
+| LOW | `WriteCheckpoint` judged the lease at a stamp taken before the lock, against D-65's "judged against the clock read inside the transaction": a holder's note that waited on the lock renewed a tenure the in-lock clock had already expired, and a stranger's takeover right after was refused for twenty more minutes. Bounded by `busy_timeout` (five seconds of wait at most) | `ac8f1d0` | The clock is read under the lock, as `Transition` reads it since MR-003's verification pass; the row's stamp, the minted session's start and the lease judgment are one instant. `TestACheckpointIsStampedUnderTheWriteLock`, in `lockProbingClock`'s shape; G42. The departure bullet above that called the pre-lock stamp "not a wrong answer" was wrong by five seconds, and is superseded by this row |
+| LOW | `Handover` read the task and its newest lease in two statements outside a transaction; a takeover committing between them put a claimant beside another session's active lease on the wire — a D-68 violation the rows never had: `7` in `4000` reads under a takeover storm | `ac8f1d0` (`Handover.Lease` was new) | One statement: the task LEFT JOINed with its newest lease row, one snapshot. `TestHandoverReadsTheTaskAndItsLeaseAsOneSnapshot` drives four thousand reads against a takeover loop and asserts zero mismatches; G44 |
+| LOW | "Nothing new is published yet" was false: `task show --json` already carried the whole `lease` row and every task result `task.revision`, through struct tags; no CLI test pinned either | record | Corrected in the table above; the human rendering, the pins and the takeover on the wire are TASK-06's |
+| LOW | A takeover through the binary was silent on both wires — `task state` published neither `superseded` nor the lease — while the history said a tenure was superseded, against D-67's "reported, never silent" | `ac8f1d0`; the wire is TASK-06's | Recorded for TASK-06: `Move.Lease` and `Move.Superseded` exist and are not yet published |
+| LOW | A negative expected revision was treated as no expectation; the command line's `< 1` guard does not stand in front of the domain surface MR-014/15 call | `ac8f1d0` | The store refuses it as a usage error; zero still means no expectation. `TestANegativeExpectationIsRefused`; G43 |
+| LOW | Three contract sentences were not amended with D-66: AC-05.5's "on every successful `Transition` and on nothing else", D-68's "the only such paths are inside `Transition`", and design §7's table reasons for the release paths over an expired tenure (`released`/`finished` where the row says `expired`) | text | All three amended in place in the requirements and the design, marked |
+
+Attacked and not broken, in one line each. Sixteen sessions racing
+`Transition(CLAIMED)` on one `OPEN` task under `-race`: `LEASE_CONFLICT:15
+OK:1`, every refusal naming the winner, `revision=2 unreleased=1`, D-68 true.
+Sixteen racing a working move over an expired tenure: one takeover naming
+the crashed tenure, fifteen refusals, `old.reason=expired revision=4`. Forty
+rounds of the holder's move against the holder's `--handoff` against a
+stranger's `AcquireLease --task`: D-68 true and at most one unreleased lease
+every round. Two stores over one file racing `TransitionExpecting(1)` thirty
+times: one winner each, the loser `STATE_REVISION_CONFLICT current=2`.
+`expect=MaxInt64` refused with the current revision; a planted `revision=0`
+moves to 1; a planted `MaxInt64` is `COORDINATION_WRITE_FAILED` with the row
+untouched and the lease rolled back. A planted `RAISE(IGNORE)` trigger on
+`tasks`: `COORDINATION_WRITE_FAILED`, state and revision unchanged, zero
+unreleased leases (the `doctor` remedy cannot clear a planted trigger, and
+that is acceptable). `AcquireLease --task` over all seven states as design
+§7 and D-66 say; two strangers at once over an expired tenure, one wins; the
+wrong project is `TASK_NOT_FOUND`. A second handoff by the same session
+touches nothing; a stranger's `--handoff` touches nothing; a holder's note
+twenty-five minutes after expiry does **not** revive the tenure — a crashed
+and returned agent cannot reclaim through a note. Every closer of an expired
+tenure writes `expired`; a released tenure then a takeover names nothing
+superseded. Through the binary: B's move while A holds is `LEASE_CONFLICT`
+naming A, the lease and the expiry; after A's `--handoff` B's move succeeds
+with `claimed_by` B and revision 4; A's next move is `LEASE_CONFLICT` naming
+B. The "gap in the freeze" account reproduced verbatim at the binary.
+
+Not demonstrated, for TASK-06: `LEASE_CONFLICT`'s remedy names `mindrail
+lease release <id>`, a command that does not exist until then.
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G41 | `claimWhereItStands` reports no task | `TestTheClaimWithoutAMoveReportsTheTaskItClaimed`: `the claim without a move reports no task; the claimant cannot know the revision it raised` |
+| G42 | the checkpoint's stamp read before the transaction again | `TestACheckpointIsStampedUnderTheWriteLock`: `WriteCheckpoint read the clock without holding the write lock; a note that waited on the lock would judge the lease at an instant before the wait` |
+| G43 | the negative guard admits `-1` | `TestANegativeExpectationIsRefused`: `want COMMAND_LINE_INVALID, got no error` |
+| G44 | `Handover` back to two statements | `TestHandoverReadsTheTaskAndItsLeaseAsOneSnapshot`: `3 of 4000 handovers showed a claimant beside another session's active lease` — five runs, red every time (3, 10, 10, 6, 8); at the test's first size of 400 reads the same mutation was red in two runs of five, which is why it reads four thousand |
+
+**Carried forward from this gate:** the takeover and the lease on `task
+state`'s wire, `task show`'s human rendering and the pins for `revision` and
+`lease` (TASK-06).
+
+---
+
+## 5. TASK-05 — a repeated operation is answered from its record
+
+Commit `d4889f7`, and `cbf4a61` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **856** top-level test
+functions after the first, from 849, and **857** after the second. Owns
+REQ-06 and `OPERATION_ID_CONFLICT` of REQ-07.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/operation.go` (new) | `Operation{ID}`; `ValidOperationID` (D-71's grammar, `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`); `Store.Idempotent(id)` — a per-call view of the store bound to one operation; `requestHash` (SHA-256 over canonical JSON of the command name and the store's parameters, hex); `attributionKey` (`named:<handle>` or `mint:<workspace>`, so the session handle is part of the request for the six writers that take an `Attribution`; `OpenSession` takes none and hashes the workspace id and the label directly); `replay` — the lookup inside the write transaction, before any other statement: not found → the write runs; found with the same command and hash → the recorded result is decoded and the `Write` returns `Replayed`; found with another → `OPERATION_ID_CONFLICT`; `record` — the insert after the write, in the same transaction, of `{session, minted, result}`; `refuseInvalidOperation` for the callers with no command line |
+| `internal/coordination/store.go`, `lease_store.go` | All seven writers judge the bound id, hash their parameters before the transaction, replay first inside it, and record last; `Write` gains `OperationID` and `Replayed`. `holderWrite`'s command is `lease renew` or `lease release` by its verb |
+| `internal/coordination/errors.go` | `ErrOperationConflict`, `operationConflict` (the id, the recorded command and the attempted one; remedy: mint a new id) |
+| `internal/app/code.go`, `internal/cli/envelope_test.go` | `OPERATION_ID_CONFLICT`, registered, `ExitFailed` |
+| Tests | `operation_test.go` (six, new): the seven writers in one table — `TestWithoutAnOperationEveryWriterRecordsNothing` (AC-06.1), `TestTheSameOperationTwiceIsOneWriteAndOneRecord` (AC-06.2: one entity row, one operation row, the second answer equal to the first and `Replayed`, seven arms), `TestTheSameIDForADifferentRequestIsAConflict` (AC-06.3: a different title, a different session, a minted session for a named one, a different command — nothing written), `TestARefusedOperationRecordsNothing` (AC-06.4: a `LEASE_CONFLICT` under an id records nothing; the same id after the release succeeds and records), `TestTwoDeliveriesOfOneOperationSerialise` (AC-06.5: eight goroutines, one task, one record, seven replays, under `-race`), `TestAnOperationIDMustBeAnIdentifier`. `operation_internal_test.go`: `TestTheRequestHashIsStableAndSensitive` (AC-06.6: equal for equal parameters, different for each of six changed fields and for the command name; a named session and a workspace with one id key differently) |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| O1 | `replay` never compares the recorded command and hash | `TestTheSameIDForADifferentRequestIsAConflict`: `want OPERATION_ID_CONFLICT, got no error`, in every arm |
+| O2 | `record` never inserts | `TestTheSameOperationTwiceIsOneWriteAndOneRecord`: `after the first session open the operations table holds 0 rows, want 1`, and the same for every writer |
+| O3 | `replay` decodes the record and reports it not found | the same test: `second session open = COORDINATION_WRITE_FAILED: the agent session could not be written …, want the replay` — the write ran again and the operations table's primary key refused the second record |
+| O4 | `attributionKey` drops the session handle | `TestTheSameIDForADifferentRequestIsAConflict/a_different_session`: `want OPERATION_ID_CONFLICT, got no error`; `TestTheRequestHashIsStableAndSensitive`: `changing session produced the same hash as base` |
+| O6 | the store stops judging the id's grammar | `TestAnOperationIDMustBeAnIdentifier`: `want COMMAND_LINE_INVALID, got no error` |
+| O7 | `Idempotent` binds the id on the receiver instead of a copy | `TestTwoDeliveriesOfOneOperationSerialise` under `-race`: `WARNING: DATA RACE` — eight goroutines binding one store |
+
+There is no O5: the fifth edit run was a control that changed nothing
+(`return s.record(…)` rewritten as an `if err := …; err != nil { return err }`
+followed by `return nil`), it stayed green as a control should, and it is not
+a mutation. The gap in the numbering was left rather than renumbered so the
+logs under `/tmp/mut-O*.log` still match.
+
+AC-06.4 has no one-line falsifier: the record is inserted inside the
+transaction the write runs in, so a refusal rolls it back with everything
+else, and a mutation that moved the insert after the transaction would be a
+different design rather than a slipped line. The test exercises the property
+on a refused move retried after the lease's release.
+
+### Where this task departed from the freeze, and why
+
+- **The operation is bound with `Idempotent(id)`, not passed to every
+  writer.** AC-06.1 says all seven "take `Operation`". A parameter on seven
+  signatures would be the zero value at every call but the command line's
+  and would touch some seventy call sites; a per-call view carries the same
+  fact — zero binding, zero effect — and cannot be shared between two writes
+  by accident without the second answering `OPERATION_ID_CONFLICT`. The
+  command line binds one id, performs one write, and lets the view go.
+- **The replay lookup runs before the session is resolved**, so a replayed
+  write mints nothing: the recorded `Write` says which session the first
+  delivery ran under and whether it minted, and the second delivery repeats
+  that answer rather than minting a second identity.
+- **The result recorded is the writer's own type** (`Session`, `Task`,
+  `Move`, `Noted`, `Acquisition`, `Lease`), marshalled with the JSON tags the
+  wire already uses, so a replay decodes into the same Go value the first
+  delivery returned and `TestTheSameOperationTwiceIsOneWriteAndOneRecord`
+  compares the two with `reflect.DeepEqual`.
+- **A blank id is no binding**, not a refusal: `Idempotent("")` is the plain
+  store, so a command line that received no `--operation-id` can bind what it
+  was given without a branch.
+
+### The gate
+
+Two agents over `d4889f7` and this record at `e20dee6`: a Reader (Sonnet)
+over the record, a Breaker (Fable) with throwaway tests over two
+`storage.Open` handles under `-race` and `sqlite3` for planted rows. Fix:
+`cbf4a61`; `make check` (19 `ok`) and `make tidy-check` green after it;
+**857** top-level test functions, from 856.
+
+**A process defect of this gate, on the orchestrator.** While the pair ran,
+TASK-06's command-line work was being written in the main tree — on the
+argument that the Reader ran only `internal/coordination` and `internal/app`.
+The mandated count builds every package, and for a stretch the in-progress
+`internal/cli` did not build, so the Reader saw the count move between 862
+and 754 across identical runs and had to fall back to a static count of the
+git objects. Nothing under audit was touched, and the Reader's verdicts stand;
+but a gate's environment is the tree, and the rule from here is the one the
+freeze's process implied: **nothing in the main tree changes while a gate
+runs.** TASK-06 was committed after this gate closed, as its own step.
+
+**The Reader** checked 22 claims: 18 confirmed, **1 false**, 3 unconfirmed;
+the three mutations it re-ran (O1, O2, O6) matched their recorded red lines
+arm by arm. The false claim was the test tally — "856 from 849" against its
+static count of 863 from 856 — which is the seven-test offset the preamble
+now explains: the two methods count different things, and the record's
+numbers are right by the method the definition of done names. Its two LOW:
+the numbering skipped O5 without saying why (said now, above), and the
+`attributionKey` sentence overstated uniformity — `OpenSession` takes no
+`Attribution` and hashes the workspace and the label directly (corrected in
+the table above). Its contract verdict: AC-06.2 … AC-06.6 met, AC-06.1 met
+with the recorded departure.
+
+**The Breaker** produced four findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | A `task open` record whose `result` carried no `task_id` — a hand-edited row, or a row a later binary wrote in another shape — replayed **without error** as a task with a freshly minted id that existed nowhere, a different one on every replay, `Replayed = true`, with the planted `project_id` leaking into it. The cause: `OpenTask` and `OpenSession` decoded the record into the value they had prepared for a fresh run, so a field the record lacked kept the fresh mint. The other five writers returned a visibly empty result | `d4889f7` | `replay` decodes into a zero value of the result's type and refuses a record whose result names no entity — every replayable result answers `recordedID()` — as `COORDINATION_READ_FAILED` naming the operation; what the record holds is what is returned. `TestARecordThatNamesNoEntityIsDamageNotAFreshMint`, all seven writers, the record drifted with `json_set`; O8 |
+| LOW | A record whose `result` is not JSON makes its id a permanent `COORDINATION_READ_FAILED`, and the remedy — run `doctor`, then re-run — cannot clear it: no shipped command removes an operations row | `d4889f7` | Recorded, not fixed: it is the rule of audit round 2 §4.7 (a row the store cannot decode is damage) meeting a table nothing repairs. The `doctor` damaged-row check stays unowned, now with the operations table among its readers; a caller's own way out is a new id |
+| LOW | A conflict for the same command with different parameters names the command twice and nothing else; the caller cannot see which parameter differed | `d4889f7` | Recorded, by design: the hash is opaque, and naming the differing parameter would mean storing the parameters, which the design keeps out of the record |
+| LOW | The record holds the whole result, so an idempotent checkpoint stores its note twice; ten thousand idempotent checkpoints added 4.5 MB of records (447 bytes each, 0.078 ms per write, a replay in 311 µs); no retention | `d4889f7`, D-71's design | Recorded with the numbers: D-71 chose no retention in 0.1 and this is its cost, measured |
+
+Attacked and not broken, in one line each. Two handles with clocks an hour
+apart delivering one id at once, thirty-two rounds each of `task open`,
+`task state`, `checkpoint write` and `lease acquire` under `-race`: every
+round one fresh and one replayed answer, equal, one entity row and one
+record. A replay under a clock two TTLs ahead returns the record's stamps and
+statuses, never the replayer's clock, marked `Replayed`. A replay after the
+world moved — the task taken on by another session, a lease released and
+re-acquired by someone else — returns the first delivery's truth with
+`Replayed = true` and writes nothing: rows untouched, no session minted.
+The hash: a trimmed reason, a trailing space in a title or label replay
+(they are trimmed before hashing, as before storing); `handoff` true against
+false, `lease renew` against `lease release`, two projects, composed against
+decomposed `é`, `expect-revision` 0 against 1, `named:X` against `mint:X` are
+all different requests. The grammar admits 128 characters and refuses 129,
+admits ULIDs, UUIDs and `a:b:c`, refuses `ünïcode`, a space and a slash — a
+choice D-71 wrote, costing an id-minting agent nothing. A bound view used for
+a second, different write answers `OPERATION_ID_CONFLICT`; used from two
+goroutines for different writes, one succeeds and one conflicts; the unbound
+store afterwards carries no id. A `RAISE(ABORT)` trigger on `operations`
+rolls the whole write back, minted session included, and the same id after
+the trigger is dropped runs fresh. `Idempotent("")` is the plain store;
+`Idempotent(" ")` is refused; the same request a day and a year later
+replays. A planted `result = '{}'` is refused as damaged; planted empty
+`request_hash` and `command` are conflicts; the row holds the session's
+timestamps and the lease's `expires_at` and `status`.
+
+Not demonstrated: a second delivery exhausting the busy budget at `BEGIN`
+and retrying, in thirty-two rounds.
+
+| # | Mutation (gate fix) | Red |
+|---|---|---|
+| O8 | the identity check after decoding dropped | `TestARecordThatNamesNoEntityIsDamageNotAFreshMint`: `want COORDINATION_READ_FAILED, got no error`, in every writer's arm |
+
+**Carried forward from this gate:** the `doctor` damaged-row check, now with
+`operations` among its readers (unowned); the process rule above, for every
+remaining gate.
+
+---
+
+## 6. TASK-06 — the command surface
+
+Commit `9aa7a2a`, and `1431d9f` after the gate. `make check` (19 `ok`, no
+`FAIL`) and `make tidy-check` green after each; **863** top-level test
+functions after both, from 857 (the gate added assertions to existing tests
+and no test function). Owns REQ-08. Its implementation overlapped TASK-05's
+gate window in the main tree — the process defect recorded under §5 — and it
+was committed only after that gate closed.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/cli/lease.go` (new) | `mindrail lease acquire --file <path> \| --task <task-id>`, `lease renew <id>`, `lease release <id>`, `lease list`; the flags `--operation-id` (every writer) and `--expect-revision` (`task state`), each judged before the application starts — a malformed id, a revision below one, both targets or neither, an unrepresentable file key — with "Mindrail did not run" as the impact; `leaseTargetFlags` refuses invalid UTF-8 in `--file` by name and hands the store's own `FileTarget` refusal through with that impact; `attributed`, the part of every writer's result that says the session, whether it was minted, `replayed` and `operation_id`; `renderAttribution`, the human sentence for a replay ("This is the recorded result of operation …; nothing was written again"); `leaseResult` (lease, `renewed`, `superseded`, the task for a claim without a move) and `leaseListResult` (`[]`, never `null`); `renderLeaseLine`, the rendering of a lease's status `task show` and the three lease writers share; `task state`, `checkpoint write` and `lease list` print one-line forms of their own *(the first version of this cell said every command; the Breaker counted)* |
+| `internal/cli/task.go` | `task open` and `task state` take `--operation-id`, `task state` takes `--expect-revision` and calls `TransitionExpecting`; `taskResult` publishes `lease` (null after a release or for a fresh task) and `superseded`; the human rendering prints the revision, the lease held, and "Took over from session …, whose lease expired at …"; `task show` prints the newest tenure beside the claimant in its status — held until, expired at, released at with its reason — and no line for a task never claimed |
+| `internal/cli/checkpoint.go` | `--operation-id`; `checkpointResult` publishes `lease` — renewed, or released by a handoff — and prints it |
+| `internal/cli/coordination.go` | `session open` takes `--operation-id` and publishes `replayed` |
+| `internal/cli/root.go`, `internal/bootstrap/app.go`, `internal/cli/{coordination,doctor,init,status}.go` | `cli.Options.BusyTimeout`, carried through `bootstrap.Options` to `storage.Options`: a seam for tests that hold the lock and drive a command into `MINDRAIL_BUSY_RETRYABLE`, which at the production budget would cost five seconds per run. Zero is the default |
+| `internal/cli/testdata/task_show_human.golden` | One line: `Task TSK-… is OPEN.` → `Task TSK-… is OPEN (revision 1).` |
+| Tests | `internal/cli/lease_test.go` (six, new): `TestTheLeaseGroupHasFourVerbsAndTwoTargets` (AC-08.1: the four verbs in `--help`, no fifth, a file acquired/renewed/released, a handed-off task taken where it stands, both-or-neither targets refused before starting), `TestEveryWriterTakesAnOperationIDAndJudgesItFirst` (AC-08.2, AC-08.4: seven writers refuse `has space` at exit 2 before starting; a well-formed id records once and replays with `replayed: true`, the same `task` and `session`, one row; the human replay sentence), `TestExpectRevisionIsJudgedBeforeStartingAndThenByTheStore` (AC-08.2: `0`, `-1`, `x`, `1.5` refused before starting; `1` moves to revision 2; a stale `1` is `STATE_REVISION_CONFLICT` at 2), `TestTaskShowPrintsTheLeaseInEveryStatus` (AC-08.5: no line for a fresh task; held with the expiry; expired — the row back-dated by SQL, since the binary runs on the system clock — beside the claimant; released with its reason; and the read changed no row), `TestLeaseListAndTaskShowWriteNoRow` (AC-08.3's `[]`, AC-08.6 over four tables), `TestAMoveReportsTheLeaseAndATakeover` (the lease on `task state`'s wire and a takeover named, in JSON and for a person). `coordination_agreement_test.go`: the four lease commands join `coordinationCommands` (AC-08.8, through the uninitialised sweep; the schema-behind sweep in `upgrade_test.go` keeps a list of its own, and gained `lease list` and `lease acquire --file` in the gate — *the first version of this sentence claimed both sweeps, and the Reader found the second had no lease command in it*); six rows join `coordinationRefusals` (AC-08.7) — `LEASE_CONFLICT` (a second session's acquisition, cleared by the holder's release), `LEASE_NOT_HELD` (renewing a released lease, cleared by `lease acquire --file=…` as the remedy names it), `LEASE_NOT_FOUND` (cleared by `lease list`), `STATE_REVISION_CONFLICT` (cleared by `task show` and the revision it prints), `OPERATION_ID_CONFLICT` (cleared by a new id), `MINDRAIL_BUSY_RETRYABLE` (a held lock, cleared by the holder finishing; the matrix runs under a 200 ms busy budget, so the row costs a fraction of a second rather than five seconds twice). `coordination_representable_test.go`: `lease acquire --file` joins the refused-write table |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| C1 | `lease acquire` accepts `--file` and `--task` together | `TestTheLeaseGroupHasFourVerbsAndTwoTargets`: `[lease acquire --file a.go --task TSK-… --session SES-…] exited 1, want 2` — the store answered instead of the command line |
+| C2 | `operationIDFlag` judges nothing | `TestEveryWriterTakesAnOperationIDAndJudgesItFirst`: `session open: COMMAND_LINE_INVALID / "Nothing was read and nothing was written.", want COMMAND_LINE_INVALID before starting` — the store's judgment, after starting, for every writer |
+| C3 | `expectRevisionFlag` admits zero | `TestExpectRevisionIsJudgedBeforeStartingAndThenByTheStore`: `--expect-revision 0 exited 0, want 2` |
+| C4 | `task state` passes no expectation to the store | the same test: `a stale expectation exited 0, want 1` |
+| C5 | `task show` prints no lease line | `TestTaskShowPrintsTheLeaseInEveryStatus`: `an active lease is not printed with its holder and expiry` and `an expired lease is not printed as expired beside the claimant` |
+| C6 | the takeover line dropped from `task state`'s rendering | `TestAMoveReportsTheLeaseAndATakeover`: `the human rendering of a takeover does not name the session it took over from` |
+| C7 | the replay sentence dropped | `TestEveryWriterTakesAnOperationIDAndJudgesItFirst`: `the human rendering of a replay does not say so` |
+
+An eighth edit — `flagFile` removed from `coordinationTextFlags` — stayed
+green, because `leaseTargetFlags` refuses an unrepresentable key before that
+list is consulted; the entry was a guard no mutation could falsify, and it
+was removed rather than kept.
+
+### Where this task departed from the freeze, and why
+
+- **`lease acquire` has `--task`** (D-66 as amended in TASK-04; AC-08.1 as
+  amended).
+- **A busy-budget seam.** `cli.Options.BusyTimeout` is not in the freeze. The
+  matrix's busy row needs a held lock and a command that gives up, and at
+  the production budget that is five seconds per run, twice per row; the
+  seam is the shape the git runner already has in `cli.Options`, and zero
+  is the production default everywhere.
+- **`task show`'s expired arm is produced by back-dating the row.** The
+  binary runs on the system clock; the store's tests move an injected one.
+  The SQL edit is the only way a command-line test reaches the expired
+  status, and the assertion afterwards that the read changed no row is what
+  keeps it honest.
+- **AC-08.7's rows are seven commands wide, not six codes deep.** The busy
+  row's remedy is "let the other command finish"; the matrix carries it out
+  by releasing the lock the row's setup took, and the retry succeeds.
+
+### The gate
+
+Two agents over `9aa7a2a` and this record at `f854724`, with nothing else
+changing in the tree while they ran: a Reader (Sonnet) over the record, a
+Breaker (Fable) with the built binary over scratch repositories, sixteen
+processes at a time where the question was a race. Fix: `1431d9f`;
+`make check` (19 `ok`) and `make tidy-check` green after it; 863 top-level
+test functions, unchanged.
+
+**The Reader** checked 35 claims: 28 confirmed, **1 false**, 6 unconfirmed
+(the whole-suite counts and four mutations it did not re-run; C2, C3 and C6
+matched their recorded red lines verbatim). The false one was this record's
+"through the uninitialised and schema-behind sweeps": the schema-behind test
+keeps its own two-command list and ran no lease command, even though the
+binary answered a schema-2 database correctly for `lease list` and `lease
+acquire` when the Reader built it and tried. The sweep now runs both lease
+commands that need no id (corrected above, marked). One LOW: the matrix's
+name still says "four" over ten rows; the name stays because MR-003's records
+cite it, and its comment says so now. Its contract verdict: AC-08.1 met with
+the recorded amendment, AC-08.2 … AC-08.7 met, AC-08.8 met in behaviour with
+the record's account corrected.
+
+**The Breaker** produced five findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | `LEASE_NOT_HELD`'s remedy carried no `--session`. Run as printed, it minted a session that then held the file, and the session that had been refused was locked out of its own file for twenty minutes | predates (TASK-03's remedy; TASK-06's `lease renew` is what makes it reachable) | `leaseNotHeld` names the session the refused command ran under, for a file (`--file=… --session <caller>`) and for a task (`task state … --session <caller>`); `leaseConflict`'s "ask the holder to release" names the holder's session, since the holder is the one who can. `TestARemedyNamingAKeyIsACommandLineThatRuns`; G61 |
+| LOW | A replay in human mode printed "nothing was written again" beside "session … was opened for this run" — two sentences that contradict | `9aa7a2a` | A replayed write whose first delivery minted says which delivery opened the session and what to pass; `TestEveryWriterTakesAnOperationIDAndJudgesItFirst`'s last arm, with the session count unchanged; G62 |
+| LOW | Invalid UTF-8 in `--task` is judged by output mode: in JSON the envelope refuses it at emission as `PATH_NOT_REPRESENTABLE` at exit 2, for a person the store answers `TASK_NOT_FOUND` at exit 1 — while `--file` gets the D-77 refusal by name in both | predates (`task show <bad>` has answered this way since MR-003; identifiers are not free text and are not in the refused-flag list) | Recorded, not fixed: an id that is not valid UTF-8 names nothing, and both answers say so; the asymmetry with `--file` is that a file key is free text a caller wrote and an id is not |
+| LOW | This record said `renderLeaseLine` is one rendering for every command; three commands print forms of their own | record | Corrected above |
+| LOW | A file key containing a backtick breaks the remedy's own backtick delimiters: `` `mindrail lease acquire --file='a$b`c.go'` `` | predates (`ShellArgument` quotes for the shell, and the sentence quotes for the eye) | Recorded as a limit of remedies rendered as code spans; a key with a backtick is one this rule does not defend |
+
+Attacked and not broken, in one line each. Every remedy carried out as
+printed through `bash -c`: the back-dated conflict taken over with the old
+holder named; a non-holder's `lease release` refused naming the holder and
+minting nothing, the holder's succeeding; `--file='with space/file.go'`,
+`'it'\''s.go'` and `'-dash.go'` acquired under the right keys; `lease list`
+for the unknown id; `task show` then `--expect-revision 2` for the stale
+move; a new id for the conflict; `--to CLAIMED` for the state refusal.
+`--operation-id`: 128 accepted, 129, `opé`, `=-x`, ` -x`, `\xff` and a
+newline refused at exit 2 before starting, `""` and `=` carrying no id.
+`--expect-revision`: eleven malformed spellings refused before starting;
+`+1` and `01` read as 1. `--file`: a newline, a tab, DEL, `..`, `../x`, an
+absolute path, `C:\x.go`, `c:x.go`, `//x.go`, leading and trailing spaces,
+`.`, `./`, a blank, `a/../..` and `\xff` refused in both modes at exit 2;
+`a/../b.go` is `b.go`, `f\g.go` is `f/g.go`, a four-thousand-character key
+accepted. `--task` with a session id, a lease id or garbage is
+`TASK_NOT_FOUND`; both targets, neither, and `--file ''` exit 2 with no row
+written. Twenty command shapes under `--json` printed exactly one object and
+nothing else, `--verbose` included; `replayed` a boolean on all seven writers;
+`lease` null or an object on `task open`, `task state`, `checkpoint write`
+and `task show`, null after `COMPLETED`; `operation_id` absent unless given;
+a replay identical to its first delivery apart from `replayed`. Every human
+sentence composed: the minted session, the lease line, the takeover line, the
+replay, the handoff's "released; the next session may take the task", `task
+show` in all four statuses, `lease list` with none, one and five, a
+150-character key aligned. Twenty refusals before starting left `sessions`,
+`tasks`, `leases` and `operations` unchanged. An uninitialised repository is
+`COORDINATION_UNAVAILABLE` and a ledger rolled to 2 is `MIGRATION_FAILED`
+"up to 2 … need 3", both cleared by `mindrail init`; a planted version 4 is
+`RUNTIME_DB_SCHEMA_TOO_NEW`; no raw SQL error anywhere. Sixteen processes
+racing `lease acquire --file same.go`: one exit 0, fifteen `LEASE_CONFLICT`
+naming the winner, `lease list` one; sixteen `task open --operation-id
+sameop`: sixteen exit 0, fifteen `replayed:true`, one task, one record;
+sixteen `task state --to CLAIMED`: one win, fifteen conflicts, revision 2.
+The busy budget is reachable from no flag and no environment variable; a
+lock held by `sqlite3` gives exit 4, `MINDRAIL_BUSY_RETRYABLE`,
+`waited_ms 5004`, and readers answer in 20 ms under it.
+
+Not demonstrated, for the backlog: a holder whose lease has expired writes
+a checkpoint and is told nothing about its tenure having ended (the note is
+written and no lease is touched, as D-78 says; a sentence would help).
+
+| # | Mutation (gate fixes) | Red |
+|---|---|---|
+| G61 | the not-held remedy without `--session` | `TestARemedyNamingAKeyIsACommandLineThatRuns`: ``remedy [Run `mindrail lease acquire --file='with space/file.go'` to take it again.] does not quote the key as one argument and name the caller's session`` |
+| G62 | the replayed-and-minted sentence dropped | `TestEveryWriterTakesAnOperationIDAndJudgesItFirst`: `a replayed, minted write contradicts itself or says nothing about the session` |
+
+The sweep's two lease rows have no mutation of their own: removing them is
+removing a test, not changing the code under it, and the run stayed green
+as it should.
+
+**Carried forward from this gate:** the expired holder's silent checkpoint
+(backlog); remedies as code spans and keys with backticks (recorded limit).
+
+---
+
+## 7. TASK-07 — `status` publishes the leases held right now
+
+Commit `e73d4ff`. `make check` (19 `ok`, no `FAIL`) and `make tidy-check`
+green; **865** top-level test functions, from 863. Owns REQ-09. Implemented
+after the TASK-06 gate closed and before the TASK-07 gate opened, with the
+tree otherwise still.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/coordination/model.go`, `store.go` | `Summary.LeasesActive` (`leases_active`): `Summarize` counts the project's leases through `ListLeases`, which keeps a row only while its status at the store's clock is active — an expired tenure is not counted and not closed (D-79), a released one is not read. The count is taken before the newest-checkpoint query, so a project with no checkpoint yet still reports it |
+| `internal/status/report.go`, `render.go` | `CoordinationInfo.LeasesActive` (`coordination.leases_active`) copied from the summary; one human line, `Leases active:`, rendered through the coordination block's own observation, so where that block is `not_observed` the line says so instead of printing a zero it did not read |
+| Eight goldens, one line each | `internal/status/testdata/{init_blocked_human,init_ready_human,status_blocked_human,status_ready_human}.golden` gain `  Leases active:     0`, `init_ready_json.golden` gains `"leases_active": 0`; `internal/cli/testdata/status_human.golden` the same line, `status_json.golden` `data.coordination.leases_active`, `init_json.golden` `data.status.coordination.leases_active`. Regenerated with `-update`, and the diff read: eight insertions, no other line moved (AC-09.3) |
+| Tests | `TestSummarizeCountsTheLeasesHeldRightNow` (`internal/coordination`, AC-09.1 at the store): a fresh project counts 0; two files, a third file released, and a task claimed count 3; the clock moved past the first file's expiry and not the others' counts 2; the expired row is still open and the task still `CLAIMED` afterwards. `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves` (`internal/cli`, AC-09.1 and AC-09.2 through the binary): `status --json` reports 0, then 2 with two files held, then 1 after one row is back-dated by SQL — the binary runs on the system clock, as in `task show`'s expired arm (`TestTaskShowPrintsTheLeaseInEveryStatus`, TASK-06, back-dates the row the same way); readiness is the same string across none, some and expired, six components in each; the leases table has two rows after the three reads; the human rendering carries `Leases active:     1` |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| S1 | `ListLeases` keeps every unreleased row, expired or not | `TestSummarizeCountsTheLeasesHeldRightNow`: `Summarize = {… LeasesActive:3}, <nil>; want two after the first lease expired` |
+| S2 | the report copies 0 instead of the summary's count | `TestStatusPublishesTheActiveLeaseCountAndNothingElseMoves`: `leases_active = 0 with two files held, want 2`, `leases_active = 0 with one lease expired, want 1`, and `the human rendering does not carry the count:`, since the line renders the report *(the first version of this cell described the third line instead of quoting it; the Reader)* |
+| S3 | the `Leases active` line dropped from the rendering | the same test: `the human rendering does not carry the count`; and in `internal/status`, `TestStatusRenderHumanGolden` and `TestInitReportGolden`: `output does not match testdata/status_ready_human.golden`, `…status_blocked_human…`, `…init_ready_human…`, `…init_blocked_human…` |
+
+### Where this task departed from the freeze, and why
+
+- Nothing in substance. The count is the design's §11 field under its name;
+  readiness and the six components are untouched (D-62), which the CLI test
+  asserts across all three lease states rather than assuming.
+- **The count is not a seventh component.** It is a number inside the
+  coordination block, beside the task counts, and carries that block's
+  observation; a component would have needed a readiness rule, and D-62 says
+  leases have none.
+
+### The gate
+
+Two agents over `e73d4ff` and this record at `5aa8838`, with nothing else
+changing in the tree while they ran — TASK-08's tests were drafted and run in
+a worktree of their own meanwhile: a Reader (Sonnet) over the record, a
+Breaker (Fable) with the built binary over scratch repositories, and the
+previous binary built from `0e13fe1` beside it for A/B. Fix: `556e88d`;
+`make check` (19 `ok`) and `make tidy-check` green after it; **866**
+top-level test functions, from 865.
+
+**The Reader** checked 18 claims: 16 confirmed, **1 refuted**, 1 unconfirmed.
+The refuted one is in the freeze, not in this record: AC-09.3 says the golden
+diff is "the new key, its human line, and `runtime.schema_version` 2 → 3",
+and the third item is not in `e73d4ff` — it landed with TASK-02's goldens
+(`aa8d1a2`, where `TableSchemaVersion` moved; the Reader's report names
+TASK-06 for it, and `git log` says TASK-02). AC-09.3 and design §11 now say
+so, marked *Amended*. Two LOWs: S2's third red line was described rather
+than quoted (corrected above, marked), and the "as in `task show`'s expired
+arm" comparison was not checked against the source (it is
+`TestTaskShowPrintsTheLeaseInEveryStatus`, named above now). Its contract
+verdict: AC-09.1 met, AC-09.2 met and asserted rather than assumed, AC-09.3
+met with the caveat recorded; REQ-09 met.
+
+**The Breaker** produced two findings and could not break the rest:
+
+| Grade | What | Origin | Done |
+|---|---|---|---|
+| MEDIUM | One unreleased lease row whose timestamp does not decode — `expires_at`, `renewed_at` or `acquired_at`, active or expired; released rows are not read — turns the whole coordination block of `status` to `indeterminate`, task counts included: `tasks_open=0 leases_active=0 observation=indeterminate readiness=READY` against the previous binary's `tasks_open=1 … observation=observed` on the same store. Readiness, exit code and the six components do not move, and the block is marked | `e73d4ff` wired the lease read into `Summarize`; the strict `scanLease` predates (`8c7107a`) | Recorded as the store's rule for damage — refused, not skipped — reaching one more reader, with the block's observation as the honest signal; design §11 says so, *Amended*. `TestADamagedLeaseRowLeavesStatusHonest` pins it: `indeterminate`, readiness and components unchanged, no parse text on the wire, `Leases active:     0 (indeterminate)` for a person; G71. A per-field observation would be a shape change the freeze does not allow, and naming the row is the `doctor` damaged-row check the backlog carries |
+| LOW | The damaged row is named nowhere a `status` or `doctor` user looks: `status --verbose` logs one DEBUG line with the generic code, `doctor` has no coordination check and says everything is OK, and only `lease list --json` names the row and the value | predates (`a399c6c`, `ce0c708`) | Backlog, folded into the `doctor` damaged-row check carried since TASK-02's gate |
+
+A note the Breaker made and did not grade: the expiry boundary is half-open
+— at the instant of `expires_at` the lease is already expired (`!now.Before`,
+`8c7107a`); with the expiry set 1.2 s ahead the count read 1 at once and 0
+two seconds later.
+
+Attacked and not broken, in one line each. A fresh repository: `0`, an
+integer, in `status --json`, in `init --json` under `data.status`, and the
+human line at column 21. Three files and a claim: 4; one released: 3; a file
+and the task back-dated to 2020: 1 — and the SHA-256 of the four tables'
+dump before four `status`, two `doctor` and one `init` equals the one after,
+`PRAGMA data_version` 2 → 2, the expired rows' `released_at` still NULL
+(D-79). Expiry eight seconds ahead counts, five seconds behind does not, an
+offset (`+03:00`) and nanoseconds decode; `''`, `not-a-time`, a space
+instead of `T` and a missing zone are `indeterminate` with exit 0 and no
+parser text; NULL is refused by the schema. Between none, one active, one
+expired and fifty active leases the JSON differs in `leases_active` and
+`duration_ms` only, `readiness` READY in all four, the six components
+identical. A project with no checkpoint reports the count and
+`last_checkpoint: null`. A database rolled back to schema 2: DEGRADED,
+`MIGRATION_FAILED` on `runtime_db`, the block `indeterminate`, no raw SQL
+error anywhere, and `init` brings the count back. Under a held
+`BEGIN IMMEDIATE` (WAL) `status` answers in 20 ms; under an EXCLUSIVE
+locking-mode holder it is the D-08 busy window at 5 s, predating. Two
+hundred leases acquired without a failure count 200 in 22 ms. A second
+linked worktree before `init` is BLOCKED with `not_observed`; after it the
+same project id, and its lease makes 201 in both worktrees — the count is per
+project. Sixteen `lease acquire` racing sixteen `status --json`: 32 exits 0,
+sixteen single JSON objects, counts climbing to 16. A/B against the previous
+binary on a healthy store: the one new key in `status --json` and
+`init --json`, one new line for a person, nothing else.
+
+Not demonstrated: `expires_at` equal to the instant of comparison (a process
+start is longer than a nanosecond); NULL `expires_at` (unreachable under
+STRICT); `lease acquire --json`'s single-object property under a write lock
+(its capture merged stderr; outside this task).
+
+| # | Mutation (gate fix) | Red |
+|---|---|---|
+| G71 | `Summarize` ignores a failed lease read | `TestADamagedLeaseRowLeavesStatusHonest`: `observation = "observed" over a lease row that does not decode, want indeterminate` and `the human rendering does not mark the count as indeterminate:` |
+
+**Carried forward from this gate:** the `doctor` damaged-row check, now
+with the lease timestamps among what it would name (backlog); a per-field
+observation for the coordination block, if a later milestone changes the
+shape (backlog).
+
+---
+
+## 8. TASK-08 — two processes, eight sessions, and the proof under load
+
+Commit `26f8f11`. `make check` (19 `ok`, no `FAIL`), `make verify` — check,
+the race detector and the smoke suite, 39 `ok` — and `make tidy-check` green;
+**872** top-level test functions, from 866. Owns REQ-10 and REQ-11. Tests
+only: no production line changed, which is what a proof task should cost.
+
+### What changed
+
+| Where | What |
+|---|---|
+| `internal/cli/twoprocess_test.go` (new) | A `TestMain` that turns this test binary into a `mindrail` process when `MINDRAIL_TEST_CLI_CHILD` is set — `command` runs the real command tree over the process's arguments, `hold` takes the write lock on a database and keeps it until told — with the file's head saying why two goroutines would not do, in `open_contention_test.go`'s words (AC-11.4). Every child starts blocked on its standard input and says `ready` on its standard error; the parent closes every input back to back, which is as close to one instant as two processes get. Each child drops its own variables from the environment first, since the tree warns about any `MINDRAIL_` name it does not know. Five tests: `TestTwoProcessesRaceToClaimOneTask` (AC-10.1), `TestTwoProcessesRaceForOneFileAndShareTwo` (AC-10.2), `TestAThirdProcessTakesOverAnExpiredTenure` (AC-10.3), `TestOneOperationIDTwiceConcurrentlyAndTwiceSequentially` (AC-10.4), `TestAContenderGivesUpWithinOneLadderStepOfItsBudget` (AC-10.5); all skip under `-short`, as the storage package's re-exec test does |
+| `internal/coordination/load_test.go` (new) | `TestEightSessionsMakeTwentyFiveMovesEachWithoutStarvingOneAnother` (AC-10.6): eight goroutines over one store and one database, each moving its own task twenty-five times — the claim, the start, then blocked and back — collecting every `Write.Timing`; asserts every write completed, none was refused for any reason, the longest `Held` is under 250 ms, and afterwards each task is where its route ends at revision 26 claimed by its own session with one active lease per lane. It logs the median, p99 and longest `Held` and the median and longest `Waited` |
+
+### What the processes showed
+
+| Criterion | Demonstrated |
+|---|---|
+| AC-10.1 | Two processes, `task state --to CLAIMED` on one OPEN task: one exits 0 with the task CLAIMED, `claimed_by` its session, an active lease held by it; the other exits 1 with `LEASE_CONFLICT` — specifically, since D-67 judges the lease before the state table — and `holder` naming the winner. By SQL: one unreleased lease row for the task, one row held by the winner, the task row at revision 2 with the winner as claimant, and no session minted |
+| AC-10.2 | `lease acquire --file src/same.go` from two processes: one lease, not renewed, the other `LEASE_CONFLICT` naming the winner's session and lease id; one unreleased row for the key. `src/left.go` and `src/right.go` from two processes: both exit 0, two unreleased rows |
+| AC-10.3 | After a two-process claim, a third session's `task state --to IN_PROGRESS` inside the TTL is `LEASE_CONFLICT`; with the winner's row back-dated to 2020 by SQL — the binary runs on the system clock — the same move from a third process exits 0, the task IN_PROGRESS claimed and held by the third session, `superseded` naming the old holder's tenure with status `released` and `release_reason` `expired`, and that row closed as expired in the table |
+| AC-10.4 | `task open --operation-id op-concurrent` from two processes with one session and title: both exit 0, one `replayed`, one task id, one task row, one operation row. Then twice in a row under a second id: a write, then a replay of it with the same task id; two and two |
+| AC-10.5 | A process holding `BEGIN IMMEDIATE` and a contender under a 300 ms budget: exit 4, `MINDRAIL_BUSY_RETRYABLE`, `waited_ms` 300 — within `[300, 700]`, the budget plus at most one ladder step — and 312 ms from release to exit; no task row. The holder commits, the same command exits 0, one task row |
+| AC-10.6 | 200 writes over 8 sessions, all completed: held median 122 µs, p99 973 µs, longest 1.36 ms; waited median 242 µs, longest 53 ms. Under `-race`: held median 3.0 ms, p99 7.1 ms, longest 10.2 ms; waited longest 731 ms — the pool's queue, on which there is no bound (D-75 as amended). One write's cost, then, is a few hundred microseconds of lock and whatever the queue in front of it costs |
+| AC-10.7 | The six tests five times in parallel with `make check` beside them: five exits 0 and `make check` exit 0 (19 `ok`). The busy contender read `waited_ms 300` in all five and 313–319 ms from release to exit; the load test's longest `Held` 1.4–2.3 ms, longest `Waited` 54–79 ms. Nothing needed a rerun in isolation |
+
+### The mutations, and what each turned red
+
+| # | Mutation | Red |
+|---|---|---|
+| P1 | `TransitionExpecting` no longer judges another session's active lease | `TestTwoProcessesRaceToClaimOneTask`: `the loser's code = TASK_STATE_INVALID, want LEASE_CONFLICT: the winner's lease is judged before the state table (D-67)` and `the loser was told holder="", want the winner "SES-…"` |
+| P2 | `acquireIn` renews another session's active lease instead of refusing | `TestTwoProcessesRaceForOneFileAndShareTwo`: `lease acquire --file src/same.go: 2 processes succeeded and 0 were refused, want one of each:` |
+| P3 | `unreleasedLeaseOn` matches any key of the kind | the same test: `racer 1 on its own file exited 1, want 0:` and `0 unreleased lease rows for the two different files, want 2` |
+| P4 | an expired tenure is treated as active | `TestAThirdProcessTakesOverAnExpiredTenure`: `exit code = 1, want 0 (error exit status 1)` — the takeover refused as a conflict |
+| P5 | `replay` never looks the operation up | `TestOneOperationIDTwiceConcurrentlyAndTwiceSequentially`: `process 1 exited 1, want 0:` — the second delivery wrote a second task and then could not record the id |
+| P6 | the busy-budget seam dropped (`BusyTimeout: 0` at the coordination commands' site) | `TestAContenderGivesUpWithinOneLadderStepOfItsBudget`: `waited_ms = 5011, want within [300, 700]: the budget, plus at most one ladder step` and `the contender took 5.024949562s from release to exit …` |
+| P7 | a 300 ms sleep inside the move's transaction | `TestEightSessionsMakeTwentyFiveMovesEachWithoutStarvingOneAnother`: `lane 1 move 0 failed with MINDRAIL_BUSY_RETRYABLE …`, `107 of 200 writes completed`, `the longest write held the lock for 302.071434ms, want under 250ms`, `5 active leases after the run, want one per lane` — with the lock held that long, SQLite's busy handler, which has no queue, let three lanes starve past the five-second budget on their very first move |
+
+P1 was found by running P2 first: renewing another's lease in `acquireIn`
+left the task race green, because the move's own judgment in
+`TransitionExpecting` refuses before `acquireIn` is reached; the file race
+went red and the task race needed a mutation of its own.
+
+### Where this task departed from the freeze, and why
+
+- **AC-10.1's loser is asserted as `LEASE_CONFLICT`, not "either".** The
+  freeze allows `TASK_STATE_INVALID` too; D-67 fixes the order, so the test
+  asks for the code that order produces, and P1 shows it is the order that
+  produces it.
+- **AC-10.3 is reached by back-dating the row.** The binary runs on the
+  system clock and a twenty-minute wait is not a test; the SQL edit is the
+  same one `task show`'s and `status`'s expired arms use.
+- **AC-10.5's "within the budget plus one ladder step" is read on
+  `waited_ms`**, the number the envelope carries: at least the budget, at
+  most the budget plus `DefaultBackoff.Cap`; the wall clock from release to
+  exit is bounded loosely, at the budget plus a step plus two seconds for a
+  process start, and logged.
+- **AC-10.6 runs goroutines, not processes**, as the criterion says: the
+  question is how long the store holds the lock, and the pool is part of the
+  answer. It is in the default suite as well as under `make race`.
+- **The re-exec's busy budget travels in an environment variable**
+  (`MINDRAIL_TEST_CLI_BUSY_BUDGET`), stripped before the tree runs, because
+  the child's command line is the command line under test.
+
+### REQ-11, item by item
+
+- **AC-11.1** — each race asserts both what was refused and what was
+  written: the loser's code and the winner's row, the count of unreleased
+  rows and that no session was minted; the contender's refusal and the
+  absence of a task row, then the success and the one row.
+- **AC-11.2** — every classification is on `Code`, an exit code, a state, a
+  revision or an id; the only substring assertions in this task are on the
+  human line's exact text.
+- **AC-11.3** — §1 to §8 of this document: every task's mutations, run
+  before they were written down, and the gates' mutations beside them.
+- **AC-11.4** — the head of `twoprocess_test.go`.
+
+### REQ-12, the non-goals, checked at the end
+
+| | Demonstrated |
+|---|---|
+| AC-12.1 | `grep -rn 'TargetSymbol\|before_change\|type Change ' internal/` outside tests: nothing; `ParseTargetKind` knows `task` and `file` |
+| AC-12.2 | `grep -rni 'override\|"break"\|--force\|"force"'` over `internal/cli` and `internal/coordination` outside tests: two comment lines, one of them D-69's "no flag overrides it" |
+| AC-12.3 | `grep -rn 'LeaseTTL\|ttl' internal/config/ internal/cli/*.go` outside tests: nothing |
+| AC-12.4 | the one `ALTER TABLE tasks ADD COLUMN revision` in `000003_lease_idempotency.sql`; no other migration line names a revision |
+| AC-12.5 | `InTxMeasured`: one `db.BeginTx`, no loop around it (`internal/storage/tx.go`) |
+| AC-12.6 | `grep -rn 'Timing\|waited_ms\|held_ms' internal/cli/*.go` outside tests: nothing; `waited_ms` reaches the wire only as the busy refusal's metadata, set in `internal/storage`, which D-74 put there |
+| AC-12.7 | `git diff --name-only e4bad83..HEAD`: 66 files, every one under `docs/engineering/`, `migrations/` or the eight packages MR-004 owns (`app`, `bootstrap`, `cli`, `coordination`, `doctor`, `migration`, `status`, `storage`) |
+
+### The gate
+
+Two agents over `26f8f11` and this record at `ab5e443`, with nothing else
+changing in the tree while they ran: a Reader over the record against the
+freeze, and a Breaker in its own `git archive` copy of `ab5e443` — its own
+worktree as a precondition, not a recovery step, the lesson this repository
+wrote down in MR-003's round 2 — with the built binary over scratch
+repositories and the previous binary from `b98e5eb` beside it for A/B. No fix
+owed: `make check` (19 `ok`) and `make tidy-check` green at the gate; **872**
+top-level test functions, the +6 over TASK-07 being exactly the five
+two-process tests and the load test.
+
+**The Reader** checked 18 claims against the diff and the code: 16 confirmed,
+2 unconfirmed (the run artifacts — timing numbers, ok-counts, and the 866
+baseline it could not reach read-only; the +6 delta is consistent), 0
+refuted. Every named test exists with the AC its comment claims, every one
+skips under `-short` at `startChild`, the TestMain re-exec shape is as
+described (`MINDRAIL_TEST_CLI_CHILD` with `command`/`hold`, children blocked
+on stdin, `MINDRAIL_TEST_CLI_*` vars stripped before the tree runs, the hold
+child actually taking the write lock under the driver's
+`_txlock=immediate`), and REQ-12's greps all return exactly as the table
+says. Both departures it graded are the record's own, recorded above:
+AC-10.1's loser asserted `LEASE_CONFLICT` (stricter than the freeze, fixed by
+D-67's order at `store.go:462`), AC-10.3's TTL passed by the same SQL
+back-dating the `task show` and `status` expired arms use. Its contract
+verdict: AC-10.2/10.4/10.5, AC-11.1/11.2/11.4, REQ-11 and REQ-12 met;
+AC-10.1/10.3/10.6 met with the departures recorded; AC-10.7 and AC-11.3's
+execution side are run artifacts, which the Breaker closed.
+
+**The Breaker** re-ran all seven mutations P1–P7 in its own copy, one at a
+time, each reverted before the next: **all seven turned their named test red,
+and the failure text matches the record** — P1's `the loser's code =
+TASK_STATE_INVALID, want LEASE_CONFLICT (D-67)`, P2's `2 processes succeeded
+and 0 were refused`, P3's `0 unreleased lease rows … want 2`, P4's takeover
+refused at exit 1, P5's `UNIQUE constraint failed: operations.operation_id`
+through the un-replayed second delivery, P6's `waited_ms = 5007, want within
+[300, 700]` (record: 5011), P7's lanes starving with `99 of 200 writes
+completed` and `held the lock for 301.84ms, want under 250ms` (record: 107,
+302.07 ms). The three divergences are nondeterministic quantities — the
+loser's process index, a write count, a waited-milliseconds reading — where
+the mechanism and the assertion are identical. On the pristine tree the five
+two-process tests and the load test pass once with the record's numbers
+(held median 167 µs, longest 1.158 ms; waited longest 53.96 ms; `waited_ms`
+301). A/B against the previous binary on a scratch repository under a held
+`BEGIN IMMEDIATE`: both binaries exit 4 with `MINDRAIL_BUSY_RETRYABLE` and
+`waited_ms` ≈ 5005 — byte-identical behaviour, as a tests-only commit
+requires. Under `-short` the two-process tests skip and the load test runs,
+as recorded. No finding rose to MEDIUM; nothing was broken.
+
+Not re-demonstrated: AC-10.7's five parallel runs with `make check` beside
+them — the six tests were run once cleanly and the seven mutations consumed
+the gate's budget; the five-run demonstration remains this record's own
+artifact, and it is the one claim this gate repeats on trust.
+
+| # | Mutation re-run at the gate | Red |
+|---|---|---|
+| P1–P7 | all seven, verbatim from the table above, in a `git archive` copy | all seven, on their named tests only |
+
+**Carried forward from this gate:** nothing — the first gate of this
+milestone with no backlog item of its own.

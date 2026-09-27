@@ -66,32 +66,78 @@ func TestLoadEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		}
 	}
 
-	if loaded[0].Version != 1 || loaded[0].Name != "initial" {
-		t.Errorf("first migration = %d_%s, want 1_initial", loaded[0].Version, loaded[0].Name)
+	// The names are part of the ledger: a migration recorded under one name and
+	// shipped under another is the checksum condition arriving through the file
+	// system instead of through an edit.
+	for i, want := range []struct {
+		version int64
+		name    string
+	}{
+		{version: 1, name: "initial"},
+		{version: 2, name: "coordination"},
+	} {
+		if i >= len(loaded) {
+			t.Errorf("the embedded set has no migration %d_%s", want.version, want.name)
+			continue
+		}
+		if loaded[i].Version != want.version || loaded[i].Name != want.name {
+			t.Errorf("migration %d = %d_%s, want %d_%s",
+				i, loaded[i].Version, loaded[i].Name, want.version, want.name)
+		}
 	}
 }
 
-// TestInitialMigrationCreatesOnlyMR001Tables pins the MR-001 scope boundary.
-// Sessions, tasks, leases, symbols, changes and evidence belong to later MRs;
-// creating their tables early would make those MRs' migrations unnecessary and
-// their schema decisions unreviewable.
-func TestInitialMigrationCreatesOnlyMR001Tables(t *testing.T) {
+// tablesPerMilestone is the scope boundary each migration draws, stated per
+// migration rather than as one set.
+//
+// Symbol identities, bindings and ambiguities belong to MR-006; creating
+// their tables early would make that MR's migration unnecessary and its
+// schema decisions unreviewable. Keeping the map keyed by version is what
+// makes the assertion below say *which* migration overreached rather than
+// only that the union grew.
+var tablesPerMilestone = map[int64][]string{
+	1:  {"projects", "workspaces"},                                                              // MR-001
+	2:  {"sessions", "tasks", "checkpoints"},                                                    // MR-003
+	3:  {"leases", "operations"},                                                                // MR-004; revision on tasks is an ALTER, not a table
+	4:  {"project_units", "file_index_state", "symbols", "symbol_imports", "symbol_references"}, // MR-005
+	5:  {"symbol_identities", "invariant_symbol_bindings", "symbol_identity_ambiguities"},       // MR-006; symbols.symbol_uid is an ALTER, not a table
+	6:  {"changes", "change_files", "change_symbols", "change_baselines", "change_operations"},  // MR-007
+	7:  {"scope_attributions"},                                                                  // MR-008
+	8:  {"evidence"},                                                                            // MR-010
+	9:  {"guard_baselines"},                                                                     // 2026-09-26 remediation: durable verification-test mappings
+	10: {"file_index_generations"},                                                              // Automatic restoration: generations survive file removal.
+}
+
+// TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.
+func TestEachMigrationCreatesOnlyItsMilestonesTables(t *testing.T) {
 	loaded, err := migration.Load(migrations.FS)
 	if err != nil {
 		t.Fatalf("Load = %v, want no error", err)
 	}
+	if len(loaded) != len(tablesPerMilestone) {
+		t.Fatalf("the embedded set holds %d migrations, and this test knows the scope of %d",
+			len(loaded), len(tablesPerMilestone))
+	}
 
 	createTable := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_]+)`)
-	got := map[string]bool{}
 	for _, m := range loaded {
+		declared, known := tablesPerMilestone[m.Version]
+		if !known {
+			t.Errorf("migration %d is not in this test's scope map, so nothing pins what it may create", m.Version)
+			continue
+		}
+
+		got := map[string]bool{}
 		for _, match := range createTable.FindAllStringSubmatch(m.SQL, -1) {
 			got[strings.ToLower(match[1])] = true
 		}
-	}
-
-	want := map[string]bool{"projects": true, "workspaces": true}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("embedded migrations create %v, want exactly %v", keys(got), keys(want))
+		want := map[string]bool{}
+		for _, table := range declared {
+			want[table] = true
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("migration %d creates %v, want exactly %v", m.Version, keys(got), keys(want))
+		}
 	}
 }
 

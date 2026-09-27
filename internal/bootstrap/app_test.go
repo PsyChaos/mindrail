@@ -11,16 +11,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
+	"github.com/PsyChaos/mindrail/internal/doctor"
+	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index"
+	"github.com/PsyChaos/mindrail/internal/index/inventory"
+	"github.com/PsyChaos/mindrail/internal/index/parser"
+	"github.com/PsyChaos/mindrail/internal/index/scheduler"
+	"github.com/PsyChaos/mindrail/internal/index/snapshot"
+	"github.com/PsyChaos/mindrail/internal/status"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
+
+const testProjectID = "PRJ-TEST-01"
 
 // TestStartupStepOrderMatchesSpec pins the tech-stack §87 sequence.
 //
@@ -70,6 +82,230 @@ func TestStartupStepOrderMatchesSpec(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStartupDiscoversInventoryAtTheExistingIndexStateStep(t *testing.T) {
+	repo := newGitRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "pkg", "pyproject.toml"), []byte("[project]\nname = 'pkg'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &stepRecorder{}
+	application := bootstrap.New(options(t, repo, bootstrap.ModeInit, func(o *bootstrap.Options) {
+		o.Recorder = recorder
+	}))
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+	if err := application.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	subject := application.Subject()
+	if !subject.InventoryObserved || len(subject.Inventory) != 1 {
+		t.Fatalf("startup inventory = observed:%t units:%d, want observed one unit", subject.InventoryObserved, len(subject.Inventory))
+	}
+	if got := recorder.steps(); len(got) < 8 || got[7] != bootstrap.StepLoadIndexState {
+		t.Fatalf("startup steps = %v, want discovery at %q", got, bootstrap.StepLoadIndexState)
+	}
+}
+
+func TestReadOnlyStartupReportsPersistedInventoryWithoutWalkingSource(t *testing.T) {
+	repo := newGitRepo(t)
+	pkg := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initialized := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	if err := initialized.Start(t.Context()); err != nil {
+		t.Fatalf("init startup: %v", err)
+	}
+	if err := initialized.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close init database: %v", err)
+	}
+	if err := os.RemoveAll(pkg); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read-only startup: %v", err)
+	}
+	subject := reader.Subject()
+	if !subject.InventoryObserved || len(subject.Inventory) != 1 || subject.Inventory[0].Kind != "javascript" {
+		t.Fatalf("read-only inventory = %+v, observed=%t; want persisted JavaScript unit", subject.Inventory, subject.InventoryObserved)
+	}
+	report := status.Build(subject, time.Millisecond)
+	if got := report.Components[status.ComponentInventory].Summary; got != "1 project units discovered" {
+		t.Errorf("inventory summary = %q, want persisted unit count", got)
+	}
+	if got := report.Components[status.ComponentSyntax].Phase; got != "INVENTORY" {
+		t.Errorf("syntax phase = %q, want INVENTORY", got)
+	}
+}
+
+// TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource is AC-06.4's
+// structural proof: the census comes from persisted rows through one SQL
+// aggregate, so files that do not exist on disk are still counted, and a
+// read-only status writes nothing — no hashing, no walking, no row changes.
+func TestReadOnlyStartupReportsIndexCensusWithoutWalkingSource(t *testing.T) {
+	repo := newGitRepo(t)
+	pkg := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "pyproject.toml"), []byte("[project]\nname = 'pkg'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initialized := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	if err := initialized.Start(t.Context()); err != nil {
+		t.Fatalf("init startup: %v", err)
+	}
+	units := initialized.Subject().Inventory
+	if len(units) != 1 {
+		t.Fatalf("startup inventory = %+v, want one unit", units)
+	}
+	store := index.NewStore(initialized.DB(), app.SystemClock{})
+	ghostPending := filepath.Join(pkg, "ghost_pending.py")
+	ghostFailed := filepath.Join(pkg, "ghost_failed.py")
+	for _, seed := range []index.FileIndexState{
+		{UnitID: units[0].ID, Path: ghostPending, Language: "python", State: index.StatePending},
+		{UnitID: units[0].ID, Path: ghostFailed, Language: "python", State: index.StatePending},
+	} {
+		if err := store.UpsertFileState(t.Context(), seed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.ReplaceFileFacts(t.Context(), index.FileFacts{
+		ProjectID: testProjectID,
+		UnitID:    units[0].ID, Path: ghostFailed, Language: "python",
+		ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		State:       index.StateFailed, LastError: "seeded failure",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var rowsBefore int
+	if err := initialized.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM file_index_state`).Scan(&rowsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := initialized.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close init database: %v", err)
+	}
+	// The sources never existed on disk; the census must still report them.
+	if err := os.RemoveAll(pkg); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read-only startup: %v", err)
+	}
+	subject := reader.Subject()
+	if !subject.IndexObserved {
+		t.Fatal("read-only census not observed")
+	}
+	if got := subject.IndexCounts[index.StatePending]; got != 1 {
+		t.Errorf("census pending = %d, want 1 ghost row", got)
+	}
+	if got := subject.IndexCounts[index.StateFailed]; got != 1 {
+		t.Errorf("census failed = %d, want 1 ghost row", got)
+	}
+	var rowsAfter int
+	if err := reader.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM file_index_state`).Scan(&rowsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if rowsAfter != rowsBefore {
+		t.Errorf("read-only startup changed %d rows to %d; the read path writes nothing", rowsBefore, rowsAfter)
+	}
+	report := status.Build(subject, time.Millisecond)
+	if report.Readiness != status.ReadinessDegraded {
+		t.Errorf("readiness = %q, want DEGRADED over the failed ghost row", report.Readiness)
+	}
+	syntax := report.Components[status.ComponentSyntax]
+	if syntax.State != doctor.StateDegraded || syntax.Phase != "INDEXING" {
+		t.Errorf("syntax component = %+v, want DEGRADED INDEXING", syntax)
+	}
+}
+
+func TestLinkedWorktreeStatusDoesNotReportAnotherWorktreesInventory(t *testing.T) {
+	repo := newGitRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=Mindrail", "-c", "user.email=test@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture").CombinedOutput(); err != nil {
+		t.Fatalf("commit fixture: %v: %s", err, out)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "-b", "inventory-linked", linked).CombinedOutput(); err != nil {
+		t.Fatalf("add linked worktree: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{repo, linked} {
+		initialized := bootstrap.New(options(t, root, bootstrap.ModeInit, nil))
+		if err := initialized.Start(t.Context()); err != nil {
+			t.Fatalf("init %s: %v", root, err)
+		}
+		if err := initialized.Shutdown(t.Context()); err != nil {
+			t.Fatalf("close init %s: %v", root, err)
+		}
+	}
+
+	reader := bootstrap.New(options(t, linked, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read linked worktree: %v", err)
+	}
+	if got := reader.Subject().Inventory; len(got) != 0 {
+		t.Fatalf("linked worktree inventory includes foreign unit: %+v", got)
+	}
+}
+
+func TestNestedRegisteredWorktreeIsExcludedFromParentInventoryAndPruning(t *testing.T) {
+	repo := newGitRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=Mindrail", "-c", "user.email=test@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "fixture").CombinedOutput(); err != nil {
+		t.Fatalf("commit fixture: %v: %s", err, out)
+	}
+	nested := filepath.Join(repo, "nested")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "-b", "inventory-nested", nested).CombinedOutput(); err != nil {
+		t.Skipf("nested linked worktree unavailable: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	nestedInit := bootstrap.New(options(t, nested, bootstrap.ModeInit, nil))
+	if err := nestedInit.Start(t.Context()); err != nil {
+		t.Fatalf("init nested worktree: %v", err)
+	}
+	if err := nestedInit.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close nested init: %v", err)
+	}
+
+	parentInit := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	if err := parentInit.Start(t.Context()); err != nil {
+		t.Fatalf("init parent worktree: %v", err)
+	}
+	if got := parentInit.Subject().Inventory; len(got) != 0 {
+		t.Fatalf("parent inventory includes nested worktree unit: %+v", got)
+	}
+	if err := parentInit.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close parent init: %v", err)
+	}
+
+	nestedReader := bootstrap.New(options(t, nested, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = nestedReader.Shutdown(context.Background()) })
+	if err := nestedReader.Start(t.Context()); err != nil {
+		t.Fatalf("read nested worktree: %v", err)
+	}
+	if got := nestedReader.Subject().Inventory; len(got) != 1 || got[0].Path != nested {
+		t.Fatalf("nested inventory was pruned or hidden: %+v", got)
 	}
 }
 
@@ -670,4 +906,250 @@ func TestFlushIsQuietWhenThereIsNothingToWrite(t *testing.T) {
 			t.Errorf("Flush on a cancelled context = %v, want no error; nothing was found wrong", err)
 		}
 	})
+}
+
+// TestLargeInventoryColdIndexProof is AC-07.1 end to end: a synthetic
+// repository of thousands of files across the three languages shows
+// PARTIAL_READY with an explicit pending count while the cold index runs,
+// init returning without waiting for it, the pending count draining to READY,
+// a targeted unit moving ahead of the remainder, and every completed hash
+// processed exactly once. Durations are logged for the record and asserted
+// against the kernel-scope §5 STRUCTURAL budgets where the proof can afford
+// the wall clock.
+func TestLargeInventoryColdIndexProof(t *testing.T) {
+	const filesPerUnit = 900
+	repo := newGitRepo(t)
+	units := map[string]struct {
+		markers map[string]string
+		ext     string
+		body    func(i int) string
+	}{
+		"py": {
+			markers: map[string]string{"pyproject.toml": "[project]\nname = 'pkg'\n"},
+			ext:     ".py",
+			body:    func(i int) string { return "def f" + itoa(i) + "():\n    return " + itoa(i) + "\n" },
+		},
+		"ts": {
+			markers: map[string]string{"package.json": "{}\n", "tsconfig.json": "{}\n"},
+			ext:     ".ts",
+			body: func(i int) string {
+				return "function f" + itoa(i) + "(x: number): number { return x + " + itoa(i) + "; }\n"
+			},
+		},
+		"js": {
+			markers: map[string]string{"package.json": "{}\n"},
+			ext:     ".js",
+			body:    func(i int) string { return "function f" + itoa(i) + "(x) { return x + " + itoa(i) + "; }\n" },
+		},
+	}
+	for dir, unit := range units {
+		pkg := filepath.Join(repo, dir)
+		if err := os.MkdirAll(pkg, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, content := range unit.markers {
+			if err := os.WriteFile(filepath.Join(pkg, name), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := range filesPerUnit {
+			name := "f" + itoa(i) + unit.ext
+			if err := os.WriteFile(filepath.Join(pkg, name), []byte(unit.body(i)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const total = 3 * filesPerUnit
+
+	// Init must return without waiting for the cold index: thousands of
+	// files are pending afterwards and none is indexed.
+	initialized := bootstrap.New(options(t, repo, bootstrap.ModeInit, nil))
+	started := time.Now()
+	if err := initialized.Start(t.Context()); err != nil {
+		t.Fatalf("init startup: %v", err)
+	}
+	initElapsed := time.Since(started)
+	discovered := initialized.Subject().Inventory
+	if len(discovered) != 3 {
+		t.Fatalf("discovered %d units, want 3", len(discovered))
+	}
+	// Init registers nothing: a synchronously-blocking init would leave file
+	// rows behind, so an empty file_index_state is the non-waiting proof —
+	// stronger than any wall-clock bound.
+	var fileRows int
+	if err := initialized.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM file_index_state`).Scan(&fileRows); err != nil {
+		t.Fatal(err)
+	}
+	if fileRows != 0 {
+		t.Fatalf("init left %d file rows; it must not wait for the cold index", fileRows)
+	}
+	if err := initialized.Shutdown(t.Context()); err != nil {
+		t.Fatalf("close init database: %v", err)
+	}
+	t.Logf("init over %d files: %v", total, initElapsed)
+	if initElapsed > 5*time.Second {
+		t.Fatalf("init took %v over %d unindexed files; it must not wait for the cold index", initElapsed, total)
+	}
+
+	// PARTIAL_READY with the explicit pending count while the cold runs.
+	// Registration below is scheduler work, so seed it here through the
+	// write-mode database before the read-only status.
+	driver := bootstrap.New(options(t, repo, bootstrap.ModeWrite, nil))
+	t.Cleanup(func() { _ = driver.Shutdown(context.Background()) })
+	if err := driver.Start(t.Context()); err != nil {
+		t.Fatalf("driver startup: %v", err)
+	}
+	store := index.NewStore(driver.DB(), app.SystemClock{})
+	registry, err := parser.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(registry.Close)
+	sched, err := scheduler.New(store, index.NewIndexer(store, registry, snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache")})), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	walked, err := inventory.Files(t.Context(), repo, discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, unsupported, err := sched.Register(t.Context(), registry, walked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registered != total || unsupported != 0 || len(walked) != total {
+		t.Fatalf("walked %d registered %d unsupported %d, want %d/0", len(walked), registered, unsupported, total)
+	}
+	if err := driver.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = reader.Shutdown(context.Background()) })
+	if err := reader.Start(t.Context()); err != nil {
+		t.Fatalf("read-only startup: %v", err)
+	}
+	subject := reader.Subject()
+	if !subject.IndexObserved || subject.IndexCounts[index.StatePending] != total {
+		t.Fatalf("census = %+v, want %d pending", subject.IndexCounts, total)
+	}
+	report := status.Build(subject, time.Millisecond)
+	if report.Readiness != status.ReadinessPartialReady {
+		t.Fatalf("readiness = %q, want PARTIAL_READY with %d files pending", report.Readiness, total)
+	}
+	if got := report.Components[status.ComponentSyntax].Pending; got == nil || *got != total {
+		t.Fatalf("syntax pending = %v, want %d", got, total)
+	}
+
+	// Preemption moves the targeted unit ahead of the cold remainder.
+	worker := bootstrap.New(options(t, repo, bootstrap.ModeWrite, nil))
+	t.Cleanup(func() { _ = worker.Shutdown(context.Background()) })
+	if err := worker.Start(t.Context()); err != nil {
+		t.Fatalf("worker startup: %v", err)
+	}
+	wstore := index.NewStore(worker.DB(), app.SystemClock{})
+	wsched, err := scheduler.New(wstore, index.NewIndexer(wstore, registry, snapshot.New(filesystem.RuntimePaths{CacheDir: filepath.Join(t.TempDir(), "cache2")})), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueued, more, err := wsched.FillCold(t.Context(), testProjectID, discovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enqueued != scheduler.MaxQueueJobs || !more {
+		t.Fatalf("cold fill = %d/%t, want %d/true", enqueued, more, scheduler.MaxQueueJobs)
+	}
+	var tsID string
+	for _, unit := range discovered {
+		if unit.Kind == index.UnitTypeScript {
+			tsID = unit.ID
+		}
+	}
+	if tsID == "" {
+		t.Fatal("no TypeScript unit discovered")
+	}
+	moved, err := wsched.Prioritize(t.Context(), testProjectID, discovered, tsID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved != filesPerUnit {
+		t.Fatalf("prioritized %d files, want %d", moved, filesPerUnit)
+	}
+	tsRoot := filepath.Join(repo, "ts") + string(filepath.Separator)
+	for i, path := range wsched.Paths()[:filesPerUnit] {
+		if len(path) < len(tsRoot) || path[:len(tsRoot)] != tsRoot {
+			t.Fatalf("queue[%d] = %s, want the targeted unit first", i, path)
+		}
+	}
+	t.Logf("cold window %d (more=%t), prioritized %d TypeScript files first", enqueued, more, moved)
+
+	// Drain to READY through refill windows; every completed hash is
+	// processed exactly once (attempts stays 1).
+	completed := 0
+	for {
+		n, more, err := wsched.FillCold(t.Context(), testProjectID, discovered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 && !more {
+			break
+		}
+		done, err := wsched.Run(t.Context())
+		if err != nil {
+			t.Fatalf("drain run: %v", err)
+		}
+		completed += done
+	}
+	if completed != total {
+		t.Fatalf("drained %d files, want %d", completed, total)
+	}
+	var attemptRows, maxAttempts int
+	if err := worker.DB().QueryRowContext(t.Context(), `SELECT count(*), max(attempts) FROM file_index_state`).Scan(&attemptRows, &maxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if attemptRows != total || maxAttempts != 1 {
+		t.Fatalf("rows %d max attempts %d, want %d rows at 1 attempt each (no reprocessing)", attemptRows, maxAttempts, total)
+	}
+	// Parse reality: state transitions alone could be faked by flipping rows
+	// to indexed with empty facts. Every file defines exactly one function,
+	// so the drain must leave exactly one symbol row per file.
+	var symbols int
+	if err := worker.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM symbols`).Scan(&symbols); err != nil {
+		t.Fatal(err)
+	}
+	if symbols != total {
+		t.Fatalf("symbols = %d, want %d (one extracted function per file)", symbols, total)
+	}
+	if err := worker.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	final := bootstrap.New(options(t, repo, bootstrap.ModeReadOnly, nil))
+	t.Cleanup(func() { _ = final.Shutdown(context.Background()) })
+	if err := final.Start(t.Context()); err != nil {
+		t.Fatalf("final startup: %v", err)
+	}
+	if got := status.Build(final.Subject(), time.Millisecond).Readiness; got != status.ReadinessReady {
+		t.Fatalf("readiness = %q after the drain, want READY", got)
+	}
+
+	// Warm-path SLO reading on the drained index: status answers from
+	// persisted rows, so every sample must clear the §5 STRUCTURAL budget.
+	subject = final.Subject()
+	var worst time.Duration
+	for range 20 {
+		started := time.Now()
+		status.Build(subject, time.Millisecond)
+		if elapsed := time.Since(started); elapsed > worst {
+			worst = elapsed
+		}
+	}
+	t.Logf("status over %d indexed files: worst of 20 builds %v (budget 150ms)", total, worst)
+	if worst > 150*time.Millisecond {
+		t.Fatalf("status worst %v exceeds the 150ms STRUCTURAL budget", worst)
+	}
+}
+
+func itoa(i int) string {
+	return strconv.Itoa(i)
 }

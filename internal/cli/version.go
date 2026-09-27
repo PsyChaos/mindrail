@@ -18,14 +18,15 @@ import (
 // a version it does not have: a binary that reports "0.1.0" because nobody set
 // the flag is worse than one that says "dev".
 var (
-	version = "dev"
-	commit  = ""
+	version   = "dev"
+	commit    = ""
+	buildDate = ""
+	dirty     = ""
 )
 
-// mcpCompatibility is what this binary offers over MCP. MR-014 through MR-016
-// own the server; until then the honest answer is none, and an agent that reads
-// this field must be able to trust it (decision D-09).
-const mcpCompatibility = "none"
+// mcpCompatibility is the public MCP transport this binary serves. An agent
+// reads it before choosing `mindrail mcp` as its stdio command.
+const mcpCompatibility = "stdio"
 
 // versionInfo is the `mindrail version` payload.
 //
@@ -35,6 +36,8 @@ const mcpCompatibility = "none"
 type versionInfo struct {
 	Version                string `json:"version"`
 	Commit                 string `json:"commit"`
+	BuildDate              string `json:"build_date"`
+	Dirty                  string `json:"dirty"`
 	Go                     string `json:"go"`
 	Platform               string `json:"platform"`
 	WriteSchemaVersion     int    `json:"write_schema_version"`
@@ -68,11 +71,33 @@ func buildVersionInfo() versionInfo {
 	return versionInfo{
 		Version:                version,
 		Commit:                 resolveCommit(),
+		BuildDate:              resolveBuildDate(),
+		Dirty:                  resolveDirty(),
 		Go:                     runtime.Version(),
 		Platform:               runtime.GOOS + "/" + runtime.GOARCH,
 		WriteSchemaVersion:     schema.WriteVersion,
 		ReadableSchemaVersions: schema.ReadableVersions(),
 		MCPCompatibility:       mcpCompatibility,
+	}
+}
+
+// resolveBuildDate reports the linker-stamped build date, or "unknown"
+// for unstamped local builds — same honesty rule as version itself.
+func resolveBuildDate() string {
+	if buildDate != "" {
+		return buildDate
+	}
+	return "unknown"
+}
+
+// resolveDirty reports the linker-stamped tree state. Only the stamper
+// may claim "clean" or "dirty"; everything else says "unknown".
+func resolveDirty() string {
+	switch dirty {
+	case "clean", "dirty":
+		return dirty
+	default:
+		return "unknown"
 	}
 }
 
@@ -103,6 +128,8 @@ func (v versionInfo) renderHuman(w io.Writer, _ bool) error {
 
 	fmt.Fprintf(&b, "mindrail %s\n", v.Version)
 	fmt.Fprintf(&b, "  commit:                   %s\n", v.Commit)
+	fmt.Fprintf(&b, "  build date:               %s\n", v.BuildDate)
+	fmt.Fprintf(&b, "  dirty:                    %s\n", v.Dirty)
 	fmt.Fprintf(&b, "  go:                       %s\n", v.Go)
 	fmt.Fprintf(&b, "  platform:                 %s\n", v.Platform)
 	fmt.Fprintf(&b, "  write schema version:     %d\n", v.WriteSchemaVersion)

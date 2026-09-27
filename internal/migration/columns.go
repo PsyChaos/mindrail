@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// This file reads the column names out of a CREATE TABLE, and nothing else.
+// This file reads the column names out of a CREATE TABLE and out of an
+// ALTER TABLE ... ADD COLUMN, and nothing else.
 //
 // It is the narrowest thing that answers finding F9: a table that was dropped
 // and recreated by hand with a different shape satisfies "the object exists",
@@ -13,7 +14,15 @@ import (
 // was not there, and the remedy it printed sent the user back to `doctor`.
 // Comparing names is enough to break that loop and is far short of a schema
 // diff -- types, constraints, defaults and collations are not compared, and a
-// table any recorded migration has ALTERed is not compared at all.
+// table any recorded migration has ALTERed in a form other than ADD COLUMN is
+// not compared at all.
+//
+// ADD COLUMN is the one form the ledger reads exactly, since MR-004 (decision
+// D-73): it adds a name and moves nothing, so the expected list is the CREATE's
+// names plus the added one. Without it, the first migration to add a column —
+// 000003's `revision` on `tasks` — would have silently removed that table from
+// the F9 check. Every other form (DROP COLUMN, RENAME COLUMN, RENAME TO) still
+// makes the checker forget the table rather than model it.
 //
 // All of it runs at Load time against embedded files, so the warm path pays for
 // one extra query and no parsing.
@@ -25,8 +34,13 @@ import (
 var createTablePattern = regexp.MustCompile(
 	`(?im)^[\t ]*CREATE[\t ]+((?:(?:UNIQUE|TEMP|TEMPORARY|VIRTUAL)[\t ]+)*)TABLE[\t ]+(?:IF[\t ]+NOT[\t ]+EXISTS[\t ]+)?(` + identifier + `)`)
 
-// alterTablePattern matches every form of ALTER TABLE, because every form of it
-// is a reason to stop trusting the recorded column list.
+// alterTablePattern locates the head of every ALTER TABLE, like
+// createTablePattern does for CREATE. What follows the table name is read by
+// alterations with the same tokenizer the column list uses, not by a regular
+// expression: the first shape of this file read the added column with an ASCII
+// identifier pattern, and TASK-02's Breaker showed it reading `[c]` as a
+// column named "column", `sütun` as "s", and a two-line `ALTER TABLE t\n ADD
+// COLUMN c` as a form to forget.
 var alterTablePattern = regexp.MustCompile(
 	`(?im)^[\t ]*ALTER[\t ]+TABLE[\t ]+(` + identifier + `)`)
 
@@ -47,12 +61,18 @@ var tableConstraintHeads = map[string]struct{}{
 //
 // A CREATE TABLE with no parenthesised column list -- `CREATE TABLE x AS
 // SELECT ...` -- is skipped rather than guessed at, and a table that is skipped
-// is simply not shape-checked.
+// is simply not shape-checked. The AS is checked by word, not by the absence
+// of a parenthesis: `CREATE TABLE cnt AS SELECT count(*) …` has one, and
+// reading it as a column list expected a column named `*` of every healthy
+// database (TASK-02's Breaker; the case predates MR-004).
 func tableColumns(body string) map[string][]string {
 	columns := make(map[string][]string)
 
 	for _, loc := range createTablePattern.FindAllStringSubmatchIndex(body, -1) {
 		if strings.Contains(strings.ToUpper(body[loc[2]:loc[3]]), "TEMP") {
+			continue
+		}
+		if word, _ := nextToken(body[loc[1]:]); strings.EqualFold(word, "AS") {
 			continue
 		}
 		names, ok := columnList(body[loc[1]:])
@@ -68,24 +88,84 @@ func tableColumns(body string) map[string][]string {
 	return columns
 }
 
-// alteredTables names every table this body runs an ALTER TABLE against.
-func alteredTables(body string) []string {
-	matches := alterTablePattern.FindAllStringSubmatch(body, -1)
+// alterations reads every ALTER TABLE in body and sorts it into the one form
+// the ledger can follow and the forms it cannot: added maps a table to the
+// columns ADD COLUMN gave it, in file order and lower-cased like tableColumns;
+// forgotten names every table some other form touched, once each.
+//
+// Comments are stripped first, so an ALTER TABLE inside a `/* */` block is
+// not read as one; the head must still start a line, as every statement head
+// this file reads must, and a head inside a string literal that spans lines
+// is the one shape neither this nor the CREATE side can tell from a real one.
+// The words after the head are read with firstToken, which knows the four
+// ways SQLite quotes a name and reads a name in any script, across line
+// breaks: `ADD`, then `COLUMN` if it is there, then the name. Anything else
+// after the head — DROP COLUMN, RENAME COLUMN, RENAME TO — is a form to
+// forget.
+//
+// A table can appear in both — an ADD COLUMN and a DROP COLUMN in one file —
+// and the caller forgets it, because the drop is the half it cannot follow.
+func alterations(body string) (added map[string][]string, forgotten []string) {
+	clean := stripComments(body)
+	matches := alterTablePattern.FindAllStringSubmatchIndex(clean, -1)
 	if len(matches) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	altered := make([]string, 0, len(matches))
 	seen := make(map[string]struct{}, len(matches))
-	for _, match := range matches {
-		name := unquote(match[1])
-		if _, duplicate := seen[name]; duplicate {
+	for _, loc := range matches {
+		table := unquote(clean[loc[2]:loc[3]])
+		if column, ok := addedColumn(clean[loc[1]:]); ok {
+			if added == nil {
+				added = make(map[string][]string)
+			}
+			added[table] = append(added[table], column)
 			continue
 		}
-		seen[name] = struct{}{}
-		altered = append(altered, name)
+		if _, duplicate := seen[table]; duplicate {
+			continue
+		}
+		seen[table] = struct{}{}
+		forgotten = append(forgotten, table)
 	}
-	return altered
+	return added, forgotten
+}
+
+// addedColumn reads `ADD [COLUMN] <name>` off the text that follows an ALTER
+// TABLE head, and reports false for every other form. The statement ends at
+// the first semicolon; the tokens are read across whitespace of any kind.
+func addedColumn(rest string) (string, bool) {
+	if end := strings.IndexRune(rest, ';'); end >= 0 {
+		rest = rest[:end]
+	}
+
+	word, rest := nextToken(rest)
+	if !strings.EqualFold(word, "ADD") {
+		return "", false
+	}
+
+	// COLUMN is optional, and only the bare word is the keyword: a name
+	// written as "column" in quotes is a column named column.
+	rest = strings.TrimLeft(rest, " \t\r\n")
+	quoted := rest != "" && strings.ContainsRune("\"`['", rune(rest[0]))
+	name, rest := nextToken(rest)
+	if !quoted && strings.EqualFold(name, "COLUMN") {
+		name, _ = nextToken(rest)
+	}
+	if name == "" {
+		return "", false
+	}
+	return strings.ToLower(name), true
+}
+
+// nextToken skips leading whitespace and splits off one identifier or word
+// with firstToken; an empty remainder yields an empty token.
+func nextToken(s string) (string, string) {
+	s = strings.TrimLeft(s, " \t\r\n")
+	if s == "" {
+		return "", ""
+	}
+	return firstToken(s)
 }
 
 // columnList reads the parenthesised column list that starts in rest and

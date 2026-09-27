@@ -2,10 +2,13 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/doctor"
+	"github.com/PsyChaos/mindrail/internal/index"
 )
 
 // RepositoryInfo is the Git layout status reports. CommonDir and WorktreeRoot
@@ -80,18 +83,28 @@ type RuntimeInfo struct {
 // schema window this binary enforced, so a reader can tell "no records" from
 // "records this binary refused to read".
 //
-// Observation qualifies Present, Decisions, Invariants and Problems, which
-// describe the repository. WriteSchemaVersion and ReadableSchemaVersions do
-// not: they describe this binary and are always populated, however far startup
-// got (kernel-scope §3).
+// Observation qualifies Present, Decisions, Invariants, Problems and Findings,
+// which describe the repository. WriteSchemaVersion and ReadableSchemaVersions
+// do not: they describe this binary and are always populated, however far
+// startup got (kernel-scope §3).
 type KnowledgeInfo struct {
-	Observation            Observation `json:"observation"`
-	Present                bool        `json:"present"`
-	Decisions              int         `json:"decisions"`
-	Invariants             int         `json:"invariants"`
-	Problems               int         `json:"problems"`
-	WriteSchemaVersion     int         `json:"write_schema_version"`
-	ReadableSchemaVersions []int       `json:"readable_schema_versions"`
+	Observation Observation `json:"observation"`
+	Present     bool        `json:"present"`
+	Decisions   int         `json:"decisions"`
+	Invariants  int         `json:"invariants"`
+	// Problems counts the records this binary could not read; Findings counts
+	// the ones it read and found wrong. They are two counts rather than one
+	// because their remedies are opposite — one is fixed by upgrading Mindrail,
+	// the other by editing a file the repository owns (decision D-38) — and a
+	// single total would tell a reader neither.
+	//
+	// Neither carries omitempty. A store with nothing wrong publishes both as
+	// zero, because a count a consumer has to infer from an absent key is a
+	// count it cannot tell from a report that never took it.
+	Problems               int   `json:"problems"`
+	Findings               int   `json:"findings"`
+	WriteSchemaVersion     int   `json:"write_schema_version"`
+	ReadableSchemaVersions []int `json:"readable_schema_versions"`
 }
 
 // WorkspaceInfo reports the opaque identity of this worktree. The ids are the
@@ -103,6 +116,31 @@ type WorkspaceInfo struct {
 	Registered  bool        `json:"registered"`
 	ID          string      `json:"workspace_id,omitempty"`
 	ProjectID   string      `json:"project_id,omitempty"`
+}
+
+// CoordinationInfo is MR-003's block: what work is in flight and what the last
+// agent said about it.
+//
+// LeasesActive is MR-004's addition (design §11): the leases the project
+// holds right now, judged against the clock and marking nothing (D-79).
+//
+// It is additive beside Knowledge and Workspace rather than a seventh component,
+// and it cannot move Readiness (decision D-62). A blocked task is a fact about
+// work, not about the installation; a tool that reported BLOCKED — the value
+// reserved for "this repository cannot be verified" — because an agent parked a
+// task would be unusable in exactly the situation the task was parked for.
+//
+// The three counts are the states a reader can act on. COMPLETED and ABANDONED
+// are deliberately absent: they only grow, so a number that never goes down
+// would say nothing about the repository now and would make the block look
+// busier every week.
+type CoordinationInfo struct {
+	Observation     Observation                 `json:"observation"`
+	TasksOpen       int                         `json:"tasks_open"`
+	TasksInProgress int                         `json:"tasks_in_progress"`
+	TasksBlocked    int                         `json:"tasks_blocked"`
+	LeasesActive    int                         `json:"leases_active"`
+	LastCheckpoint  *coordination.CheckpointRef `json:"last_checkpoint"`
 }
 
 // Report is one `mindrail status` answer.
@@ -122,6 +160,7 @@ type Report struct {
 	Runtime           RuntimeInfo                 `json:"runtime"`
 	Knowledge         KnowledgeInfo               `json:"knowledge"`
 	Workspace         WorkspaceInfo               `json:"workspace"`
+	Coordination      CoordinationInfo            `json:"coordination"`
 	DurationMS        int64                       `json:"duration_ms"`
 }
 
@@ -173,6 +212,7 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 		// a healthy install must not sit at PARTIAL_READY forever.
 		components[name] = Component{State: doctor.StateNotApplicable, Summary: summary}
 	}
+	applyInventoryComponents(components, s)
 
 	readiness, blocking, next := classify(components)
 
@@ -209,6 +249,11 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 			Decisions:   len(s.Knowledge.Decisions),
 			Invariants:  len(s.Knowledge.Invariants),
 			Problems:    len(s.Knowledge.Problems),
+			// Read from the subject, never recomputed here (decisions D-41,
+			// D-42). Building a validator in this function would make `status`
+			// and `doctor` two places that judge one store, and the day they
+			// disagreed the report would carry both answers.
+			Findings: len(s.KnowledgeFindings),
 			// From the binary, never from the subject: these two are what this
 			// binary can do, and a startup that stopped early does not change it.
 			WriteSchemaVersion:     doctor.KnowledgeWriteSchemaVersion(s.Knowledge),
@@ -220,7 +265,133 @@ func Build(s doctor.Subject, elapsed time.Duration) Report {
 			ID:          s.Workspace.ID,
 			ProjectID:   s.Workspace.ProjectID,
 		},
-		DurationMS: elapsed.Milliseconds(),
+		Coordination: coordinationInfo(s),
+		DurationMS:   elapsed.Milliseconds(),
+	}
+}
+
+// applyInventoryComponents projects bootstrap's persisted inventory reading
+// into readiness. Build deliberately consumes only Subject fields: status
+// never walks the repository, so it cannot race a changing worktree or turn a
+// report into filesystem work. The census beside the inventory is the same
+// kind of reading — one SQL aggregate, no hashing — which is why the counts
+// are honest on the read path while the cold index is still running.
+func applyInventoryComponents(components map[ComponentName]Component, s doctor.Subject) {
+	switch {
+	case s.InventoryErr != nil:
+		components[ComponentInventory] = Component{
+			State:   doctor.StateDegraded,
+			Summary: "Project unit inventory could not be read.",
+		}
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateDegraded,
+			Phase:   "INVENTORY",
+			Summary: "Syntax index is waiting for a readable inventory.",
+		}
+	case s.InventoryObserved:
+		units := len(s.Inventory)
+		components[ComponentInventory] = Component{
+			State:   doctor.StateOK,
+			Summary: fmt.Sprintf("%d project units discovered", units),
+			Units:   intPtr(units),
+		}
+		applySyntaxComponent(components, s)
+	}
+}
+
+// applySyntaxComponent derives the syntax slot from the persisted file-state
+// census. Phase carries progress (INVENTORY before the first row, INDEXING
+// while pending work remains, READY when none does); a failed row degrades
+// the component per spec-1.0 §108 while staying pending work for the
+// scheduler. An unreadable census degrades too: the read ran and failed, which
+// is a different answer from a read that never happened.
+func applySyntaxComponent(components map[ComponentName]Component, s doctor.Subject) {
+	if s.IndexErr != nil {
+		components[ComponentSyntax] = Component{
+			State:      doctor.StateDegraded,
+			Summary:    "Syntax index state could not be read.",
+			Code:       app.CodeIndexStateCorrupt,
+			NextAction: []string{"Move the runtime database aside and run `mindrail init` to rebuild the index state."},
+		}
+		return
+	}
+	if !s.IndexObserved {
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "INVENTORY",
+			Summary: "Syntax index is at INVENTORY; no files have been indexed yet.",
+		}
+		return
+	}
+	pending := s.IndexCounts[index.StatePending]
+	failed := s.IndexCounts[index.StateFailed]
+	indexed := s.IndexCounts[index.StateIndexed]
+	switch {
+	case failed > 0:
+		components[ComponentSyntax] = Component{
+			State:      doctor.StateDegraded,
+			Phase:      "INDEXING",
+			Summary:    fmt.Sprintf("Syntax index is DEGRADED: %d files failed to parse, %d pending.", failed, pending),
+			Code:       app.CodeSyntaxParseFailed,
+			NextAction: []string{"Fix the syntax errors in the failing source files, then trigger a re-index."},
+			Pending:    intPtr(pending),
+			Failed:     intPtr(failed),
+		}
+	case pending > 0:
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "INDEXING",
+			Summary: fmt.Sprintf("Syntax index is INDEXING: %d files pending.", pending),
+			Pending: intPtr(pending),
+			Failed:  intPtr(failed),
+		}
+	case indexed > 0:
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "READY",
+			Summary: fmt.Sprintf("Syntax index is READY: %d files indexed.", indexed),
+			Pending: intPtr(pending),
+			Failed:  intPtr(failed),
+		}
+	default:
+		components[ComponentSyntax] = Component{
+			State:   doctor.StateOK,
+			Phase:   "INVENTORY",
+			Summary: "Syntax index is at INVENTORY; no files have been indexed yet.",
+			Pending: intPtr(pending),
+			Failed:  intPtr(failed),
+		}
+	}
+}
+
+// coordinationInfo grades the coordination block.
+//
+// There is no doctor check behind it, so the observation comes from what
+// bootstrap left behind rather than from a reading's code. Three answers, not
+// two: the summary was read, the sequence never got that far, or the read ran
+// and failed. All three leave the counts at zero, which is precisely why the
+// observation has to be published.
+//
+// The third was missing. Every failure was folded into the same false flag, so
+// a damaged `created_at` — a row the database holds and cannot answer for —
+// was published as "not observed: startup stopped before this subsystem was
+// read", about a startup that completed and a query that ran (finding F46). The
+// adjacent Runtime block has had `indeterminate` since MR-001 and means exactly
+// this: the subsystem was read and could not answer.
+func coordinationInfo(s doctor.Subject) CoordinationInfo {
+	if s.CoordinationErr != nil {
+		return CoordinationInfo{Observation: Indeterminate}
+	}
+	if !s.CoordinationObserved {
+		return CoordinationInfo{Observation: NotObserved}
+	}
+	return CoordinationInfo{
+		Observation:     Observed,
+		TasksOpen:       s.Coordination.Open,
+		TasksInProgress: s.Coordination.InProgress,
+		TasksBlocked:    s.Coordination.Blocked,
+		LeasesActive:    s.Coordination.LeasesActive,
+		LastCheckpoint:  s.Coordination.LastCheckpoint,
 	}
 }
 
@@ -268,7 +439,10 @@ func repositoryObservation(repository doctor.Result) Observation {
 func observationOf(results ...doctor.Result) Observation {
 	looked, known := false, true
 	for _, result := range results {
-		if result.Code == app.CodeStartupIncomplete {
+		// Two ways a reading can be no reading: the startup sequence never
+		// populated its inputs, or the check named a condition it inferred
+		// rather than a value it looked up. Both are "nobody looked".
+		if result.Code == app.CodeStartupIncomplete || result.Metadata[doctor.MetadataNothingRead] == "true" {
 			known = false
 			continue
 		}
@@ -385,6 +559,11 @@ func classify(components map[ComponentName]Component) (Readiness, ComponentName,
 	for _, name := range componentOrder {
 		if component := components[name]; component.State == doctor.StateDegraded {
 			return ReadinessDegraded, "", component.NextAction
+		}
+	}
+	for _, name := range []ComponentName{ComponentInventory, ComponentSyntax} {
+		if phase := components[name].Phase; phase != "" && phase != "READY" {
+			return ReadinessPartialReady, "", nil
 		}
 	}
 	return ReadinessReady, "", nil

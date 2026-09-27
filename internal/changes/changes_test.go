@@ -1,0 +1,40 @@
+package changes_test
+
+import (
+	"testing"
+
+	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/changes"
+	"github.com/PsyChaos/mindrail/internal/migration"
+	"github.com/PsyChaos/mindrail/internal/storage"
+	"github.com/PsyChaos/mindrail/migrations"
+)
+
+// TestNewStoreRefusesNilHandle pins the constructor guard.
+func TestNewStoreRefusesNilHandle(t *testing.T) {
+	if _, err := changes.NewStore(nil, app.FixedClock{}); err == nil {
+		t.Fatal("nil database handle accepted")
+	}
+}
+
+// TestChangesSchemaVersionNamesItsCreatingMigration pins the store gate to
+// the migration that first creates these tables.
+func TestChangesSchemaVersionNamesItsCreatingMigration(t *testing.T) {
+	db, err := storage.Open(t.Context(), storage.Options{Path: t.TempDir() + "/mindrail.db"})
+	if err != nil {
+		t.Fatalf("opening the runtime database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set) < 7 || set[6].Version != changes.TableSchemaVersion || set[6].Name != "scope_attribution" {
+		t.Fatalf("changes schema gate %d does not name migration 000007_scope_attribution in the embedded set", changes.TableSchemaVersion)
+	}
+	migrator := migration.New(db.DB, set, app.FixedClock{})
+	if _, err := migrator.Up(t.Context()); err != nil {
+		t.Fatalf("applying the migration set: %v", err)
+	}
+}

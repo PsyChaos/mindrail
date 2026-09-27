@@ -113,6 +113,20 @@ func codeOf(err error, fallback app.Code) app.Code {
 	return fallback
 }
 
+// MetadataNothingRead marks a reading that reports a condition the check
+// inferred rather than a value it looked up.
+//
+// A check that names a condition it worked out from something else — "there is
+// no workspaces table yet, so no lookup was made" — is not reporting a reading.
+// Without the marker `status` published `observation: "observed"` beside it,
+// which is the report's own word for "the check ran and the values below it are
+// findings", about a query that provably did not run (findings F41, R4).
+//
+// It is metadata rather than a field on Result because the same distinction is
+// already carried that way: stopped_at_step is how status recovers which step
+// halted a run without re-deriving it.
+const MetadataNothingRead = "nothing_read"
+
 // unreached renders a reading whose inputs the startup sequence never populated.
 //
 // It stays inside the §84 vocabulary (decision D-16): UNAVAILABLE already means

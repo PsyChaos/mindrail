@@ -30,6 +30,7 @@ Knowledge
   Decisions:                2
   Invariants:               1
   Problems:                 0
+  Findings:                 0
   Write schema version:     1
   Readable schema versions: 1
 
@@ -37,6 +38,13 @@ Workspace
   Registered:   true
   Workspace id: WS-01JQ8N6X5T0000000000000000
   Project id:   PRJ-01JQ8N6X5T0000000000000000
+
+Coordination
+  Tasks open:        0
+  Tasks in progress: 0
+  Tasks blocked:     0
+  Leases active:     0
+  Last checkpoint:   none
 
 Components
   ✓ knowledge                     Knowledge store readable (2 decisions, 1 invariant)

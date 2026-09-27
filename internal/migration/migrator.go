@@ -556,10 +556,17 @@ func (m *Migrator) verifyTableShapes(ctx context.Context, expected map[string][]
 // Two things are deliberately forgotten. A table a later recorded migration
 // dropped or renamed is not expected at all -- the rename case loses the shape
 // because the new name has no CREATE to read it from, and guessing would be the
-// F4 trap again. And a table any recorded migration ALTERed is dropped from the
-// map entirely: ALTER can add, drop or rename a column, and a checker that
-// modelled all three would be the schema diff this package refuses to be.
-// Forgetting fails open, which for a secondary check is the right direction.
+// F4 trap again. And a table any recorded migration ALTERed in a form other
+// than ADD COLUMN is dropped from the map entirely: DROP COLUMN and RENAME
+// COLUMN would need a column-level replay, and a checker that modelled them
+// would be the schema diff this package refuses to be. Forgetting fails open,
+// which for a secondary check is the right direction.
+//
+// ADD COLUMN is followed (decision D-73). It is the one form that only adds a
+// name, so the expectation is the CREATE's names plus the added one — and it is
+// only applied to a table still being tracked: a table an earlier form made
+// the checker forget stays forgotten, and a name that has no CREATE to extend
+// gets nothing invented for it.
 func (m *Migrator) declaredColumns(ledger []Applied) map[string][]string {
 	columns := make(map[string][]string)
 	for _, candidate := range m.replayable(ledger) {
@@ -575,6 +582,11 @@ func (m *Migrator) declaredColumns(ledger []Applied) map[string][]string {
 				columns[effect.Object.Name] = declared
 			} else {
 				delete(columns, effect.Object.Name)
+			}
+		}
+		for table, added := range candidate.Added {
+			if tracked, ok := columns[table]; ok {
+				columns[table] = append(slices.Clone(tracked), added...)
 			}
 		}
 		for _, table := range candidate.Altered {

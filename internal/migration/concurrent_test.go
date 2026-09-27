@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,7 +28,7 @@ const helperDBEnv = "MINDRAIL_TEST_MIGRATION_RACER_DB"
 
 // Exit codes the racer uses to tell the parent what it did. They are distinct
 // values rather than a shared "0 means fine" because the assertion below is
-// about *which* process applied the set, not merely that nobody crashed.
+// about what each process applied, not merely that nobody crashed.
 const (
 	racerApplied  = 10 // this process ran the migrations
 	racerObserved = 11 // another process had already run them
@@ -68,9 +69,27 @@ func runRacer(path string) int {
 	}
 
 	if len(result.Applied) > 0 {
+		// How many, not only whether: Up applies each migration in its own
+		// transaction, so with more than one in the set two contenders can
+		// each apply a disjoint part of it and both truthfully say "applied".
+		fmt.Printf("%s%d\n", appliedPrefix, len(result.Applied))
 		return racerApplied
 	}
 	return racerObserved
+}
+
+// appliedPrefix introduces the racer's one line of stdout, the count of
+// migrations it applied, which the parent sums across processes.
+const appliedPrefix = "applied="
+
+// appliedCount reads that count back out of a racer's combined output.
+func appliedCount(output string) (int, error) {
+	for _, line := range strings.Split(output, "\n") {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), appliedPrefix); found {
+			return strconv.Atoi(rest)
+		}
+	}
+	return 0, fmt.Errorf("no %q line in %q", appliedPrefix, output)
 }
 
 // racerRounds and racersPerRound size the race. One round is one brand-new
@@ -103,7 +122,15 @@ func TestConcurrentInitAcrossProcessesWaits(t *testing.T) {
 	}
 
 	set := embeddedSet(t)
-	appliers := 0
+
+	// Migrations applied, summed over every process in every round. The
+	// invariant is that each fresh database has the whole set applied exactly
+	// once between its contenders — not that exactly one contender did all of
+	// it. Up takes each migration in its own BEGIN IMMEDIATE, so the loser of
+	// the first can be the winner of the second, and from `000002` onwards
+	// "one applier per round" failed about one run in ten under load with the
+	// ledger correct every time (recorded in audit round 2, §8).
+	applied := 0
 
 	for round := range racerRounds {
 		path := filepath.Join(t.TempDir(), "mindrail.db")
@@ -140,7 +167,11 @@ func TestConcurrentInitAcrossProcessesWaits(t *testing.T) {
 		for racer, code := range codes {
 			switch code {
 			case racerApplied:
-				appliers++
+				count, err := appliedCount(output[racer])
+				if err != nil {
+					t.Errorf("round %d racer %d applied migrations and did not say how many: %v", round, racer, err)
+				}
+				applied += count
 			case racerObserved:
 			default:
 				t.Errorf("round %d racer %d exited %d, want %d (applied) or %d (observed): %s",
@@ -151,9 +182,9 @@ func TestConcurrentInitAcrossProcessesWaits(t *testing.T) {
 		assertLedgerAppliedOnce(t, path, len(set))
 	}
 
-	if appliers != racerRounds {
-		t.Errorf("%d of %d processes applied the set across %d fresh databases, want exactly %d",
-			appliers, racerTotalCount, racerRounds, racerRounds)
+	if want := racerRounds * len(set); applied != want {
+		t.Errorf("%d migrations were applied by %d processes across %d fresh databases, want exactly %d — the set of %d, once per database",
+			applied, racerTotalCount, racerRounds, want, len(set))
 	}
 }
 

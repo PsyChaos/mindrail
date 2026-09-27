@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -323,7 +324,7 @@ func TestLoadWithNoFilesUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
 	}
-	if loaded.Config != config.Defaults() {
+	if !reflect.DeepEqual(loaded.Config, config.Defaults()) {
 		t.Errorf("Config = %+v, want %+v", loaded.Config, config.Defaults())
 	}
 	if loaded.RepoFile != "" || loaded.UserFile != "" {

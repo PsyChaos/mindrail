@@ -116,7 +116,15 @@ type Scope struct {
 }
 
 func NewDecision(id string, at time.Time, title, decision string, opts ...Option) (Decision, error)
-func NewInvariant(id string, at time.Time, title, statement string, opts ...Option) (Invariant, error)
+
+// Amended after MR-002 shipped (finding F-R9). This sketch originally gave
+// NewInvariant a `title` parameter before `statement`, which contradicted the
+// same section's own statement that Invariant mirrors invariant.v1 — a document
+// that declares no "title" and sets additionalProperties:false. The parameter
+// could therefore never carry a value, and the implementation refused every one
+// except "". D-36 makes the document the contract, so the parameter went. See
+// AC-01.2 in mr-002-requirements.md for the full argument.
+func NewInvariant(id string, at time.Time, statement string, opts ...Option) (Invariant, error)
 
 // Supersede returns the pair the caller must write: the replacement carrying
 // `supersedes`, and the prior record with its status moved to superseded. It
@@ -132,12 +140,31 @@ func Supersede(prior Decision, replacement Decision) (Decision, Decision, error)
 // report a defect in the binary as a defect in the repository.
 type Validator struct{ /* ... */ }
 func NewValidator(reg *Registry) (*Validator, error)
-func (v *Validator) Validate(kind loader.RecordKind, version int, document []byte) []Finding
+
+// Amended after MR-002 shipped (finding F-R4). This sketch originally spelled
+// the first parameter `loader.RecordKind`. That signature does not compile:
+// internal/knowledge/loader imports internal/knowledge/schema, so naming a
+// loader type here closes an import cycle. schema declares its own RecordKind
+// with the two values spelled identically, callers convert with
+// schema.RecordKind(ref.Kind), and TestSchemaKindsAreSpeltTheSameWayAsTheLoaders
+// holds the two spellings equal. Arity, order and return type are unchanged.
+// See D-50 in mr-002-requirements.md for the full argument, including why a
+// plain `string` was rejected.
+type RecordKind string
+const (
+    KindDecision  RecordKind = "decision"
+    KindInvariant RecordKind = "invariant"
+)
+func (v *Validator) Validate(recordKind RecordKind, version int, document []byte) []Finding
 
 // internal/knowledge/validate
 
 // Finding is one thing wrong with one record, named by the pipeline step that
 // found it so a report can say which rule was broken rather than only that one was.
+// Note that schema.Finding above and validate.Finding here are two distinct
+// types with the same short name: the one returned by Validate carries a keyword
+// and an instance location, and this one adds the path and the step that the
+// schema package deliberately does not know.
 type Finding struct {
     Path    string   `json:"path"`    // repo-relative, slash
     ID      string   `json:"id,omitempty"`

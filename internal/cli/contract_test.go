@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -150,8 +151,8 @@ func TestStatusJSONContract(t *testing.T) {
 	if !report.Readiness.Valid() {
 		t.Errorf("readiness %q is outside the four-value enum", report.Readiness)
 	}
-	if report.Readiness != status.ReadinessReady {
-		t.Errorf("readiness = %q, want READY on a freshly initialized repository", report.Readiness)
+	if report.Readiness != status.ReadinessPartialReady {
+		t.Errorf("readiness = %q, want PARTIAL_READY while syntax is at INVENTORY", report.Readiness)
 	}
 
 	wantComponents := status.Components()
@@ -221,6 +222,9 @@ func TestVersionJSONContract(t *testing.T) {
 		if value, _ := data[key].(string); value == "" {
 			t.Errorf("data.%s is empty", key)
 		}
+	}
+	if got := data["mcp_compatibility"]; got != "stdio" {
+		t.Errorf("mcp_compatibility = %v, want stdio", got)
 	}
 	if data["write_schema_version"] != float64(1) {
 		t.Errorf("write_schema_version = %v, want 1", data["write_schema_version"])
@@ -579,6 +583,137 @@ func TestBrokenSetupMatrix(t *testing.T) {
 			// Only a newer binary can read it; no local command can.
 			unusableRemedies:  []string{"mindrail init"},
 			noUnderlyingCause: true,
+		},
+		{
+			name: "knowledge records that supersede each other",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", cyclicSupersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				return repo
+			},
+			// Decision D-39's second fatal rule. Both records parse, both are
+			// inside the reader window and both satisfy decision.v1, so nothing
+			// the loader can see is wrong with either; what is wrong is the pair,
+			// and it costs every question about which of the two is current.
+			wantExit:      app.ExitFailed,
+			wantCode:      app.CodeKnowledgeSupersedeCycle,
+			wantState:     doctor.StateError,
+			wantError:     true,
+			wantComponent: status.ComponentKnowledge,
+			wantCheck:     "knowledge",
+			// Only editing one of the two records clears it; init writes the
+			// scaffold and never touches a record already in the store.
+			unusableRemedies: []string{"mindrail init"},
+			// Nothing underneath failed. Both files opened and decoded, and the
+			// refusal is Mindrail's own reading of the two together — the same
+			// position as the future-schema row above.
+			noUnderlyingCause: true,
+		},
+		{
+			name: "knowledge record the schema rejects",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", invalidStatusDecision)
+				return repo
+			},
+			// The exit-0 half of MR-002, and the reason this row is here rather
+			// than only in the agreement matrix: KNOWLEDGE_INVALID is carried by a
+			// DEGRADED component and a DEGRADED check with no error object at all,
+			// which is the shape the previous form of this table could not
+			// express. A consumer branching on `ok` must still get a usable
+			// repository, and the reader must still be told which file to open.
+			wantExit:         app.ExitSuccess,
+			wantCode:         app.CodeKnowledgeInvalid,
+			wantState:        doctor.StateDegraded,
+			wantComponent:    status.ComponentKnowledge,
+			wantCheck:        "knowledge",
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
+			name: "knowledge record that resolves outside the repository",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				linkKnowledgeRecordOutside(t, repo, "DEC-0002.json")
+				return repo
+			},
+			// Finding BA-10's condition, published under decision D-51. The whole
+			// point of the row is the code: this file was never opened, so
+			// KNOWLEDGE_UNREADABLE was a false statement about it and the remedy
+			// that comes with that code — "Fix or remove <path>" — asks the reader
+			// to repair a file whose contents are not under discussion. The thing
+			// to act on is the link, and PATH_ESCAPES_ROOT is the code that says so.
+			//
+			// Exit 0 and DEGRADED, not a usage error: app.CodePathEscapesRoot maps
+			// to ExitUsage where it is a fatal error object, and this is not one —
+			// declining one record costs the repository that record, exactly as an
+			// unreadable record does (decision D-39). The agreement matrix's
+			// "a single knowledge record that resolves outside the worktree" row
+			// asserts the other half, that no command produces an error object at
+			// all for this disk.
+			wantExit:      app.ExitSuccess,
+			wantCode:      app.CodePathEscapesRoot,
+			wantState:     doctor.StateDegraded,
+			wantComponent: status.ComponentKnowledge,
+			wantCheck:     "knowledge",
+			// init writes the scaffold and never touches a record already in the
+			// store, least of all one it declined to read.
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
+			name: "knowledge record that resolves outside the repository beside an unreadable one",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				linkKnowledgeRecordOutside(t, repo, "DEC-0002.json")
+				writeKnowledgeRecord(t, repo, "DEC-0003.json", "{not json")
+				denyAccess(t, filepath.Join(repo, ".mindrail", "knowledge", "decisions", "DEC-0003.json"))
+				return repo
+			},
+			// Decision D-51's boundary, and the reason the row above cannot be read
+			// as "any escaping record publishes PATH_ESCAPES_ROOT". One record here
+			// genuinely cannot be read, so KNOWLEDGE_UNREADABLE is wrong about none
+			// of the set and stays; the summary is what carries the other class.
+			//
+			// Stated as its own row because the two differ in nothing a reader of
+			// the setup would notice — one extra file — and a branch keyed on "some
+			// record escapes" instead of "every degraded record escapes" passes the
+			// row above and fails here.
+			wantExit:         app.ExitSuccess,
+			wantCode:         app.CodeKnowledgeUnreadable,
+			wantState:        doctor.StateDegraded,
+			wantComponent:    status.ComponentKnowledge,
+			wantCheck:        "knowledge",
+			unusableRemedies: []string{"mindrail init"},
+		},
+		{
+			name: "schema-invalid draft carrying a valid record's id",
+			setup: func(t *testing.T) string {
+				repo := newInitializedRepo(t)
+				writeKnowledgeRecord(t, repo, "DEC-0001.json", supersededDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0002.json", supersedingDecision)
+				writeKnowledgeRecord(t, repo, "DEC-0003.json", draftReusingAnActiveId)
+				return repo
+			},
+			// Audit round 2's HIGH. The graph indexes every record the loader read,
+			// including ones step 5 rejected, so that a chain closing through a
+			// rejected record is still a cycle — and for one commit that also let a
+			// rejected record's *id* speak for a node, fusing a draft's supersedes
+			// onto a valid record. This store was reported as
+			// KNOWLEDGE_SUPERSEDE_CYCLE at exit 1, ERROR, naming two files whose
+			// bytes could not carry the remedy out.
+			//
+			// The right answer is the one the "knowledge record the schema rejects"
+			// row above gives: a record this binary reads and rejects costs the
+			// repository that record. DEGRADED, exit 0, KNOWLEDGE_INVALID, and the
+			// two correct records beside it stay answerable.
+			wantExit:         app.ExitSuccess,
+			wantCode:         app.CodeKnowledgeInvalid,
+			wantState:        doctor.StateDegraded,
+			wantComponent:    status.ComponentKnowledge,
+			wantCheck:        "knowledge",
+			unusableRemedies: []string{"mindrail init"},
 		},
 		{
 			name:    "git is not installed",
@@ -2016,6 +2151,12 @@ func newInitializedRepo(t *testing.T) string {
 	if got := run(t, repo, "init"); got.code != app.ExitSuccess {
 		t.Fatalf("init exited %d: %v\n%s", got.code, got.err, got.stdout)
 	}
+	// Legacy command tests start with no source dirt and no HEAD. Agent setup
+	// is exercised separately against fresh init; discard only its generated
+	// instruction file in this historical fixture rather than invent a commit.
+	if err := os.Remove(filepath.Join(repo, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
 	return repo
 }
 
@@ -2273,6 +2414,50 @@ func reasonAfter(out, marker string) string {
 	return ""
 }
 
+// mintedID matches the identifiers this binary mints: a three-letter prefix and
+// 26 characters of Crockford base32.
+var mintedID = regexp.MustCompile(`\b(SES|TSK|CKP|WS|PRJ)-[0-9A-Z]{26}\b`)
+
+// TestCoordinationHumanOutputGolden is finding F17.
+//
+// The four renderings below were never executed by anything. Replacing the
+// whole body of sessionResult, handoverResult, taskListResult and
+// checkpointResult with panic() left every package green and `make smoke`
+// green: the tests all ran with --json, so the default output of `session
+// open`, `task show`, `task list` and `checkpoint write` could have panicked in
+// a release.
+//
+// A golden is the right instrument precisely because it cannot be satisfied
+// without running the command. What it pins is the layout — what is on which
+// line, and in what order — with the minted ids redacted, because those are the
+// machine-local part.
+func TestCoordinationHumanOutputGolden(t *testing.T) {
+	repo := newInitializedRepo(t)
+	session := sessionID(t, repo)
+	task := openTask(t, repo, session, "wire the reconcile path")
+	run(t, repo, "checkpoint", "write", task,
+		"--note", "parser done; the resolver still returns nil for aliases",
+		"--handoff", "--session", session, "--json").requireExit(t, app.ExitSuccess)
+
+	// Ordered, not a map: `checkpoint write` changes what `task show` reports,
+	// so the goldens describe one sequence rather than four independent runs.
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "session_open", args: []string{"session", "open"}},
+		{name: "task_show", args: []string{"task", "show", task}},
+		{name: "task_list", args: []string{"task", "list"}},
+		{name: "checkpoint_write", args: []string{"checkpoint", "write", task,
+			"--note", "the resolver is done too", "--session", session}},
+	} {
+		got := run(t, repo, append(tc.args, "--no-color")...)
+		got.requireExit(t, app.ExitSuccess)
+
+		assertGolden(t, tc.name+"_human.golden", redact(got.stdout, repo))
+	}
+}
+
 // TestHumanOutputGolden pins the layout a person reads.
 //
 // Everything machine-local is redacted first: absolute paths, opaque ids, the
@@ -2320,6 +2505,11 @@ func redact(out, repo string) string {
 	for _, replacement := range replacements {
 		out = strings.ReplaceAll(out, replacement.pattern, replacement.placeholder)
 	}
+
+	// The coordination renderings put minted ids in the middle of sentences
+	// rather than on labelled lines, so redactLine cannot reach them. They are
+	// exactly as machine-local as the ids it already blanks.
+	out = mintedID.ReplaceAllString(out, "$1-<REDACTED>")
 
 	lines := strings.Split(out, "\n")
 	for i, line := range lines {

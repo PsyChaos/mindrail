@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "kind": "invariant",
+  "id": "INV-0042",
+  "status": "superseded",
+  "created_at": "2026-01-02T03:04:05Z",
+  "statement": "Every knowledge record validates against the schema document its kind names.",
+  "rationale": "A committed record is read and diffed by people (spec §9), so & and < must survive as themselves.",
+  "severity": "CRITICAL",
+  "supersedes": [
+    "INV-0007"
+  ],
+  "scope": {
+    "level": "FILE",
+    "target": "internal/knowledge/schema/validator.go"
+  },
+  "tags": [
+    "knowledge",
+    "schema"
+  ]
+}

@@ -36,9 +36,10 @@
       "enum": ["active", "superseded"]
     },
     "created_at": {
-      "description": "UTC RFC 3339 timestamp (tech-stack §42).",
+      "description": "UTC RFC 3339 timestamp (tech-stack §42). Write it with an uppercase \"T\", a zero offset spelled \"Z\", \"+00:00\" or \"-00:00\", and at most nine fractional-second digits: the spelling Go's time.Time marshals, and the only one this project writes. The two keywords divide one rule and do not restate each other: \"format\" owns calendar validity, which a regular expression cannot decide (it knows how long February is); \"pattern\" owns the spelling, which \"format\" is deliberately permissive about. RFC 3339 is wider than §42, and on two different grounds. A lowercase \"t\" or \"z\" (RFC 3339 §5.6) and a leap second (§5.7) are refused because no reader in this project can load them at all. A non-zero offset such as \"-05:00\" is refused on the spelling rule alone: every reader loads it, and the offset names exactly the instant it says. More than nine fractional digits is refused on that same spelling rule, and loses precision whenever the extra digits are not zero. See decision D-49.",
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-5][0-9](\\.[0-9]{1,9})?(Z|[+-]00:00)$"
     },
     "statement": {
       "description": "The property that must hold, in one sentence.",

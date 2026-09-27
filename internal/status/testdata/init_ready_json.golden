@@ -69,6 +69,7 @@
       "decisions": 2,
       "invariants": 1,
       "problems": 0,
+      "findings": 0,
       "write_schema_version": 1,
       "readable_schema_versions": [
         1
@@ -79,6 +80,14 @@
       "registered": true,
       "workspace_id": "WS-01JQ8N6X5T0000000000000000",
       "project_id": "PRJ-01JQ8N6X5T0000000000000000"
+    },
+    "coordination": {
+      "observation": "observed",
+      "tasks_open": 0,
+      "tasks_in_progress": 0,
+      "tasks_blocked": 0,
+      "leases_active": 0,
+      "last_checkpoint": null
     },
     "duration_ms": 3
   },

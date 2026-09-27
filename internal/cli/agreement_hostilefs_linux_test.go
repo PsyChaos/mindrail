@@ -162,8 +162,17 @@ const readyBandMountEnv = "MINDRAIL_TEST_CLI_READY_BAND_MOUNT"
 // The headroom is swept rather than named. The band's edges depend on the page
 // size, on how many migrations ship in this binary and on how much log SQLite
 // decides to keep, so a single number would be a row that stops reproducing the
-// first time any of the three moves. The wide end is the over-fire guard: at a
-// quarter-megabyte free everything has to work.
+// first time any of the three moves. The wide end is the over-fire guard: at
+// a megabyte free everything has to work.
+//
+// The edge has been measured twice, on this tmpfs with 4 KiB pages, by
+// sweeping in 16 KiB steps: with two migrations `init` fits at 240 KiB and
+// not at 224; with three (MR-004's 000003: two tables, two indexes, one ADD
+// COLUMN) it fits at 288 KiB and not at 272. The wide end was a quarter of a
+// megabyte until the third migration crossed it (MR-004, TASK-02), then half
+// a megabyte until the sixth migration crossed it (MR-007, TASK-01: five
+// tables, two indexes); the edge now lies past 512 KiB, so the wide end
+// moves to a megabyte with margin rather than to a freshly swept edge.
 func TestInitNeverCallsARepositoryReadyTheNextCommandRefuses(t *testing.T) {
 	if mount := os.Getenv(readyBandMountEnv); mount != "" {
 		if err := os.Unsetenv(readyBandMountEnv); err != nil {
@@ -185,7 +194,7 @@ func runReadyBand(t *testing.T, mount string) {
 	ran := 0
 	t.Cleanup(func() { reportHostileRowsRan(t, &ran) })
 
-	for _, headroom := range []int64{8, 24, 44, 48, 80, 112, 120, 124, 128, 132, 140, 148, 256} {
+	for _, headroom := range []int64{8, 24, 44, 48, 80, 112, 120, 124, 128, 132, 140, 148, 224, 240, 272, 288, 512, 1024} {
 		t.Run(fmt.Sprintf("%d KiB free", headroom), func(t *testing.T) {
 			repo := hostileRepo(t, mount, hostileCondition{}, fmt.Sprintf("ready-band-%d", headroom))
 			leaveHostileHeadroom(t, mount, headroom<<10)
@@ -217,10 +226,11 @@ func runReadyBand(t *testing.T, mount string) {
 				assertTheLoopTerminates(t, headroom, repo, initAnswer)
 			}
 
-			// The wide end is the over-fire guard: a quarter of a megabyte is
-			// room enough for everything MR-001 writes, and a change that made
-			// init pessimistic would show up here rather than in production.
-			if headroom == 256 && initAnswer.exit != app.ExitSuccess {
+			// The wide end is the over-fire guard: a megabyte is room
+			// enough for everything six migrations write, measured above,
+			// and a change that made init pessimistic would show up here
+			// rather than in production.
+			if headroom == 1024 && initAnswer.exit != app.ExitSuccess {
 				t.Fatalf("with %d KiB free, `init` exited %d (%s); there is room for everything it writes\n%s",
 					headroom, initAnswer.exit, initAnswer.code, gotInit.stdout)
 			}

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mindrail Control Tower</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Mindrail dashboard home">
+      <span class="brand-mark">M</span>
+      <span><b>MINDRAIL</b><small>CONTROL TOWER</small></span>
+    </a>
+    <nav class="tabs" aria-label="Dashboard views">
+      <button class="tab active" data-view="factory">Factory</button>
+      <button class="tab" data-view="agents">Agents</button>
+      <button class="tab" data-view="events">Events</button>
+    </nav>
+    <div class="pulse"><i></i><span id="connection">CONNECTING</span></div>
+  </header>
+
+  <main>
+    <section class="masthead">
+      <div>
+        <div class="eyebrow">LOCAL OPERATIONS / READ ONLY</div>
+        <h1 id="project-name">Mindrail</h1>
+        <p id="project-meta">Loading repository state…</p>
+      </div>
+      <div class="clock-block">
+        <span>LAST FRAME</span>
+        <strong id="last-frame">—</strong>
+        <small id="sequence">SEQ 0000</small>
+      </div>
+    </section>
+
+    <section id="summary" class="summary-grid" aria-label="Operations summary"></section>
+
+    <section id="factory" class="view active" aria-label="Factory view">
+      <div class="rail-layout">
+        <aside class="tower-column">
+          <section class="panel readiness-panel">
+            <header><span>REPOSITORY READINESS</span><b id="readiness-badge">—</b></header>
+            <div id="readiness-components" class="component-list"></div>
+          </section>
+          <section class="panel telemetry-panel">
+            <header><span>SYSTEM TELEMETRY</span></header>
+            <div id="telemetry"></div>
+          </section>
+        </aside>
+        <div class="board-wrap">
+          <div id="task-board" class="task-board"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="agents" class="view" aria-label="Agents view">
+      <div class="split-grid">
+        <section class="panel stretch">
+          <header><span>AGENT SESSIONS</span><b id="session-count">0</b></header>
+          <div id="agent-grid" class="agent-grid"></div>
+        </section>
+        <section class="panel stretch">
+          <header><span>LEASE TENURES</span><b id="lease-count">0</b></header>
+          <div id="lease-list" class="data-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="events" class="view" aria-label="Events view">
+      <div class="split-grid events-grid">
+        <section class="panel stretch">
+          <header><span>LIVE EVENT STREAM</span><b id="event-count">0</b></header>
+          <div id="event-list" class="timeline"></div>
+        </section>
+        <section class="panel stretch">
+          <header><span>VALIDATION EVIDENCE</span><b id="evidence-count">0</b></header>
+          <div id="evidence-list" class="data-list"></div>
+          <div class="subheader"><span>CONFIGURED PROFILES</span><b id="profile-count">0</b></div>
+          <div id="profile-list" class="data-list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <template id="empty-template"><div class="empty">NO SIGNALS IN THIS CHANNEL</div></template>
+  <script src="assets/app.js" defer></script>
+</body>
+</html>

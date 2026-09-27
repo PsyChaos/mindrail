@@ -1,0 +1,24 @@
+# Mindrail repository configuration.
+#
+# Settings here are repository-scoped: they travel with the checkout and
+# outrank the per-machine file in <user config dir>/mindrail/config.toml.
+# A command-line flag and a MINDRAIL_* environment variable both outrank this
+# file, in that order.
+#
+# Every key is commented out on purpose. An uncommented key becomes a
+# repository-level decision, which permanently overrides whatever preference a
+# contributor set on their own machine — so state a key here only when the
+# project really does want to decide it for everyone.
+#
+# Unknown keys are an error, not a warning: Mindrail refuses to start rather
+# than silently ignore a setting you believed was in effect.
+
+[project]
+# Human-readable name for this project. Defaults to unset.
+# name = "my-project"
+
+[output]
+# Colour policy for human-readable output: auto | always | never.
+# "auto" emits colour only when stdout is a terminal. NO_COLOR is always
+# respected, and --json output never contains colour.
+# color = "auto"
