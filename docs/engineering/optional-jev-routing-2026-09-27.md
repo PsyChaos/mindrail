@@ -1,8 +1,15 @@
 # Optional Jev routing — 2026-09-27
 
-Status: FROZEN FOR IMPLEMENTATION
+Status: SUPERSEDED — historical implementation plan
 Tier: 3 — the change introduces an optional external API, secret handling, agent routing policy, and backward-compatibility requirements.
 Base: `ba35fbe`
+
+This document records the original repository-local prototype plan. It is
+superseded by
+[`installed-update-and-jev-distribution-2026-09-27.md`](installed-update-and-jev-distribution-2026-09-27.md),
+which embeds the canonical adapter in the installed binary and exposes it through
+`mindrail agent route`. Paths and validation commands below point to the active
+installed implementation; older audit reports remain historical evidence only.
 
 ## User outcome
 
@@ -31,7 +38,7 @@ validation, and completion gate remain authoritative and unchanged.
 
 | ID | Decision | Evidence | Impact |
 | --- | --- | --- | --- |
-| DEC-001 | Implement the adapter in the host-side engineering-orchestrator skill, not the Go core. | Mindrail does not own host tool/model execution; production Go imports of `net/http` are intentionally prohibited. | The thirteen MCP tools and deterministic core remain unchanged. |
+| DEC-001 | Embed the adapter under `internal/agent` and expose it through the installed binary, not mutable repository-local executable code. | The superseding distribution design keeps provider HTTP outside the deterministic Go core while shipping trusted adapter bytes with `mindrail`. | The thirteen MCP tools and deterministic core remain unchanged. |
 | DEC-002 | Use TypeSafe Choice for every non-empty candidate dimension and send independent questions together. | TypeSafe Choice and speculative fan-out documentation. | A single API call can advise tool, agent, model, and effort selections. |
 | DEC-003 | Treat confidence below `0.60` as unaccepted advice and continue normally. | TypeSafe confidence guidance; this is a low-stakes advisory threshold to validate, not a universal model property. | Raw confidence remains visible, but the host applies only accepted advice. |
 | DEC-004 | Provider errors are typed, sanitized data with process exit success. | The feature is optional and must not become a new availability dependency. | Agents can inspect status while continuing the pre-existing flow. |
@@ -40,17 +47,17 @@ validation, and completion gate remain authoritative and unchanged.
 
 | Task | Objective | Requirements | Files | Dependencies | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| TASK-001 | Implement the bounded TypeSafe HTTP adapter and CLI. | REQ-001–006 | `.claude/skills/engineering-orchestrator/scripts/jev_route.py` | none | Focused adapter tests pass. |
-| TASK-002 | Add exhaustive offline tests for activation, response validation, and secret safety. | REQ-001, REQ-002, REQ-004–006, REQ-008 | `.claude/skills/engineering-orchestrator/scripts/test_jev_route.py` | TASK-001 | Tests make no real network calls and cover every listed branch. |
-| TASK-003 | Integrate the optional decision step into agent guidance. | REQ-003, REQ-007 | `.claude/skills/engineering-orchestrator/SKILL.md`, `AGENTS.md` | TASK-001 | Key/no-key and advisory semantics are unambiguous. |
+| TASK-001 | Implement the bounded TypeSafe HTTP adapter and installed CLI bridge. | REQ-001–006 | `internal/agent/jev_route.py`, `internal/agent/adapter.go` | none | Focused adapter and bridge tests pass. |
+| TASK-002 | Add exhaustive offline tests for activation, response validation, and secret safety. | REQ-001, REQ-002, REQ-004–006, REQ-008 | `internal/agent/test_jev_route.py`, `internal/agent/adapter_test.go` | TASK-001 | Tests make no real network calls and cover every listed branch. |
+| TASK-003 | Integrate the optional decision step into managed agent guidance. | REQ-003, REQ-007 | `internal/setup/setup.go`, `AGENTS.md` | TASK-001 | Key/no-key, bounded input, and advisory semantics are unambiguous. |
 | TASK-004 | Validate, audit, document evidence, and refresh Graphify. | REQ-001–008 | audit artifacts and `graphify-out/**` | TASK-001–003 | Targeted tests, full gates, and independent audit reach VERIFIED. |
 
 ## Validation map
 
 | Requirements | Command |
 | --- | --- |
-| REQ-001–006, REQ-008 | `python -m unittest discover -s .claude/skills/engineering-orchestrator/scripts -p 'test_jev_route.py' -v` |
-| REQ-003, REQ-007 | Reader comparison of frozen requirements, skill instructions, and `AGENTS.md` |
+| REQ-001–006, REQ-008 | `python internal/agent/test_jev_route.py -v && go test ./internal/agent -count=1` |
+| REQ-003, REQ-007 | Reader comparison of the superseding distribution requirements, `internal/setup/setup.go`, and `AGENTS.md` |
 | REQ-008 regression | `make tidy-check && make verify && make gate` |
 
 ## Explicitly out of scope

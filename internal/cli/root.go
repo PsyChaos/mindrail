@@ -117,7 +117,9 @@ func NewRootWith(o Options) *Root {
 	flags.StringP(flagChdir, "C", "", "run as if mindrail was started in this directory")
 
 	cmd.AddCommand(
+		newAgentCommand(),
 		newInitCommand(o),
+		newUpdateCommand(o),
 		newStatusCommand(o),
 		newDoctorCommand(o),
 		newVersionCommand(),
@@ -132,7 +134,7 @@ func NewRootWith(o Options) *Root {
 	)
 	for _, sub := range cmd.Commands() {
 		switch sub.Name() {
-		case "init", "status", "doctor", "verify", "version":
+		case "init", "update", "status", "doctor", "verify", "version":
 		default:
 			sub.Hidden = true
 		}

@@ -21,14 +21,13 @@ git init my-project
 cd my-project
 
 # Mindrail kaynak tree'sinde:
-make build
-install -Dm755 ./bin/mindrail "$HOME/.local/bin/mindrail"
+make install
 export PATH="$HOME/.local/bin:$PATH"
 mindrail version --json
 ```
 
-`make build` için Go 1.27.x, Git ve C toolchain gerekir. Binary'yi başka bir
-yolla edinmişseniz son üç satırın yerine yalnız binary'nin PATH'te olduğundan
+`make install` için Go 1.27.x, Git ve C toolchain gerekir. Binary'yi başka bir
+yolla edinmişseniz son iki satırın yerine yalnız binary'nin PATH'te olduğundan
 emin olun. Ardından proje kökünde kurulum ve ilk sağlık kontrolünü yapın:
 
 ```bash
@@ -91,6 +90,11 @@ olarak saklar ve yeni wrapper önce bu foreign hook'u, sonra
 `mindrail verify --staged` kapısını çalıştırır. Böylece formatter veya staged
 dosya üreten eski hook'un çıktısı Mindrail tarafından görülür. Tekrar
 `mindrail init` çalıştırmak idempotenttir.
+
+Binary'yi yeni bir kaynak sürümünden değiştirdikten sonra daha önce initialize
+edilmiş worktree'de `mindrail update` çalıştırın. Bu komut aynı güvenli managed
+setup/migration hattını kullanır; user-owned AGENTS metnini ve foreign hook'u
+korur. Initialize edilmemiş repository için önce `mindrail init` gerekir.
 
 Güvenli biçimde birleştirilemeyen durumda kurulum reddedilir: symlink,
 normal-dosya olmayan managed hedef, bozuk/çift AGENTS marker'ı, değiştirilmiş
@@ -400,27 +404,69 @@ asset, paket yöneticisi, imza veya otomatik güncelleme endpoint'i tanımlı
 olmadığından güvenilir kurulum yolu bugün kaynaktan build etmektir:
 
 ```bash
-make build
-./bin/mindrail version --json
 make check
+make install
+mindrail version --json
 ```
 
 `make build` binary'yi `bin/mindrail` içine yazar. `make check` format denetimi,
 `go vet` ve testleri; `make verify` bunlara race detector ve clean-binary smoke
 testlerini ekler. `make bench` benchmark, `make release` platform
-matrix/stamp/checksum üretir.
+matrix/stamp/checksum üretir. `make install` binary'yi hedef dizinde geçici bir
+dosyaya build edip aynı dizinde rename ederek atomik biçimde
+`$HOME/.local/bin/mindrail` üzerine kurar.
 
-İsteğe bağlı kullanıcı kurulumu (POSIX shell):
+Kurulum kökü ve paket staging alanı değiştirilebilir:
 
 ```bash
-install -Dm755 ./bin/mindrail "$HOME/.local/bin/mindrail"
+make install PREFIX=/opt/mindrail
+make install BINDIR=/custom/bin
+make install DESTDIR=/tmp/package-root BINDIR=/usr/bin
 export PATH="$HOME/.local/bin:$PATH"
-mindrail version --json
 ```
 
-Son `export` yalnız mevcut shell içindir. Linker stamp'i olmayan geliştirme
-binary'sinde sürüm `dev`, build date/dirty alanları `unknown` olabilir; bu hata
-değildir.
+Doğrulanmış Linux hedefinde install, final hedef bir symlink/dizin ise veya
+çözümlenmiş yol `DESTDIR` dışına taşıyorsa yazmadan reddeder. Var olmayan hedef
+ve existing regular binary ise aynı hedef dizindeki geçici dosyadan atomik rename
+ile kurulur.
+
+Son `export` yalnız mevcut shell içindir. Mindrail'in network self-update kanalı
+yoktur. Kaynaktan güncelleme iki ayrı adımdır: önce güncel source checkout'ta
+`make check && make install` ile binary'yi değiştirin; sonra her initialize
+edilmiş worktree'de `mindrail update` çalıştırın. Binary kurulumu programı,
+`mindrail update` ise o repository'nin managed talimatlarını ve migration'larını
+günceller.
+
+### Opsiyonel JEV yönlendirmesi ve anahtar yönetimi
+
+JEV tamamen opsiyoneldir. `TYPESAFE_API_KEY` yoksa veya boşsa agent normal
+yönlendirme akışına devam eder. Etkinleştirirken anahtarı password manager ya da
+işletim sistemi keyring'inden yalnız agent'ı başlatan process environment'ına
+enjekte edecek güvenilir entegrasyonu agent başlamadan önce yapılandırın. Anahtar
+yalnız environment'ta bulunur; stdin, shell örneği, repository config, `.env`, argv,
+log veya commit içinde bulunmamalıdır.
+
+Belirsiz bir tool, agent, model veya reasoning-effort seçimi için güvenli ve bounded
+istek örneği şöyledir; anahtar JSON'a veya komut satırına eklenmez:
+
+```bash
+printf '%s\n' '{"goal":"arama aracı seç","tools":[{"id":"rg","description":"repository metninde ara"}]}' |
+  mindrail agent route
+```
+
+Bounded stdin JSON'u zorunlu string `goal`, opsiyonel JSON `context` ve en az bir
+`tools`, `agents`, `models` veya `efforts` array'i içerir. Her candidate tam olarak
+`id` ve `description` alanlarını taşır. Kurulu binary canonical adapter'ı gizli
+`mindrail agent route` köprüsünden sunar; Python 3 yalnız bu opsiyon etkinse gerekir. Agent yalnız
+top-level durum `ok` ve bütün seçimler accepted olduğunda tavsiyeyi kullanır;
+disabled, fallback, error veya reddedilmiş sonuçta normal akışa devam eder.
+TypeSafe'e yalnız gerekli en küçük hassas-olmayan goal/context özetini ve kapalı
+candidate açıklamalarını gönderin; ham secret, log veya kaynak kod göndermeyin.
+
+Terminalde export edilen environment değişkenleri masaüstü/GUI uygulamalarına
+çoğunlukla miras kalmaz. GUI agent'ı hazırlanmış environment'tan başlatın veya
+desktop session'ın güvenilir secret-injection yöntemini kullanın; repository'ye
+key dosyası ekleyerek bu farkı kapatmayın.
 
 ## Konfigürasyon ve validation profile'ları
 

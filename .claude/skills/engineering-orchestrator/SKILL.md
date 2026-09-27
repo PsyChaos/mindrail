@@ -72,8 +72,8 @@ simulated rather than real.
 ## Optional Jev routing advice
 
 Before an ambiguous choice among tools, agent roles, models, or reasoning-effort
-levels, check `TYPESAFE_API_KEY`: when it is non-blank, ask the repository's Jev
-adapter for advice; otherwise continue the existing selection flow. Use Jev only
+levels, check `TYPESAFE_API_KEY`: when it is non-blank, ask the installed Mindrail
+bridge for Jev advice; otherwise continue the existing selection flow. Use Jev only
 with closed, caller-supplied candidate sets; candidate identifiers and short
 descriptions must describe every selectable option. Known policy, availability,
 permissions, and other deterministic constraints narrow the candidates before Jev
@@ -82,13 +82,18 @@ sees them.
 With the opt-in key present, send a bounded JSON request on standard input:
 
 ```bash
-python .claude/skills/engineering-orchestrator/scripts/jev_route.py < request.json
+mindrail agent route < request.json
 ```
 
 The stdin object supplies the required string `goal`, optional JSON `context`, and
 any non-empty combination of the top-level candidate arrays `tools`, `agents`,
-`models`, and `efforts`. Each candidate is an object with `id` and `description`.
-Never put the API key in the request; the adapter reads it from the environment.
+`models`, and `efforts`. Each candidate is an object containing exactly `id` and
+`description`. Send only the smallest non-sensitive goal/context summary and closed
+candidate descriptions needed for the decision; never send raw secrets, logs, or
+source code. Never put the API key in the request, repository configuration, `.env`,
+argv, or logs. Inject it from a password manager or OS keyring into the environment
+that launches the coding agent; the installed bridge and embedded adapter read it
+only from that process environment.
 
 Treat a `mode: "shadow"`, `advisory: true` response only as evidence. Routing
 acceptance is atomic: apply selections only when the top-level `status` is `"ok"`,
@@ -97,12 +102,12 @@ for the current state. Any low-confidence or no-match selection makes the top-le
 status `"fallback"` and leaves all selections unaccepted, so continue the
 pre-existing selection flow.
 
-The disabled path (including a missing or whitespace-only key) and provider or
-response failures return typed JSON with exit status zero and continue normal flow;
-the no-key path makes no network request. Malformed, oversized, or otherwise
-contract-invalid local input instead returns typed fallback JSON with exit status 2.
-That is a caller error: fix the invocation before retrying rather than treating it
-as provider fallback.
+The disabled path (including a missing or whitespace-only key), bridge launch
+problems, and provider or response failures return typed disabled/fallback JSON and
+continue normal flow; the no-key path does not read stdin, launch Python, or make a
+network request. A malformed, oversized, or otherwise contract-invalid local input
+also yields typed fallback data through the fail-open bridge; fix that caller input
+before retrying. Never turn JEV availability into a task failure.
 
 Jev cannot authorize an action, expand scope, change permissions, or override the
 Mindrail lifecycle, validation, or completion gate. It does not replace the coding

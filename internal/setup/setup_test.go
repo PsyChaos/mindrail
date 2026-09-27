@@ -196,3 +196,80 @@ func TestManagedInstructionsRequireScopeBeforeEditing(t *testing.T) {
 		}
 	}
 }
+
+func TestExistingManagedInstructionsUpgradeJEVAndRemainStable(t *testing.T) {
+	root, common, hook := fixture(t)
+	agentsPath := filepath.Join(root, "AGENTS.md")
+	userPrefix := "# Team rules\nKeep this exact.\n\n"
+	userSuffix := "\n## Local workflow\nRun the repository tests.\n"
+	oldBlock := setup.Begin + "\n## MINDRAIL PROTOCOL\n\nOld initialized guidance.\n" + setup.End
+	if err := os.WriteFile(agentsPath, []byte(userPrefix+oldBlock+userSuffix), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	foreignHook := []byte("#!/bin/sh\n# user-owned hook\nexit 0\n")
+	if err := os.WriteFile(hook, foreignHook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := setup.Install(root, common, hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.AgentsChanged || !first.HookChanged {
+		t.Fatalf("upgrade did not change managed files: %+v", first)
+	}
+	agentsBody, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(agentsBody)
+	for _, required := range []string{
+		"mindrail agent route", "TYPESAFE_API_KEY", "top-level status is `ok`",
+		"password manager or OS keyring", "never raw secrets, logs, or source code",
+		"ambiguous tool, agent, model, or reasoning-effort choice",
+		"required `goal` string", "optional", "`context` JSON", "one or more",
+		"`tools`, `agents`, `models`, or `efforts`", "exactly `id` and `description`",
+		`{"goal":"select a search tool","tools":[{"id":"rg","description":"search repository text"}]}`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("upgraded guidance missing %q", required)
+		}
+	}
+	if !strings.HasPrefix(text, userPrefix) || !strings.HasSuffix(text, userSuffix) || strings.Contains(text, "Old initialized guidance") {
+		t.Fatalf("user content changed during upgrade: %q", text)
+	}
+	backup, err := os.ReadFile(hook + ".mindrail-original")
+	if err != nil || string(backup) != string(foreignHook) {
+		t.Fatalf("foreign hook was not preserved: %q %v", backup, err)
+	}
+	firstHook, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentsInfo, err := os.Stat(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookInfo, err := os.Stat(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := setup.Install(root, common, hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.AgentsChanged || second.HookChanged {
+		t.Fatalf("repeat install changed managed files: %+v", second)
+	}
+	secondAgents, _ := os.ReadFile(agentsPath)
+	secondHook, _ := os.ReadFile(hook)
+	secondAgentsInfo, _ := os.Stat(agentsPath)
+	secondHookInfo, _ := os.Stat(hook)
+	if string(secondAgents) != string(agentsBody) || string(secondHook) != string(firstHook) {
+		t.Fatal("repeat install changed managed bytes")
+	}
+	if secondAgentsInfo.ModTime() != agentsInfo.ModTime() || secondHookInfo.ModTime() != hookInfo.ModTime() {
+		t.Fatal("repeat install changed managed mtimes")
+	}
+}

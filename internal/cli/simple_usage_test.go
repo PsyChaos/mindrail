@@ -15,12 +15,12 @@ func TestRootHelpShowsHumanCommandsAndExpertCommandsRemainCallable(t *testing.T)
 	repo := newRepo(t)
 	help := run(t, repo, "--help")
 	help.requireExit(t, app.ExitSuccess)
-	for _, name := range []string{"init", "status", "doctor", "verify", "version"} {
+	for _, name := range []string{"init", "update", "status", "doctor", "verify", "version"} {
 		if !strings.Contains(help.stdout, "  "+name+" ") {
 			t.Fatalf("missing %s:\n%s", name, help.stdout)
 		}
 	}
-	for _, name := range []string{"session", "task", "lease", "checkpoint", "hook", "knowledge", "mcp", "completion"} {
+	for _, name := range []string{"agent", "session", "task", "lease", "checkpoint", "hook", "knowledge", "mcp", "completion"} {
 		if strings.Contains(help.stdout, "  "+name+" ") {
 			t.Fatalf("expert command %s in normal help:\n%s", name, help.stdout)
 		}

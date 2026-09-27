@@ -97,7 +97,13 @@ func (r Report) RenderHuman(w io.Writer, color bool) error {
 func (r InitReport) RenderHuman(w io.Writer, color bool) error {
 	var b strings.Builder
 
-	b.WriteString("Mindrail Init\n\n")
+	b.WriteString("Mindrail ")
+	if r.Command == "update" {
+		b.WriteString("Update")
+	} else {
+		b.WriteString("Init")
+	}
+	b.WriteString("\n\n")
 
 	// "Absent" has two meanings on all three of these lines, and only one of
 	// them was told apart. A run that found the config already there wrote

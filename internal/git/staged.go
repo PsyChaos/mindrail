@@ -91,7 +91,7 @@ func ShowStaged(ctx context.Context, runner CommandRunner, dir, rel string) ([]b
 	stdout, stderr, err := runner.Run(ctx, dir, "show", ":"+rel)
 	if err != nil {
 		if bytes.Contains(stderr, []byte("does not exist")) || bytes.Contains(stderr, []byte("exists on disk, but not in")) ||
-			bytes.Contains(stderr, []byte("invalid object name")) {
+			bytes.Contains(stderr, []byte("invalid object name")) || bytes.Contains(stderr, []byte("unknown revision or path not in the working tree")) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("git: staged read failed: %w: %s", err, dish(stderr))

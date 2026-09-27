@@ -1,6 +1,9 @@
 BINARY   := mindrail
 PKG      := ./...
 CMD      := ./cmd/mindrail
+PREFIX   ?= $(HOME)/.local
+BINDIR   ?= $(PREFIX)/bin
+DESTDIR  ?=
 
 # SQLite driver build tags.
 #
@@ -23,6 +26,50 @@ SMOKE_TAGS := $(if $(TAGS),$(TAGS)$(COMMA)smoke,smoke)
 .PHONY: build
 build: ## Build the mindrail binary into ./bin
 	go build $(GOFLAGS_TAGS) -o bin/$(BINARY) $(CMD)
+
+.PHONY: install
+install: ## Build and atomically install mindrail into DESTDIR+BINDIR
+	@set -eu; \
+	destdir="$(DESTDIR)"; \
+	bindir="$(BINDIR)"; \
+	if [ -n "$$destdir" ]; then \
+		root="$$(realpath -m -- "$$destdir")"; \
+		case "$$bindir" in /*) requested="$$destdir$$bindir" ;; *) requested="$$destdir/$$bindir" ;; esac; \
+		dir="$$(realpath -m -- "$$requested")"; \
+		case "$$root" in \
+			/) case "$$dir" in /*) ;; *) echo "install: target escapes DESTDIR: $$dir" >&2; exit 2 ;; esac ;; \
+			*) case "$$dir" in "$$root"|"$$root"/*) ;; *) echo "install: target escapes DESTDIR: $$dir" >&2; exit 2 ;; esac ;; \
+		esac; \
+	else \
+		dir="$$(realpath -m -- "$$bindir")"; \
+	fi; \
+	dest="$$dir/$(BINARY)"; \
+	if [ -L "$$dest" ] || { [ -e "$$dest" ] && [ ! -f "$$dest" ]; }; then \
+		echo "install: destination must be absent or a regular file: $$dest" >&2; exit 2; \
+	fi; \
+	mkdir -p -- "$$dir"; \
+	resolved="$$(realpath -e -- "$$dir")"; \
+	if [ -n "$$destdir" ]; then \
+		case "$$root" in \
+			/) case "$$resolved" in /*) ;; *) echo "install: resolved target escapes DESTDIR: $$resolved" >&2; exit 2 ;; esac ;; \
+			*) case "$$resolved" in "$$root"|"$$root"/*) ;; *) echo "install: resolved target escapes DESTDIR: $$resolved" >&2; exit 2 ;; esac ;; \
+		esac; \
+	fi; \
+	dir="$$resolved"; dest="$$dir/$(BINARY)"; \
+	if [ -L "$$dest" ] || { [ -e "$$dest" ] && [ ! -f "$$dest" ]; }; then \
+		echo "install: destination changed to an unsafe type: $$dest" >&2; exit 2; \
+	fi; \
+	tmp="$$(mktemp "$$dir/.mindrail.install.XXXXXX")"; \
+	trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	go build $(GOFLAGS_TAGS) -ldflags "$(LDSTAMP)" -o "$$tmp" $(CMD); \
+	chmod 0755 "$$tmp"; \
+	mv -fT -- "$$tmp" "$$dest"; \
+	trap - EXIT HUP INT TERM; \
+	echo "installed $$dest"
+
+.PHONY: install-test
+install-test: ## Exercise hostile and normal install targets
+	@./scripts/test-install.sh
 
 .PHONY: test
 test: ## Run the unit and integration test suite
@@ -82,7 +129,7 @@ tidy-check: ## Fail if go.mod or go.sum are not tidy
 	exit $$status
 
 .PHONY: check
-check: fmt-check vet test ## Local quality gate (fast: runs on every save)
+check: fmt-check vet test install-test ## Local quality gate (fast: runs on every save)
 
 # Release stamping (tech-stack §103). Dirty detection covers tracked
 # modifications, staged changes AND untracked files: an untracked .go
@@ -138,12 +185,11 @@ release: ## Stamp, build the platform matrix, checksums, native smoke
 	@grep -Eq '"dirty":"(clean|dirty)"' dist/version.json || (echo "release: dirty stamp not stamped"; exit 1)
 	go test -tags $(SMOKE_TAGS) -count=1 -timeout 300s ./cmd/...
 
-# Test-gate matrix (MR-019 AC-03.3): the nine categories, each an explicit
-# command a reader can re-run by hand. Every category asserts a non-empty
-# selection first — an empty cut passing silently would be the exact lie
-# the gates of this milestone exist to prevent.
+# Test-gate matrix (MR-019 AC-03.3): ten categories, each an explicit
+# command a reader can re-run by hand. Every Go category asserts a non-empty
+# selection; the install category runs its hostile-filesystem assertions.
 .PHONY: gate
-gate: ## Run the nine test categories by explicit selection
+gate: ## Run ten test categories by explicit selection
 	@./scripts/gate.sh
 
 # Supply-chain scan (tech-stack §102). The binary is absent from developer

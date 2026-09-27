@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/config"
 	"github.com/PsyChaos/mindrail/internal/doctor"
@@ -41,9 +42,21 @@ func newInitCommand(o Options) *cobra.Command {
 }
 
 func runInit(cmd *cobra.Command, o Options) error {
-	inv, err := newInvocation(cmd, "init", o)
+	return runRepositorySetup(cmd, o, "init", false)
+}
+
+// runRepositorySetup is the one repository migration/setup pipeline shared by
+// init and update. update differs only in its read-only eligibility preflight
+// and in the command identity carried by its output.
+func runRepositorySetup(cmd *cobra.Command, o Options, command string, requireInitialized bool) error {
+	inv, err := newInvocation(cmd, command, o)
 	if err != nil {
 		return inv.emit(nil, nil, nil, "", err)
+	}
+	if requireInitialized {
+		if err := requireInitializedRepository(cmd.Context(), inv); err != nil {
+			return inv.emit(nil, nil, nil, "", err)
+		}
 	}
 
 	// Asked before anything is written; see the function for why the alternative
@@ -86,8 +99,8 @@ func runInit(cmd *cobra.Command, o Options) error {
 		}
 		elapsed := time.Since(started)
 
-		report := initReportOf(a, verdict, elapsed)
-		inv.logger.Info("init finished",
+		report := setupReportOf(command, a, verdict, elapsed)
+		inv.logger.Info(command+" finished",
 			slog.String("terminal_state", string(report.TerminalState)),
 			slog.Duration("duration", elapsed))
 
@@ -102,6 +115,39 @@ func runInit(cmd *cobra.Command, o Options) error {
 		return inv.emit(report, render, a.Warnings(),
 			a.Config().Config.Output.Color, verdict)
 	})
+}
+
+// requireInitializedRepository proves update's prerequisite without creating
+// a config, runtime directory, database, workspace row, or managed file. A
+// partially completed first init is deliberately sent back through init: only
+// the runtime database plus this worktree's registered identity establish that
+// the repository has completed the original setup pipeline.
+func requireInitializedRepository(ctx context.Context, inv invocation) error {
+	probe := bootstrap.New(bootstrap.Options{
+		StartDir:    inv.startDir,
+		Mode:        bootstrap.ModeReadOnly,
+		Runner:      inv.runner(),
+		BusyTimeout: inv.opts.BusyTimeout,
+		Logger:      inv.logger,
+		Environ:     inv.environ,
+	})
+	startErr := probe.Start(ctx)
+	initialized := probe.DB() != nil && probe.Subject().Workspace.ID != ""
+	shutdown(ctx, probe, inv.logger)
+
+	if startErr != nil {
+		return startErr
+	}
+	if initialized {
+		return nil
+	}
+	return app.NewError(
+		app.CodeCoordinationUnavailable,
+		app.KindFailed,
+		"this worktree has not completed Mindrail initialization",
+		"The repository was inspected, but update made no changes.",
+		"Run `mindrail init` in this worktree, then run `mindrail update`.",
+	)
 }
 
 func installAgentSetup(ctx context.Context, a *bootstrap.App, inv invocation) (setup.Result, error) {
@@ -244,11 +290,15 @@ func terminalStateOf(verdict error, readiness status.Readiness) status.TerminalS
 
 // initReportOf assembles what init did and how the repository ended up.
 func initReportOf(a *bootstrap.App, verdict error, elapsed time.Duration) status.InitReport {
+	return setupReportOf("init", a, verdict, elapsed)
+}
+
+func setupReportOf(command string, a *bootstrap.App, verdict error, elapsed time.Duration) status.InitReport {
 	result := a.InitResult()
 	current := status.Build(a.Subject(), elapsed)
 
 	report := status.InitReport{
-		Command:              "init",
+		Command:              command,
 		TerminalState:        status.TerminalReady,
 		ConfigPath:           result.ConfigPath,
 		ConfigCreated:        result.ConfigCreated,

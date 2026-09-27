@@ -1,12 +1,12 @@
 #!/bin/sh
-# Test-gate matrix (MR-019 AC-03.3): the nine test categories as explicit,
-# hand-re-runnable commands. Each category runs verbose exactly once and
-# asserts at least one top-level PASS in its own output — an empty cut
-# passing silently would be the exact lie the milestone gates exist to
-# prevent. (`go test -list` ignores `-run` when counting, so counting is
-# done on the run output, never on a listing.)
+# Test-gate matrix (MR-019 AC-03.3): ten test categories as explicit,
+# hand-re-runnable commands. Each Go category runs verbose exactly once and
+# asserts at least one top-level PASS; the install category runs its own
+# hostile-filesystem assertions. (`go test -list` ignores `-run` when
+# counting, so counting is done on the run output, never on a listing.)
 #
-# Usage: ./scripts/gate.sh (or `make gate`). Needs go and git only.
+# Usage: ./scripts/gate.sh (or `make gate`). Needs Go, Git, make, and
+# Linux/coreutils (including realpath, sha256sum, and mv -T).
 set -eu
 
 run() {
@@ -31,6 +31,19 @@ run() {
 	echo "gate: $name: $count passed"
 	rm -f "$out"
 	trap - EXIT
+}
+
+run_step() {
+	name="$1"
+	shift
+	echo "gate: running $name: $*"
+	if "$@"; then
+		echo "gate: $name: passed"
+	else
+		rc=$?
+		echo "gate: category '$name' FAILED (exit $rc)" >&2
+		exit "$rc"
+	fi
 }
 
 # 1. unit: the whole fast suite.
@@ -68,4 +81,7 @@ run sqlite-concurrency -run 'Concurren|Busy|Idempoten|Revision' \
 run end-to-end -run 'EndToEnd|E2E' ./...
 run end-to-end-smoke -tags smoke -count=1 -timeout 300s ./cmd/...
 
-echo "gate: all nine categories green"
+# 10. install boundary: hostile filesystem targets plus atomic replacement.
+run_step install-boundary ./scripts/test-install.sh
+
+echo "gate: all ten categories green"

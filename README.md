@@ -27,6 +27,7 @@ Normal human use is four commands:
 
 ```bash
 mindrail init       # once per repository/worktree
+mindrail update     # refresh an already-initialized worktree after binary replacement
 mindrail status     # readiness summary
 mindrail doctor     # detailed, read-only diagnosis
 mindrail verify     # verify staged changes locally
@@ -74,12 +75,63 @@ Requirements: Go 1.27.x, Git, and a C toolchain.
 
 ```bash
 make build      # -> bin/mindrail
+make install    # -> $HOME/.local/bin/mindrail (atomic replacement)
 make check      # format check, go vet, tests
 make race       # race detector
 ```
 
 For a complete local release gate, use `make verify`. See `make help` for all
-targets.
+targets. `PREFIX`, `BINDIR`, and packaging `DESTDIR` are configurable, for example
+`make install PREFIX=/opt/mindrail` or
+`make install DESTDIR=/tmp/package-root BINDIR=/usr/bin`. On the verified
+Linux target, installation refuses destination symlinks/directories and any
+resolved `DESTDIR` escape; regular-file replacement remains an atomic
+same-directory rename.
+
+Mindrail has no network self-update channel. To update a source installation,
+update this source checkout, run its checks, replace the binary, and then refresh
+each already-initialized repository's managed files and migrations:
+
+```bash
+make check
+make install
+cd /path/to/initialized/repository
+mindrail update
+```
+
+Binary replacement and `mindrail update` are separate: the first installs the new
+program; the second updates one existing worktree without replacing user-owned
+`AGENTS.md` text or hooks.
+
+## Optional JEV routing
+
+JEV advice is opt-in. Leave `TYPESAFE_API_KEY` unset for the normal routing flow.
+When enabling it, read the key from a password manager or OS keyring and inject it
+only into the environment of the process that launches the coding agent. Configure
+that trusted integration before launch; the key is environment-only and must not
+appear in stdin, shell examples, repository config, an `.env` file, command
+arguments, logs, or committed content.
+
+For an ambiguous tool, agent, model, or reasoning-effort choice, the agent can send
+the bounded routing request without including the key:
+
+```bash
+printf '%s\n' '{"goal":"select a search tool","tools":[{"id":"rg","description":"search repository text"}]}' |
+  mindrail agent route
+```
+
+The JSON requires a `goal` string, accepts optional `context` JSON, and requires one
+or more `tools`, `agents`, `models`, or `efforts` arrays. Each candidate contains
+exactly `id` and `description`. Send TypeSafe only minimal non-sensitive summaries
+and closed candidate descriptions—never raw secrets, logs, or source code.
+
+The installed binary carries the canonical adapter behind `mindrail agent route`;
+agents consume advice only when the top-level result is `ok` and every selection is
+accepted. Missing keys and all disabled/fallback/error results continue normally.
+Python 3 is needed only when this optional route is enabled. Desktop/GUI agents
+often do not inherit variables exported in a terminal; launch them from the
+prepared environment or configure the desktop session's trusted secret-injection
+mechanism.
 
 ## Storage model
 
