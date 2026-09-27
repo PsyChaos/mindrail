@@ -69,6 +69,46 @@ it, the spec quietly reshapes itself around whatever got built, and the audit be
 a mirror. State plainly in the final report that implementer/auditor separation was
 simulated rather than real.
 
+## Optional Jev routing advice
+
+Before an ambiguous choice among tools, agent roles, models, or reasoning-effort
+levels, check `TYPESAFE_API_KEY`: when it is non-blank, ask the repository's Jev
+adapter for advice; otherwise continue the existing selection flow. Use Jev only
+with closed, caller-supplied candidate sets; candidate identifiers and short
+descriptions must describe every selectable option. Known policy, availability,
+permissions, and other deterministic constraints narrow the candidates before Jev
+sees them.
+
+With the opt-in key present, send a bounded JSON request on standard input:
+
+```bash
+python .claude/skills/engineering-orchestrator/scripts/jev_route.py < request.json
+```
+
+The stdin object supplies the required string `goal`, optional JSON `context`, and
+any non-empty combination of the top-level candidate arrays `tools`, `agents`,
+`models`, and `efforts`. Each candidate is an object with `id` and `description`.
+Never put the API key in the request; the adapter reads it from the environment.
+
+Treat a `mode: "shadow"`, `advisory: true` response only as evidence. Routing
+acceptance is atomic: apply selections only when the top-level `status` is `"ok"`,
+every returned selection is marked `accepted: true`, and the advice is still valid
+for the current state. Any low-confidence or no-match selection makes the top-level
+status `"fallback"` and leaves all selections unaccepted, so continue the
+pre-existing selection flow.
+
+The disabled path (including a missing or whitespace-only key) and provider or
+response failures return typed JSON with exit status zero and continue normal flow;
+the no-key path makes no network request. Malformed, oversized, or otherwise
+contract-invalid local input instead returns typed fallback JSON with exit status 2.
+That is a caller error: fix the invocation before retrying rather than treating it
+as provider fallback.
+
+Jev cannot authorize an action, expand scope, change permissions, or override the
+Mindrail lifecycle, validation, or completion gate. It does not replace the coding
+agent's reasoning model. Record consequential host decisions through the normal
+Mindrail mechanisms, whether or not Jev advised them.
+
 ## Lifecycle
 
 | Stage | Phases | Reference |

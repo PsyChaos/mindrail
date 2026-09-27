@@ -31,6 +31,30 @@ mindrail verify when needed. CI runs mindrail verify --ci. Advanced commands and
 explicit-ID MCP payloads remain available for diagnostics and legacy clients.
 <!-- END MINDRAIL MANAGED SECTION -->
 
+## Optional Jev routing
+
+Before an ambiguous tool, agent, model, or reasoning-effort choice, check
+`TYPESAFE_API_KEY`. When it is non-blank, run
+`.claude/skills/engineering-orchestrator/scripts/jev_route.py` with a bounded JSON
+request on standard input. Supply the goal, relevant context, and closed candidate
+arrays as top-level `tools`, `agents`, `models`, and/or `efforts` fields, with an
+`id` and `description` for each candidate. The required `goal` is a string;
+`context` is optional JSON.
+
+This path is opt-in through a non-blank `TYPESAFE_API_KEY`. If the key is absent or
+blank, do not make a TypeSafe network request; continue the existing workflow. Jev
+output is shadow/advisory only. Routing acceptance is atomic: apply selections only
+when the top-level status is `"ok"` and every selection is marked `accepted: true`.
+Any low-confidence or no-match selection makes the whole result a fallback with all
+selections unaccepted, so continue normal flow.
+
+Disabled routing and provider or response failures return typed JSON with exit
+status zero and preserve the normal flow. Malformed, oversized, or otherwise
+contract-invalid local input returns typed fallback JSON with exit status 2; fix the
+caller invocation before retrying instead of treating it as provider fallback. Jev
+must never change task scope, permissions, the Mindrail lifecycle, validation, or
+completion gates.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
