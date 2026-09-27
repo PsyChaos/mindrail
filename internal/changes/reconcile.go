@@ -40,6 +40,12 @@ func (s *Service) Reconcile(ctx context.Context, projectID, repoRoot, taskID, op
 	if err != nil {
 		return ReconcileResult{}, err
 	}
+	if s.automatic != nil {
+		entries, err = s.automaticEntries(ctx, taskID, entries)
+		if err != nil {
+			return ReconcileResult{}, err
+		}
+	}
 	hints, err := s.renameHints(ctx, runner, repoRoot)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -59,6 +65,11 @@ func (s *Service) Reconcile(ctx context.Context, projectID, repoRoot, taskID, op
 		content, deleted := readScopeContent(file)
 		fileHints := fileHintsFor(hints, file.Path)
 		if err := s.SyncFileSymbols(ctx, projectID, repoRoot, change.ID, file.Path, content, deleted, fileHints, ViaReconcile, units); err != nil {
+			return ReconcileResult{}, err
+		}
+	}
+	if s.automatic != nil {
+		if err := s.restoreAutomaticFiles(ctx, projectID, change.ID, entries, units); err != nil {
 			return ReconcileResult{}, err
 		}
 	}

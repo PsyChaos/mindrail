@@ -93,11 +93,11 @@ func corruptState(err error) error {
 	return IndexStateCorrupt(err)
 }
 
-func schemaBehind(applied int64) error {
+func schemaBehindVersion(applied, required int64) error {
 	return app.NewError(app.CodeMigrationFailed, app.KindFailed,
-		fmt.Sprintf("Schema is behind this binary: the runtime database has applied migrations up to %d and the index store needs %d", applied, TableSchemaVersion),
+		fmt.Sprintf("Schema is behind this binary: the runtime database has applied migrations up to %d and the index store needs %d", applied, required),
 		"Structural index commands cannot run; nothing was read and nothing was written.",
 		"Run `mindrail init` to apply the pending migrations, then re-run the command.").
 		WithMetadata("applied_version", strconv.FormatInt(applied, 10)).
-		WithMetadata("required_version", strconv.FormatInt(TableSchemaVersion, 10))
+		WithMetadata("required_version", strconv.FormatInt(required, 10))
 }

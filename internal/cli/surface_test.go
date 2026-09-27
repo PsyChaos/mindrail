@@ -13,7 +13,7 @@ import (
 // hook (frozen requirements, decision D-220); the list below is the
 // deliberation record, not an accident.
 func TestCommandSurfaceUnchangedIn01(t *testing.T) {
-	want := []string{"checkpoint", "doctor", "hook", "init", "knowledge", "lease", "session", "status", "task", "verify", "version"}
+	want := []string{"checkpoint", "doctor", "hook", "init", "knowledge", "lease", "mcp", "session", "status", "task", "verify", "version"}
 	var got []string
 	for _, cmd := range cli.NewRoot().Commands() {
 		got = append(got, cmd.Name())

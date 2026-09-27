@@ -807,12 +807,11 @@ func verifyLedger(set []migration.Migration, ledger []migration.Applied) error {
 // validateKnowledge is step 6. The loader performs spec §95 steps 1-4; steps
 // 5-11 run here, once, immediately afterwards (decision D-42).
 //
-// This is the only place in the process that calls validate.Check. Not inside a
-// doctor check body: doctor checks are pure functions of an already-resolved
-// Subject that open nothing and create nothing, and schema.NewValidator returns
-// an error a doctor.Result has no honest way to express. Not in status.Build
-// either, for the same reason plus decision D-41 — two layers computing the same
-// verdict is two layers that can disagree about one store.
+// This is the reporting path's sole validate.Check call. Doctor checks and
+// status.Build read the resolved Subject without opening or validating files
+// themselves (D-41/D-42). The separate completion safety boundary reloads and
+// validates current knowledge before deciding, rather than trusting this
+// potentially stale startup observation in a long-lived process (REQ-003).
 func (a *App) validateKnowledge(ctx context.Context) error {
 	a.record(StepValidateKnowledge)
 

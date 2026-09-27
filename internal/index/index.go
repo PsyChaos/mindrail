@@ -20,3 +20,7 @@ package index
 // nothing", from the migration ledger, which is what the migrator itself is
 // answerable for (decision D-80's store, MR-003's pattern).
 const TableSchemaVersion = 5
+
+// Generation-aware file mutations require the additive removal tombstones;
+// existing structural reads retain their original schema floor.
+const generationSchemaVersion = 10

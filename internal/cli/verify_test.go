@@ -40,18 +40,17 @@ func gitStageFile(t *testing.T, repo, rel string) {
 func gitCommitFile(t *testing.T, repo, rel string) {
 	t.Helper()
 	gitStageFile(t, repo, rel)
-	full := []string{"-C", repo, "commit", "--quiet", "-m", "base"}
+	full := []string{"-C", repo, "commit", "--no-verify", "--quiet", "-m", "base"}
 	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", full, err, out)
 	}
 }
 
-// TestVerifyBareRefusesMode pins the no-silent-default rule: verify
-// without --staged refuses with usage and a next action.
-func TestVerifyBareRefusesMode(t *testing.T) {
+// Local verification defaults to the existing staged path.
+func TestVerifyBareDefaultsStaged(t *testing.T) {
 	repo := newInitializedRepo(t)
 	got := run(t, repo, "verify", "--json")
-	got.requireExit(t, app.ExitUsage)
+	got.requireExit(t, app.ExitSuccess)
 }
 
 // TestVerifyExtraArgsRefused pins exact invocation: stray positionals

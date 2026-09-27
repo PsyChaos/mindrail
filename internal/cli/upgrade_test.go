@@ -219,8 +219,8 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 8 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000008, want 8", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 10 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000010, want 10", data.Runtime.SchemaVersion)
 	}
 
 	listed := run(t, repo, "task", "list", "--json")
@@ -264,8 +264,8 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 8 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000008, want 8", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 10 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000010, want 10", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -291,6 +291,7 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 func downgradeToSchemaFour(t *testing.T, repo string) {
 	t.Helper()
 
+	dropGuardBaselines(t, repo)
 	execOnRuntimeDB(t, repo,
 		`DROP TABLE IF EXISTS evidence`,
 		`DELETE FROM schema_migrations WHERE version = 8`,
@@ -349,8 +350,8 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 8 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000008, want 8", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 10 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000010, want 10", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -376,6 +377,7 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 func downgradeToSchemaFive(t *testing.T, repo string) {
 	t.Helper()
 
+	dropGuardBaselines(t, repo)
 	execOnRuntimeDB(t, repo,
 		`DROP INDEX IF EXISTS idx_changes_task_unique`,
 		`DROP INDEX IF EXISTS idx_changes_operation`,
@@ -419,8 +421,8 @@ func TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 8 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000007 and 000008, want 8", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 10 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000007 through 000010, want 10", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -458,8 +460,8 @@ func TestAnUpgradedDatabaseGainsEvidenceWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 8 {
-		t.Errorf("schema_version = %d after init re-applied migration 000008, want 8", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 10 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000008 through 000010, want 10", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -479,6 +481,7 @@ func TestAnUpgradedDatabaseGainsEvidenceWithoutLosingChanges(t *testing.T) {
 func downgradeToSchemaSeven(t *testing.T, repo string) {
 	t.Helper()
 
+	dropGuardBaselines(t, repo)
 	execOnRuntimeDB(t, repo,
 		`DROP TABLE IF EXISTS evidence`,
 		`DELETE FROM schema_migrations WHERE version = 8`)
@@ -489,6 +492,7 @@ func downgradeToSchemaSeven(t *testing.T, repo string) {
 func downgradeToSchemaSix(t *testing.T, repo string) {
 	t.Helper()
 
+	dropGuardBaselines(t, repo)
 	execOnRuntimeDB(t, repo,
 		`DROP TABLE IF EXISTS evidence`,
 		`DELETE FROM schema_migrations WHERE version = 8`,
@@ -502,6 +506,7 @@ func downgradeToSchemaSix(t *testing.T, repo string) {
 func downgradeToSchemaThree(t *testing.T, repo string) {
 	t.Helper()
 
+	dropGuardBaselines(t, repo)
 	execOnRuntimeDB(t, repo,
 		`DROP TABLE IF EXISTS evidence`,
 		`DELETE FROM schema_migrations WHERE version = 8`,
@@ -534,6 +539,18 @@ func downgradeToSchemaThree(t *testing.T, repo string) {
 		`DROP TABLE IF EXISTS project_units`,
 		`DELETE FROM schema_migrations WHERE version = 5`,
 		`DELETE FROM schema_migrations WHERE version = 4`)
+}
+
+// dropGuardBaselines restores a fixture to the schema before 000009. Every
+// older-schema fixture calls it before removing its own later migrations, so
+// the migration ledger and the actual object set stay coherent.
+func dropGuardBaselines(t *testing.T, repo string) {
+	t.Helper()
+	execOnRuntimeDB(t, repo,
+		`DROP TABLE IF EXISTS file_index_generations`,
+		`DELETE FROM schema_migrations WHERE version = 10`,
+		`DROP TABLE IF EXISTS guard_baselines`,
+		`DELETE FROM schema_migrations WHERE version = 9`)
 }
 
 // downgradeToSchemaOne removes everything MR-003's and MR-004's migrations

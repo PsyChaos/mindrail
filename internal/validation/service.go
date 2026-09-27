@@ -3,9 +3,11 @@ package validation
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 
 	"github.com/PsyChaos/mindrail/internal/config"
+	"github.com/PsyChaos/mindrail/internal/identity"
 )
 
 // Service composes the runner, redaction, snapshot and store into the
@@ -45,16 +47,16 @@ func (s *Service) RunProfile(ctx context.Context, name string, profile config.Va
 	if err != nil {
 		return nil, err
 	}
+	runID := identity.NewID("VRN")
 	var out []Evidence
 	for i, argv := range profile.Commands {
 		if len(argv) == 0 {
 			return nil, invalidInput("profile run needs argv for every command")
 		}
 		result := s.runner.Run(ctx, argv)
-		provenance, err := json.Marshal(map[string]any{
-			"profile":       name,
-			"command_index": i,
-			"scope":         snapshot.Scope,
+		provenance, err := json.Marshal(evidenceProvenance{
+			Profile: name, RunID: runID, CommandIndex: i, CommandCount: len(profile.Commands),
+			ScopePaths: profile.Paths, Scope: snapshot.Scope,
 		})
 		if err != nil {
 			return nil, invalidInput("profile run provenance is not representable")
@@ -68,7 +70,27 @@ func (s *Service) RunProfile(ctx context.Context, name string, profile config.Va
 		if err != nil {
 			return nil, err
 		}
+		recordedProvenance, ok := readProvenance(record)
+		if !ok || recordedProvenance.Profile != name || recordedProvenance.CommandCount != len(profile.Commands) ||
+			recordedProvenance.CommandIndex != i || !slices.Equal(recordedProvenance.ScopePaths, profile.Paths) ||
+			!slices.Equal(recordedProvenance.Scope, snapshot.Scope) {
+			return nil, provenanceConflict(commandOp)
+		}
+		if i == 0 && commandOp != "" {
+			// A durable first command owns the logical run identity. Reusing it
+			// lets a retry fill rows that were never recorded after interruption.
+			runID = recordedProvenance.RunID
+		} else if recordedProvenance.RunID != runID {
+			return nil, provenanceConflict(commandOp)
+		}
 		out = append(out, record)
 	}
 	return out, nil
+}
+
+func provenanceConflict(operationID string) error {
+	if operationID != "" {
+		return operationConflict(operationID)
+	}
+	return invalidInput("recorded evidence provenance does not match the profile run")
 }

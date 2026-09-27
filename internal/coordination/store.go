@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -346,9 +347,10 @@ func (s *Store) OpenTask(ctx context.Context, projectID string, by Attribution, 
 // expired tenure the move took over, when it did (decision D-67: a takeover is
 // reported, never silent).
 type Move struct {
-	Task       Task   `json:"task"`
-	Lease      *Lease `json:"lease"`
-	Superseded *Lease `json:"superseded"`
+	Task             Task     `json:"task"`
+	Lease            *Lease   `json:"lease"`
+	Superseded       *Lease   `json:"superseded"`
+	RequiredProfiles []string `json:"required_profiles,omitempty"`
 }
 
 // Transition moves a task through decision D-55's table with no expectation
@@ -388,6 +390,43 @@ func (s *Store) Transition(ctx context.Context, taskID string, by Attribution, t
 // against the revision read in this transaction; under BEGIN IMMEDIATE that
 // guard cannot fail, so no row affected is a defect and not a second conflict.
 func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attribution, to State, reason string, expectRevision int64) (Move, Write, error) {
+	return s.transitionExpecting(ctx, taskID, by, to, reason, expectRevision, "task state", nil)
+}
+
+// CompleteExpecting owns the one gated terminal transition. Its operation
+// identity includes the canonical required profile set, so a lost-response
+// retry may replay while a changed gate request cannot impersonate it.
+func (s *Store) CompleteExpecting(ctx context.Context, taskID string, by Attribution, expectRevision int64, required []string) (Move, Write, error) {
+	canonical, err := CanonicalRequiredProfiles(required)
+	if err != nil {
+		return Move{}, Write{}, err
+	}
+	return s.transitionExpecting(ctx, taskID, by, StateCompleted, "", expectRevision, "task complete", canonical)
+}
+
+// CanonicalRequiredProfiles preserves profile spelling (including Unicode) but
+// removes duplicate/order-only differences. Blank names are never a gate input.
+func CanonicalRequiredProfiles(required []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(required))
+	profiles := make([]string, 0, len(required))
+	for _, profile := range required {
+		if strings.TrimSpace(profile) == "" {
+			return nil, app.NewError(app.CodeCommandLineInvalid, app.KindUsage,
+				"a required validation profile cannot be empty or blank",
+				"Completion was not evaluated and the task and lease were left unchanged.",
+				"Pass a non-blank profile name after --required, or omit --required when no profile is required.")
+		}
+		if _, exists := seen[profile]; exists {
+			continue
+		}
+		seen[profile] = struct{}{}
+		profiles = append(profiles, profile)
+	}
+	slices.Sort(profiles)
+	return profiles, nil
+}
+
+func (s *Store) transitionExpecting(ctx context.Context, taskID string, by Attribution, to State, reason string, expectRevision int64, command string, required []string) (Move, Write, error) {
 	reason = strings.TrimSpace(reason)
 	if expectRevision < 0 {
 		// Revisions start at 1 and zero means no expectation; a negative one
@@ -405,13 +444,7 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 	if err := s.refuseInvalidOperation(); err != nil {
 		return Move{}, Write{}, err
 	}
-	hash, err := requestHash("task state", struct {
-		Task   string `json:"task"`
-		By     string `json:"by"`
-		To     State  `json:"to"`
-		Reason string `json:"reason"`
-		Expect int64  `json:"expect_revision"`
-	}{taskID, attributionKey(by), to, reason, expectRevision})
+	hash, err := transitionRequestHash(command, taskID, by, to, reason, expectRevision, required)
 	if err != nil {
 		return Move{}, Write{}, err
 	}
@@ -421,7 +454,7 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 		write Write
 	)
 	stats, err := storage.InTxMeasured(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
-		if replayed, found, err := s.replay(ctx, tx, "task state", hash, &move); err != nil {
+		if replayed, found, err := s.replay(ctx, tx, command, hash, &move); err != nil {
 			return err
 		} else if found {
 			write = replayed
@@ -531,7 +564,10 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 		}
 
 		move.Task = updated
-		return s.record(ctx, tx, "task state", hash, write, move, now)
+		if command == "task complete" {
+			move.RequiredProfiles = append([]string(nil), required...)
+		}
+		return s.record(ctx, tx, command, hash, write, move, now)
 	})
 	if err != nil {
 		return Move{}, Write{}, s.adopt(ctx, "the task state", taskID, err)
@@ -539,6 +575,26 @@ func (s *Store) TransitionExpecting(ctx context.Context, taskID string, by Attri
 	write.Timing = stats
 
 	return move, write, nil
+}
+
+func transitionRequestHash(command, taskID string, by Attribution, to State, reason string, expectRevision int64, required []string) (string, error) {
+	if command == "task complete" {
+		return requestHash(command, struct {
+			Task     string   `json:"task"`
+			By       string   `json:"by"`
+			To       State    `json:"to"`
+			Reason   string   `json:"reason"`
+			Expect   int64    `json:"expect_revision"`
+			Required []string `json:"required"`
+		}{taskID, attributionKey(by), to, reason, expectRevision, required})
+	}
+	return requestHash(command, struct {
+		Task   string `json:"task"`
+		By     string `json:"by"`
+		To     State  `json:"to"`
+		Reason string `json:"reason"`
+		Expect int64  `json:"expect_revision"`
+	}{taskID, attributionKey(by), to, reason, expectRevision})
 }
 
 // closeReason is the reason a release path writes on the tenure it closes: the

@@ -465,7 +465,11 @@ func TestStoreGatesHealthyOlderSchemaBeforeAnyIndexOperation(t *testing.T) {
 	for _, tc := range checks {
 		t.Run(tc.name, func(t *testing.T) {
 			payload, ok := app.PayloadOf(tc.call())
-			if !ok || payload.Code != app.CodeMigrationFailed || payload.Metadata["applied_version"] != "3" || payload.Metadata["required_version"] != "5" || len(payload.NextAction) == 0 || payload.NextAction[0] != "Run `mindrail init` to apply the pending migrations, then re-run the command." {
+			required := "5"
+			if tc.name == "upsert file" {
+				required = "10" // Registration must preserve retired generations.
+			}
+			if !ok || payload.Code != app.CodeMigrationFailed || payload.Metadata["applied_version"] != "3" || payload.Metadata["required_version"] != required || len(payload.NextAction) == 0 || payload.NextAction[0] != "Run `mindrail init` to apply the pending migrations, then re-run the command." {
 				t.Fatalf("v3 schema gate = %+v, ok=%t", payload, ok)
 			}
 		})

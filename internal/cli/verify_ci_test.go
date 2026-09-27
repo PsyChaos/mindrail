@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -170,6 +171,9 @@ func TestVerifyCIParityWithStaged(t *testing.T) {
 	}
 	if got := run(t, repo, "init"); got.code != app.ExitSuccess {
 		t.Fatalf("re-init exited %d: %v\n%s", got.code, got.err, got.stdout)
+	}
+	if err := os.Remove(filepath.Join(repo, "AGENTS.md")); err != nil {
+		t.Fatal(err)
 	}
 
 	code, ranged := ciDenials(t, repo, "verify", "--ci", "--base", base, "--json")
@@ -504,7 +508,7 @@ func TestVerifyCIKnowledgeDirtRefuses(t *testing.T) {
 		".mindrail/knowledge/decisions/DEC-0001.json").CombinedOutput(); err != nil {
 		t.Fatalf("add knowledge: %v: %s", err, out)
 	}
-	if out, err := exec.Command("git", "-C", repo, "commit", "--quiet", "-m", "fatal knowledge").CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "-C", repo, "commit", "--no-verify", "--quiet", "-m", "fatal knowledge").CombinedOutput(); err != nil {
 		t.Fatalf("commit knowledge: %v: %s", err, out)
 	}
 	base := gitRev(t, repo, "HEAD~1")

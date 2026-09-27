@@ -140,7 +140,7 @@ func (s *Store) RegisterFileCAS(ctx context.Context, expected FileStateObservati
 	if unitID == "" || !isCleanAbsolutePath(path) || language == "" || !validContentHash(targetHash) || expected.token.path != path || expected.Exists != expected.token.exists {
 		return FileStateObservation{}, false, invalidInput("registration needs a unit, path, language, SHA-256 hash and path-bound observation")
 	}
-	if err := s.requireSchema(ctx); err != nil {
+	if err := s.requireSchemaVersion(ctx, generationSchemaVersion); err != nil {
 		return FileStateObservation{}, false, err
 	}
 	var observed FileStateObservation
@@ -172,7 +172,7 @@ func (s *Store) RegisterFileCAS(ctx context.Context, expected FileStateObservati
 		} else {
 			_, err = tx.ExecContext(ctx, `INSERT INTO file_index_state
 				(path, unit_id, language, content_hash, state, attempts)
-				VALUES (?, ?, ?, ?, 'pending', 1)`, path, unitID, language, targetHash)
+				VALUES (?, ?, ?, ?, 'pending', COALESCE((SELECT generation + 1 FROM file_index_generations WHERE path = ?), 1))`, path, unitID, language, targetHash, path)
 		}
 		if err != nil {
 			return err
@@ -247,7 +247,19 @@ func (s *Store) InvalidateFileCAS(ctx context.Context, completed FileStateObserv
 	if !completed.token.exists || !isCleanAbsolutePath(completed.token.path) || completed.token.state != StateIndexed && completed.token.state != StateFailed {
 		return FileStateObservation{}, false, invalidInput("invalidation needs an indexed or failed completion token")
 	}
-	if err := s.requireSchema(ctx); err != nil {
+	return s.RemoveFileCAS(ctx, completed)
+}
+
+// RemoveFileCAS retires an exact observed registration and all its live facts.
+// Unlike completion invalidation, explicit removal also supports a canceled
+// pending registration when the file has returned to its absent baseline.
+// A stale observation never removes a newer generation; identities stay durable.
+// The caller must establish that the filesystem path should no longer be indexed.
+func (s *Store) RemoveFileCAS(ctx context.Context, completed FileStateObservation) (FileStateObservation, bool, error) {
+	if !completed.token.exists || !completed.Exists || !isCleanAbsolutePath(completed.token.path) {
+		return FileStateObservation{}, false, invalidInput("removal needs an existing path-bound observation")
+	}
+	if err := s.requireSchemaVersion(ctx, generationSchemaVersion); err != nil {
 		return FileStateObservation{}, false, err
 	}
 	var observed FileStateObservation
@@ -259,6 +271,12 @@ func (s *Store) InvalidateFileCAS(ctx context.Context, completed FileStateObserv
 		}
 		if current != completed.token {
 			observed, err = current.observation()
+			return err
+		}
+		// Retain the retired generation in the same transaction as deletion.
+		// Recreating identical pending bytes must not recreate the old token.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO file_index_generations(path,generation) VALUES(?,?)
+			ON CONFLICT(path) DO UPDATE SET generation=MAX(generation,excluded.generation)`, current.path, current.attempts); err != nil {
 			return err
 		}
 		for _, table := range []string{"symbol_references", "symbol_imports", "symbols", "file_index_state"} {

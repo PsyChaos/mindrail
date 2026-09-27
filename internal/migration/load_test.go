@@ -96,14 +96,16 @@ func TestLoadEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 // makes the assertion below say *which* migration overreached rather than
 // only that the union grew.
 var tablesPerMilestone = map[int64][]string{
-	1: {"projects", "workspaces"},                                                              // MR-001
-	2: {"sessions", "tasks", "checkpoints"},                                                    // MR-003
-	3: {"leases", "operations"},                                                                // MR-004; revision on tasks is an ALTER, not a table
-	4: {"project_units", "file_index_state", "symbols", "symbol_imports", "symbol_references"}, // MR-005
-	5: {"symbol_identities", "invariant_symbol_bindings", "symbol_identity_ambiguities"},       // MR-006; symbols.symbol_uid is an ALTER, not a table
-	6: {"changes", "change_files", "change_symbols", "change_baselines", "change_operations"},  // MR-007
-	7: {"scope_attributions"},                                                                  // MR-008
-	8: {"evidence"},                                                                            // MR-010
+	1:  {"projects", "workspaces"},                                                              // MR-001
+	2:  {"sessions", "tasks", "checkpoints"},                                                    // MR-003
+	3:  {"leases", "operations"},                                                                // MR-004; revision on tasks is an ALTER, not a table
+	4:  {"project_units", "file_index_state", "symbols", "symbol_imports", "symbol_references"}, // MR-005
+	5:  {"symbol_identities", "invariant_symbol_bindings", "symbol_identity_ambiguities"},       // MR-006; symbols.symbol_uid is an ALTER, not a table
+	6:  {"changes", "change_files", "change_symbols", "change_baselines", "change_operations"},  // MR-007
+	7:  {"scope_attributions"},                                                                  // MR-008
+	8:  {"evidence"},                                                                            // MR-010
+	9:  {"guard_baselines"},                                                                     // 2026-09-26 remediation: durable verification-test mappings
+	10: {"file_index_generations"},                                                              // Automatic restoration: generations survive file removal.
 }
 
 // TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.

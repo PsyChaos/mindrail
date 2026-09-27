@@ -279,7 +279,7 @@ func (s *Store) UpsertFileState(ctx context.Context, state FileIndexState) error
 	if state.UnitID == "" || !filepath.IsAbs(state.Path) || filepath.Clean(state.Path) != state.Path {
 		return invalidInput("file registration needs a unit ID and a clean absolute path")
 	}
-	if err := s.requireSchema(ctx); err != nil {
+	if err := s.requireSchemaVersion(ctx, generationSchemaVersion); err != nil {
 		return err
 	}
 	err := storage.InTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
@@ -302,8 +302,8 @@ func (s *Store) UpsertFileState(ctx context.Context, state FileIndexState) error
 			}
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO file_index_state
-			(path, unit_id, language, content_hash, state)
-			VALUES (?, ?, ?, NULLIF(?, ''), ?)
+			(path, unit_id, language, content_hash, state, attempts)
+			VALUES (?, ?, ?, NULLIF(?, ''), ?, COALESCE((SELECT generation + 1 FROM file_index_generations WHERE path = ?), 0))
 			ON CONFLICT(path) DO UPDATE SET
 			  unit_id = excluded.unit_id,
 			  language = excluded.language,
@@ -316,7 +316,7 @@ func (s *Store) UpsertFileState(ctx context.Context, state FileIndexState) error
 			   OR (excluded.state = 'unsupported' AND file_index_state.state <> 'unsupported')
 			   OR (excluded.state = 'pending' AND excluded.content_hash IS NOT NULL
 			       AND (file_index_state.content_hash IS NULL OR file_index_state.content_hash <> excluded.content_hash))`,
-			state.Path, state.UnitID, state.Language, state.ContentHash, state.State)
+			state.Path, state.UnitID, state.Language, state.ContentHash, state.State, state.Path)
 		return err
 	})
 	if err != nil {
@@ -683,6 +683,10 @@ func resolveUniqueSymbol(ctx context.Context, tx *sql.Tx, unitID, logicalKey str
 // row or fact. The store may survive `mindrail init`, so this cannot be cached
 // at construction: a v3 database can become v4 while this Store is live.
 func (s *Store) requireSchema(ctx context.Context) error {
+	return s.requireSchemaVersion(ctx, TableSchemaVersion)
+}
+
+func (s *Store) requireSchemaVersion(ctx context.Context, required int64) error {
 	var applied sql.NullInt64
 	if err := s.db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&applied); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -693,12 +697,12 @@ func (s *Store) requireSchema(ctx context.Context) error {
 		// table without its ledger is damage that init cannot repair.
 		var tables int
 		if probeErr := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); probeErr == nil && tables == 0 {
-			return schemaBehind(0)
+			return schemaBehindVersion(0, required)
 		}
 		return corruptState(err)
 	}
-	if applied.Int64 < TableSchemaVersion {
-		return schemaBehind(applied.Int64)
+	if applied.Int64 < required {
+		return schemaBehindVersion(applied.Int64, required)
 	}
 	return nil
 }

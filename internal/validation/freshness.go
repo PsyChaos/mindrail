@@ -2,12 +2,9 @@ package validation
 
 import (
 	"encoding/json"
-	"io/fs"
-	"os"
 	"path/filepath"
+	"slices"
 	"sort"
-	"strconv"
-	"strings"
 )
 
 // Freshness statuses. Current means the scope re-hashes equal; anything
@@ -18,10 +15,9 @@ const (
 	FreshStale   = "stale"
 )
 
-// Verdict is one evidence row's freshness: the stored hash, the recomputed
-// hash (empty when the scope could not hash), and the reason in plain
-// words. Verdicts are computed on every check and stored nowhere
-// (decision D-165).
+// Verdict is one evidence row's usability: scope freshness, command success,
+// complete-run membership, the stored/recomputed hashes, and a plain reason.
+// Verdicts are computed on every check and stored nowhere (decision D-165).
 type Verdict struct {
 	EvidenceID   string
 	Profile      string
@@ -38,21 +34,22 @@ type ReRunItem struct {
 	Reason  string
 }
 
-// Coverage answers the required-evidence question: which required profiles
-// hold ≥1 current row, and what to re-run. The re-run list unions stale
-// rows' profiles with uncovered required profiles (decision D-167).
+// Coverage answers the required-evidence question: which required profiles'
+// latest runs are complete, wholly successful, and current, and what to re-run.
+// The re-run list unions stale rows' profiles with uncovered required profiles
+// (decision D-167).
 type Coverage struct {
 	Required  []string
 	Satisfied map[string]bool
 	ReRun     []ReRunItem
 }
 
-// Check evaluates freshness for stored rows against the live tree under
-// root, then required coverage. Rows arrive as plain values; no database
-// is touched, so read-only is structural — there is no write path to
-// misuse. Scope comes from each row's provenance JSON, hashed with the
-// same core as SnapshotScope; scope escaping root, missing or unreadable
-// files, and unparseable provenance all fail safe to stale.
+// Check evaluates freshness and complete-run success for stored rows against
+// the live tree under root, then required coverage. Rows arrive as plain
+// values; no database is touched, so read-only is structural. Declarative
+// scope paths come from provenance and are re-enumerated through SnapshotScope;
+// malformed/legacy provenance, incomplete runs, failed commands, scope escapes
+// and unreadable files all fail safe to stale.
 func Check(root string, rows []Evidence, required []string) (verdicts []Verdict, coverage Coverage, err error) {
 	root = filepath.Clean(root)
 	if root == "" || !filepath.IsAbs(root) {
@@ -65,35 +62,94 @@ func Check(root string, rows []Evidence, required []string) (verdicts []Verdict,
 			rerun[profile] = reason
 		}
 	}
+	type runGroup struct {
+		expected      int
+		scopePaths    []string
+		snapshotHash  string
+		positions     []int
+		commandSeen   map[int]bool
+		commandRows   map[int]string
+		metadataValid bool
+		recency       string
+	}
+	groups := map[string]*runGroup{}
+	latest := map[string]*runGroup{}
 	for _, row := range rows {
 		verdict := Verdict{EvidenceID: row.ID, Profile: row.Profile, SnapshotHash: row.SnapshotHash}
-		scope, ok := provenanceScope(row.Provenance)
+		provenance, ok := readProvenance(row)
 		if !ok {
 			verdict.Status = FreshStale
-			verdict.Reason = "provenance scope unreadable"
-		} else if current, hashErr := rehashScope(root, scope); hashErr != "" {
+			verdict.Reason = "provenance cannot prove run completeness and scope membership"
+		} else if current, hashErr := resnapshotScope(root, provenance.ScopePaths); hashErr != "" {
 			verdict.Status = FreshStale
 			verdict.Reason = hashErr
 			verdict.CurrentHash = current
 		} else {
 			verdict.CurrentHash = current
-			if current == row.SnapshotHash {
+			if row.Status != StatusPass || row.ExitCode != 0 {
+				verdict.Status = FreshStale
+				verdict.Reason = "validation command did not pass: " + row.Status
+			} else if current == row.SnapshotHash {
 				verdict.Status = FreshCurrent
-				verdict.Reason = "scope re-hashes equal over " + strconv.Itoa(len(scope)) + " files"
+				verdict.Reason = "declared scope re-hashes equal"
 			} else {
 				verdict.Status = FreshStale
 				verdict.Reason = "scope content differs from snapshot " + shortHash(row.SnapshotHash)
 			}
 		}
 		verdicts = append(verdicts, verdict)
+		position := len(verdicts) - 1
+		groupKey := row.Profile + "\x00invalid\x00" + row.ID
+		group := &runGroup{positions: []int{position}, metadataValid: false, recency: row.ID}
+		if ok {
+			groupKey = row.Profile + "\x00" + provenance.RunID
+			group = groups[groupKey]
+			if group == nil {
+				group = &runGroup{
+					expected:   provenance.CommandCount,
+					scopePaths: append([]string(nil), provenance.ScopePaths...), snapshotHash: row.SnapshotHash,
+					commandSeen: map[int]bool{}, commandRows: map[int]string{}, metadataValid: true,
+				}
+			}
+			if group.expected != provenance.CommandCount || group.snapshotHash != row.SnapshotHash ||
+				!slices.Equal(group.scopePaths, provenance.ScopePaths) ||
+				(group.commandSeen[provenance.CommandIndex] && group.commandRows[provenance.CommandIndex] != row.ID) {
+				group.metadataValid = false
+			}
+			group.commandSeen[provenance.CommandIndex] = true
+			group.commandRows[provenance.CommandIndex] = row.ID
+			group.positions = append(group.positions, position)
+			if row.ID > group.recency {
+				group.recency = row.ID
+			}
+		}
+		groups[groupKey] = group
+		if current := latest[row.Profile]; current == nil || group.recency > current.recency {
+			latest[row.Profile] = group
+		}
 		if verdict.Status == FreshStale {
 			remember(row.Profile, verdict.Reason)
 		}
 	}
 	currentByProfile := map[string]bool{}
-	for _, verdict := range verdicts {
-		if verdict.Status == FreshCurrent {
-			currentByProfile[verdict.Profile] = true
+	for profile, group := range latest {
+		complete := group.metadataValid && len(group.commandSeen) == group.expected
+		for commandIndex := 0; complete && commandIndex < group.expected; commandIndex++ {
+			complete = group.commandSeen[commandIndex]
+		}
+		for _, position := range group.positions {
+			complete = complete && verdicts[position].Status == FreshCurrent
+		}
+		if complete {
+			currentByProfile[profile] = true
+			continue
+		}
+		for _, position := range group.positions {
+			if verdicts[position].Status == FreshCurrent {
+				verdicts[position].Status = FreshStale
+				verdicts[position].Reason = "validation run is incomplete"
+				remember(profile, verdicts[position].Reason)
+			}
 		}
 	}
 	for _, profile := range required {
@@ -116,53 +172,39 @@ func Check(root string, rows []Evidence, required []string) (verdicts []Verdict,
 	return verdicts, coverage, nil
 }
 
-// provenanceScope reads the scope array Record stored. Unknown keys are
-// ignored; scope must be a string array.
-func provenanceScope(provenance string) ([]string, bool) {
-	var decoded struct {
-		Scope []string `json:"scope"`
-	}
-	if err := json.Unmarshal([]byte(provenance), &decoded); err != nil {
-		return nil, false
-	}
-	if decoded.Scope == nil {
-		return nil, false
-	}
-	return decoded.Scope, true
+type evidenceProvenance struct {
+	Profile      string   `json:"profile"`
+	RunID        string   `json:"run_id"`
+	CommandIndex int      `json:"command_index"`
+	CommandCount int      `json:"command_count"`
+	ScopePaths   []string `json:"scope_paths"`
+	Scope        []string `json:"scope"`
 }
 
-// rehashScope re-hashes stored absolute scope paths under root with the
-// SnapshotScope core. It returns the hash and the stale reason (empty when
-// hashable). Escapes, missing files and unreadable content fail safe:
-// partial reads never report current. Duplicated paths dedupe here exactly
-// as SnapshotScope dedupes at record time.
-func rehashScope(root string, scope []string) (hash, reason string) {
-	var files []string
-	seen := map[string]bool{}
-	for _, path := range scope {
-		clean := filepath.Clean(path)
-		if clean != root && !strings.HasPrefix(clean, root+string(filepath.Separator)) {
-			return "", "scope escapes the root: " + path
-		}
-		info, err := os.Lstat(clean)
-		if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return "", "scope unreadable: " + path
-		}
-		if !seen[clean] {
-			seen[clean] = true
-			files = append(files, clean)
-		}
+// readProvenance requires both dimensions needed to trust an evidence row:
+// complete-run grouping and the declarative scope that can be re-enumerated.
+// Legacy rows do not carry them and therefore fail closed.
+func readProvenance(row Evidence) (evidenceProvenance, bool) {
+	var decoded evidenceProvenance
+	if err := json.Unmarshal([]byte(row.Provenance), &decoded); err != nil {
+		return evidenceProvenance{}, false
 	}
-	sort.Strings(files)
-	hash, err := hashFiles(root, files)
+	if decoded.Profile == "" || decoded.Profile != row.Profile || decoded.RunID == "" ||
+		decoded.CommandCount <= 0 || decoded.CommandIndex < 0 || decoded.CommandIndex >= decoded.CommandCount ||
+		len(decoded.ScopePaths) == 0 || decoded.Scope == nil {
+		return evidenceProvenance{}, false
+	}
+	return decoded, true
+}
+
+// resnapshotScope re-enumerates the declaration rather than trusting the
+// historical concrete file list. This is what makes additions detectable.
+func resnapshotScope(root string, scopePaths []string) (hash, reason string) {
+	snapshot, err := SnapshotScope(root, scopePaths)
 	if err != nil {
-		return "", "scope unreadable: " + err.Error()
+		return "", "declared scope unreadable"
 	}
-	// An empty scope hashes to the sha256 of nothing: equal only with a row
-	// recorded empty, so malformed rows (empty or garbage stored hash)
-	// still stale while legitimately empty scopes stay current. The
-	// equality in Check decides; no special case needed.
-	return hash, ""
+	return snapshot.Hash, ""
 }
 
 // shortHash names a hash without printing all 64 hexits into a reason.

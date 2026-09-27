@@ -1,8 +1,10 @@
 package coordination_test
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -125,6 +127,40 @@ func (f fixture) move(t *testing.T, taskID, sessionID string, to coordination.St
 		t.Fatalf("Transition(%s -> %s) = %v, want no error", taskID, to, err)
 	}
 	return move.Task
+}
+
+func TestCompleteOperationRetainsCanonicalRequiredProfilesOnReplay(t *testing.T) {
+	f := newFixture(t)
+	session := f.session(t)
+	task := f.task(t, session.ID, "complete with historical evidence")
+	for _, state := range []coordination.State{coordination.StateClaimed, coordination.StateInProgress, coordination.StateReadyToComplete} {
+		task = f.move(t, task.ID, session.ID, state, "")
+	}
+	by := coordination.NamedSession(session.ID)
+	completed, _, err := f.store.Idempotent("historical-complete").CompleteExpecting(t.Context(), task.ID, by, task.Revision, []string{"z", "a", "z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertProfiles := func(result coordination.Move) {
+		t.Helper()
+		body, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire struct {
+			Profiles []string `json:"required_profiles"`
+		}
+		if err := json.Unmarshal(body, &wire); err != nil || !reflect.DeepEqual(wire.Profiles, []string{"a", "z"}) {
+			t.Fatalf("completion lost historical profile set: %s %v", body, err)
+		}
+	}
+	assertProfiles(completed)
+	restarted := openFixture(t, f.path, newStepClock())
+	replayed, write, err := restarted.store.Idempotent("historical-complete").CompleteExpecting(t.Context(), task.ID, by, task.Revision, []string{"a", "z"})
+	if err != nil || !write.Replayed || replayed.Task.Revision != completed.Task.Revision {
+		t.Fatalf("completion replay: %+v %+v %v", replayed, write, err)
+	}
+	assertProfiles(replayed)
 }
 
 // pathTo is the shortest walk from OPEN to each state, written out rather than

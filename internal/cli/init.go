@@ -2,7 +2,11 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,15 +16,18 @@ import (
 	"github.com/PsyChaos/mindrail/internal/doctor"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/setup"
 	"github.com/PsyChaos/mindrail/internal/status"
 )
 
 const initLong = `Prepare this repository for Mindrail.
 
-init is the only command that writes. It creates .mindrail/config.toml and the
+init creates .mindrail/config.toml and the
 knowledge directories if they are absent, creates the runtime database under the
 Git common directory, applies the embedded migrations and registers this
-worktree. An existing configuration is never overwritten.`
+worktree. It updates Mindrail's managed AGENTS.md instructions and installs a
+pre-commit guard that chains existing hooks. User content and configuration are
+preserved; repeated setup is safe.`
 
 // newInitCommand builds `mindrail init`.
 func newInitCommand(o Options) *cobra.Command {
@@ -73,6 +80,10 @@ func runInit(cmd *cobra.Command, o Options) error {
 		_, checked := a.Diagnosis(ctx)
 
 		verdict := initVerdict(checked, flushErr)
+		var installed setup.Result
+		if verdict == nil {
+			installed, verdict = installAgentSetup(ctx, a, inv)
+		}
 		elapsed := time.Since(started)
 
 		report := initReportOf(a, verdict, elapsed)
@@ -80,9 +91,37 @@ func runInit(cmd *cobra.Command, o Options) error {
 			slog.String("terminal_state", string(report.TerminalState)),
 			slog.Duration("duration", elapsed))
 
-		return inv.emit(report, report.RenderHuman, a.Warnings(),
+		render := func(w io.Writer, color bool) error {
+			if verdict == nil {
+				if err := installed.RenderHuman(w); err != nil {
+					return err
+				}
+			}
+			return report.RenderHuman(w, color)
+		}
+		return inv.emit(report, render, a.Warnings(),
 			a.Config().Config.Output.Color, verdict)
 	})
+}
+
+func installAgentSetup(ctx context.Context, a *bootstrap.App, inv invocation) (setup.Result, error) {
+	runner := inv.runner()
+	if runner == nil {
+		runner = git.NewExecRunner()
+	}
+	root := a.Paths().WorktreeRoot
+	output, _, err := runner.Run(ctx, root, "rev-parse", "--git-path", "hooks/pre-commit")
+	if err != nil {
+		return setup.Result{}, err
+	}
+	hookPath := strings.TrimSuffix(string(output), "\n")
+	if hookPath == "" || strings.ContainsAny(hookPath, "\x00\r\n") {
+		return setup.Result{}, fmt.Errorf("Git returned an invalid pre-commit hook path")
+	}
+	if !filepath.IsAbs(hookPath) {
+		hookPath = filepath.Join(root, hookPath)
+	}
+	return setup.Install(root, a.Subject().Repo.CommonDir, filepath.Clean(hookPath))
 }
 
 // refuseUnrepresentableRepository stops `mindrail init --json` before it writes

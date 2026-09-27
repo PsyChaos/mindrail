@@ -132,7 +132,7 @@ func (s *Service) AttributeTask(ctx context.Context, taskID string) (TaskAttribu
 	if err != nil {
 		return TaskAttribution{}, err
 	}
-	all, err := s.store.ListTaskChanges(ctx)
+	all, err := s.store.activeTaskChanges(ctx, taskID)
 	if err != nil {
 		return TaskAttribution{}, err
 	}

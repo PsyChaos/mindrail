@@ -37,9 +37,10 @@ type SymbolChange struct {
 // identity following. It holds the index store and indexer beside its own
 // store; callers thread project and repository root explicitly.
 type Service struct {
-	store   *Store
-	indexes *index.Store
-	indexer *index.Indexer
+	store     *Store
+	indexes   *index.Store
+	indexer   *index.Indexer
+	automatic *AutomaticScope
 }
 
 // New builds a Service over the three stores it composes.

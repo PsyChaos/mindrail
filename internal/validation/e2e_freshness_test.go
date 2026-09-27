@@ -109,3 +109,178 @@ func TestFreshnessLifecycleEndToEnd(t *testing.T) {
 		t.Fatalf("evidence rows = %d, want both coexisting", rows)
 	}
 }
+
+// TestProfileRunMustBeWhollySuccessful covers REQ-001 through the public
+// service/check seam. Only the latest complete run may satisfy a required
+// profile; fail, spawn error, and a mixed pass/fail run must not. A later
+// wholly successful run recovers without deleting append-only history.
+func TestProfileRunMustBeWhollySuccessful(t *testing.T) {
+	fx := newEvidenceFixture(t)
+	runner, err := validation.NewRunner(t.TempDir(), 10*time.Second, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := validation.NewService(runner, fx.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "print(1)\n")
+	run := func(operation string, commands ...[]string) []validation.Evidence {
+		t.Helper()
+		rows, err := service.RunProfile(t.Context(), "test", config.ValidationProfile{
+			Type: "AUTOMATED_TEST", Paths: []string{"tests"}, Commands: commands,
+		}, root, nil, operation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	assertSatisfied := func(name string, rows []validation.Evidence, want bool) {
+		t.Helper()
+		_, coverage, err := validation.Check(root, rows, []string{"test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := coverage.Satisfied["test"]; got != want {
+			t.Fatalf("%s satisfied = %v, want %v; coverage=%+v rows=%+v", name, got, want, coverage, rows)
+		}
+	}
+
+	pass := run("OP-PASS", []string{"true"})
+	assertSatisfied("pass", pass, true)
+
+	failed := run("OP-FAIL", []string{"false"})
+	assertSatisfied("failed latest run", append(pass, failed...), false)
+
+	spawnError := run("OP-ERROR", []string{"mindrail-no-such-validation-command"})
+	assertSatisfied("spawn error", spawnError, false)
+
+	mixed := run("OP-MIXED", []string{"true"}, []string{"false"})
+	assertSatisfied("mixed pass/fail", mixed, false)
+
+	incomplete := run("OP-INCOMPLETE", []string{"true"}, []string{"true"})
+	assertSatisfied("missing command row", incomplete[:1], false)
+
+	recovered := run("OP-RECOVERED", []string{"true"}, []string{"true"})
+	assertSatisfied("successful rerun", append(append(failed, mixed...), recovered...), true)
+}
+
+// TestDeclaredScopeMembershipChangesStaleEvidence covers REQ-002. Directory
+// and recursive-glob declarations are re-enumerated; add/edit/remove within
+// them stales evidence, while a sibling outside the declaration does not.
+func TestDeclaredScopeMembershipChangesStaleEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		paths []string
+	}{
+		{name: "directory", paths: []string{"tests"}},
+		{name: "recursive glob", paths: []string{"tests/**/*.py"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newEvidenceFixture(t)
+			runner, err := validation.NewRunner(t.TempDir(), 10*time.Second, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err := validation.NewService(runner, fx.store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			writeScopeFile(t, root, "tests/unit/a.py", "print(1)\n")
+			profile := config.ValidationProfile{
+				Type: "AUTOMATED_TEST", Paths: tc.paths, Commands: [][]string{{"true"}},
+			}
+			rows, err := service.RunProfile(t.Context(), "test", profile, root, nil, "OP-SCOPE-"+tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFreshness := func(stage, want string) {
+				t.Helper()
+				verdicts, _, err := validation.Check(root, rows, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(verdicts) != 1 || verdicts[0].Status != want {
+					t.Fatalf("%s verdicts = %+v, want %s", stage, verdicts, want)
+				}
+			}
+
+			assertFreshness("untouched", validation.FreshCurrent)
+			writeScopeFile(t, root, "outside/z.py", "print(9)\n")
+			assertFreshness("outside add", validation.FreshCurrent)
+			if tc.name == "recursive glob" {
+				writeScopeFile(t, root, "tests/unit/ignored.txt", "outside the glob\n")
+				assertFreshness("inside directory but outside glob", validation.FreshCurrent)
+			}
+			writeScopeFile(t, root, "tests/unit/added.py", "assert False\n")
+			assertFreshness("inside add", validation.FreshStale)
+
+			if err := os.Remove(filepath.Join(root, "tests", "unit", "added.py")); err != nil {
+				t.Fatal(err)
+			}
+			writeScopeFile(t, root, "tests/unit/a.py", "print(2)\n")
+			assertFreshness("inside edit", validation.FreshStale)
+			if err := os.Remove(filepath.Join(root, "tests", "unit", "a.py")); err != nil {
+				t.Fatal(err)
+			}
+			assertFreshness("inside remove", validation.FreshStale)
+		})
+	}
+}
+
+func TestZeroMatchDeclaredScopeIsCurrentUntilMembershipChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		paths []string
+	}{
+		{name: "empty literal directory", paths: []string{"empty"}},
+		{name: "zero-match recursive glob", paths: []string{"empty/**/*.py"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newEvidenceFixture(t)
+			runner, err := validation.NewRunner(t.TempDir(), 10*time.Second, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			service, err := validation.NewService(runner, fx.store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "empty"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := validation.SnapshotScope(root, tc.paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.Scope == nil || len(snapshot.Scope) != 0 {
+				t.Fatalf("empty declaration scope = %#v, want non-nil empty slice", snapshot.Scope)
+			}
+			rows, err := service.RunProfile(t.Context(), "test", config.ValidationProfile{
+				Type: "AUTOMATED_TEST", Paths: tc.paths, Commands: [][]string{{"true"}},
+			}, root, nil, "OP-ZERO-"+tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verdicts, coverage, err := validation.Check(root, rows, []string{"test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(verdicts) != 1 || verdicts[0].Status != validation.FreshCurrent || !coverage.Satisfied["test"] {
+				t.Fatalf("zero-match run = verdicts %#v coverage %#v", verdicts, coverage)
+			}
+
+			writeScopeFile(t, root, "empty/added.py", "assert False\n")
+			verdicts, coverage, err = validation.Check(root, rows, []string{"test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if verdicts[0].Status != validation.FreshStale || coverage.Satisfied["test"] {
+				t.Fatalf("membership addition = verdicts %#v coverage %#v", verdicts, coverage)
+			}
+		})
+	}
+}

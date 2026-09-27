@@ -253,14 +253,15 @@ func uncompilableSchemas(t *testing.T) fs.FS {
 	}
 }
 
-// TestTheKnowledgePipelineHasExactlyOneCallSite is AC-08.1.
+// TestTheKnowledgePipelineHasExactlyTwoAuthorizedCallSites retains AC-08.1's
+// reporting boundary and explicitly adds remediation REQ-003's safety boundary.
 //
-// Decision D-42 puts validate.Check in one place. A second caller would be a
-// second verdict about one store — in a doctor check that promises to open
-// nothing, or in status.Build, which decision D-41 keeps free of it — and the day
-// the two disagreed the report would carry both answers. Nothing in the compiler
-// stops that, so the call sites are counted.
-func TestTheKnowledgePipelineHasExactlyOneCallSite(t *testing.T) {
+// Bootstrap validates the store once for startup reports (D-42); doctor and
+// status remain pure readers of that observation (D-41). Completion independently
+// reloads and validates current knowledge before a safety-critical verdict, since
+// a long-lived process's startup snapshot may now be stale. These are exactly
+// two authorized callers, not permission for validation in any reporting layer.
+func TestTheKnowledgePipelineHasExactlyTwoAuthorizedCallSites(t *testing.T) {
 	root := moduleRoot(t)
 
 	callers := make(map[string]int)
@@ -315,7 +316,10 @@ func TestTheKnowledgePipelineHasExactlyOneCallSite(t *testing.T) {
 		t.Fatal("no production source was parsed, so this proves nothing")
 	}
 
-	want := map[string]int{"internal/bootstrap/app.go": 1}
+	want := map[string]int{
+		"internal/bootstrap/app.go":      1,
+		"internal/completion/compose.go": 1,
+	}
 	if len(callers) != len(want) {
 		t.Fatalf("validate.Check is called from %v, want exactly %v", callers, want)
 	}

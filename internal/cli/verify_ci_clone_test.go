@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,11 @@ func initClone(t *testing.T, clone string) {
 	t.Helper()
 	if got := run(t, clone, "init"); got.code != app.ExitSuccess {
 		t.Fatalf("clone init exited %d: %v\n%s", got.code, got.err, got.stdout)
+	}
+	// These legacy origins predate the generated instruction file. Keep the
+	// range fixture clean; setup preservation has dedicated end-to-end tests.
+	if err := os.Remove(filepath.Join(clone, "AGENTS.md")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -159,7 +165,7 @@ func TestVerifyCIFreshCloneKnowledgeFailsClosed(t *testing.T) {
 		".mindrail/knowledge/decisions/DEC-0001.json").CombinedOutput(); err != nil {
 		t.Fatalf("add knowledge: %v: %s", err, out)
 	}
-	if out, err := exec.Command("git", "-C", origin, "commit", "--quiet", "-m", "fatal knowledge").CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "-C", origin, "commit", "--no-verify", "--quiet", "-m", "fatal knowledge").CombinedOutput(); err != nil {
 		t.Fatalf("commit knowledge: %v: %s", err, out)
 	}
 	base := gitRev(t, origin, "HEAD~2")

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
@@ -43,7 +44,7 @@ func denialCodes(t *testing.T, out map[string]any) []string {
 // TestCompleteAllowsClean is TASK-02 AC-02.1: nothing discovered, nothing
 // required — ALLOW with empty denials.
 func TestCompleteAllowsClean(t *testing.T) {
-	root := newTestRepo(t)
+	root := cleanCompletionRepo(t)
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
 	workspaceID, projectID := workspaceOf(t, db)
@@ -64,7 +65,7 @@ func TestCompleteAllowsClean(t *testing.T) {
 // TestCompleteDeniesAttribution is TASK-02 AC-02.1: overlapping baselines
 // ambiguate through the tool with the gate's code.
 func TestCompleteDeniesAttribution(t *testing.T) {
-	root := newTestRepo(t)
+	root := cleanCompletionRepo(t)
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
 	workspaceID, projectID := workspaceOf(t, db)
@@ -142,10 +143,14 @@ func seedTwinRows(t *testing.T, db *sql.DB, twinID, path, taskID string) {
 // through the tool with exactly the gate unit's code and profile remedy.
 func TestCompleteDeniesStaleEvidence(t *testing.T) {
 	root := newProfileRepo(t)
+	gitCommitFile(t, root, ".")
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
 	workspaceID, projectID := workspaceOf(t, db)
 	taskID, _ := openTaskAndSession(t, coord, workspaceID, projectID)
+	callTool(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
+		"task_id": taskID, "paths": []string{filepath.Join(root, "tests", "t.py")},
+	})
 
 	ran := callTool(t, server, "probe", mcp.ToolValidate, map[string]any{"profile": "test"})
 	if _, ok := ran["evidence"]; !ok {
@@ -169,7 +174,7 @@ func TestCompleteDeniesStaleEvidence(t *testing.T) {
 // TestCompleteDeniesOrphaned is TASK-02 AC-02.1: an orphaned binding under
 // an active CRITICAL invariant denies through the tool with the gate code.
 func TestCompleteDeniesOrphaned(t *testing.T) {
-	root := newTestRepo(t)
+	root := cleanCompletionRepo(t)
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
 	workspaceID, projectID := workspaceOf(t, db)
@@ -178,8 +183,8 @@ func TestCompleteDeniesOrphaned(t *testing.T) {
 	registerUnit(t, db, filepath.Join(root, "pkg"))
 	seedIdentity(t, db, "SYM-O-1", "orphan-key")
 	seedSymbolRow(t, db, abs, "orphan-key", "orphan", "SYM-O-1")
-	seedBinding(t, db, "INV-O", "SYM-O-1", "orphaned")
-	writeInvariantFile(t, root, "INV-O", "CRITICAL")
+	seedBinding(t, db, "INV-0002", "SYM-O-1", "orphaned")
+	writeInvariantFile(t, root, "INV-0002", "CRITICAL")
 	callTool(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
 		"task_id": taskID, "paths": []string{abs},
 	})
@@ -205,11 +210,30 @@ func TestCompleteDeniesOrphaned(t *testing.T) {
 // verification test denies through the tool with the guard code — composed
 // from git deltas and reference-derived mapping, nothing hand-fed.
 func TestCompleteDeniesWeakenedGuard(t *testing.T) {
-	root := newTestRepo(t)
+	testCompleteDeniesWeakenedGuard(t, "seed")
+}
+
+// Discovery must also retain the old proof mapping when the caller never
+// recorded an after_change and completion is the first discovery path.
+func TestCompleteDeniesWeakenedGuardWithoutAfterChange(t *testing.T) {
+	testCompleteDeniesWeakenedGuard(t, "")
+}
+
+func TestCompleteDeniesWeakenedGuardAfterPublicDiscovery(t *testing.T) {
+	for _, tool := range []string{mcp.ToolAfterChange, mcp.ToolReconcile} {
+		t.Run(tool, func(t *testing.T) { testCompleteDeniesWeakenedGuard(t, tool) })
+	}
+}
+
+func TestCompleteRetainsBindingIntroducedAfterEmptyBaseline(t *testing.T) {
+	testCompleteDeniesWeakenedGuard(t, "late-binding")
+}
+
+func testCompleteDeniesWeakenedGuard(t *testing.T, discovery string) {
+	root := cleanCompletionRepo(t)
 	prod := filepath.Join(root, "pkg", "a.py")
 	test := filepath.Join(root, "tests", "test_a.py")
 	writeScopeFile(t, root, "tests/test_a.py", "def test_helper():\n    assert helper()\n")
-	gitCommitFile(t, root, "pkg/a.py")
 	gitCommitFile(t, root, "tests/test_a.py")
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
@@ -221,33 +245,57 @@ func TestCompleteDeniesWeakenedGuard(t *testing.T) {
 	indexPath(t, db, filepath.Join(root, "tests"), test)
 	testKey := indexFileKey(t, db, test, "test_helper")
 	seedResolvedReference(t, db, test, testKey, prodUID)
-	seedBinding(t, db, "INV-G", prodUID, "bound")
-	writeInvariantFile(t, root, "INV-G", "CRITICAL")
+	if discovery == "late-binding" {
+		out := callTool(t, server, "probe", mcp.ToolComplete, map[string]any{"task_id": taskID})
+		if out["allow"] != true {
+			t.Fatalf("clean empty-baseline control = %+v", out)
+		}
+	}
+	seedBinding(t, db, "INV-0002", prodUID, "bound")
+	writeInvariantFile(t, root, "INV-0002", "CRITICAL")
 	callTool(t, server, "probe", mcp.ToolBeforeChange, map[string]any{
 		"task_id": taskID, "paths": []string{test, prod},
 	})
 	if err := os.WriteFile(test, []byte("def test_other():\n    assert x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prodKey := indexFileKey(t, db, prod, "helper")
-	seedChangeFileRow(t, db, taskID, test)
-	seedChangeSymbolRow(t, db, taskID, prodKey, prodUID)
-
-	out := callTool(t, server, "probe", mcp.ToolComplete, map[string]any{"task_id": taskID})
-	if allow, ok := out["allow"].(bool); !ok || allow {
-		t.Fatalf("complete = %+v, want DENY", out)
+	if discovery == "seed" {
+		prodKey := indexFileKey(t, db, prod, "helper")
+		seedChangeFileRow(t, db, taskID, test)
+		seedChangeSymbolRow(t, db, taskID, prodKey, prodUID)
+	} else if discovery != "" && discovery != "late-binding" {
+		callTool(t, server, "probe", discovery, map[string]any{"task_id": taskID})
 	}
-	codes := denialCodes(t, out)
-	found := false
-	for _, code := range codes {
-		if code == "TEST_GUARD_WEAKENED" {
-			found = true
+
+	for _, reader := range []*mcp.Server{server, server, newTestServer(t, root)} {
+		out := callTool(t, reader, "probe", mcp.ToolComplete, map[string]any{"task_id": taskID})
+		if allow, ok := out["allow"].(bool); !ok || allow {
+			t.Fatalf("complete = %+v, want DENY", out)
+		}
+		codes := denialCodes(t, out)
+		found := false
+		for _, code := range codes {
+			if code == "TEST_GUARD_WEAKENED" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("codes = %+v, want guard denial", codes)
 		}
 	}
-	if !found {
-		t.Fatalf("codes = %+v, want guard denial", codes)
+	// A stored mapping must not cache policy: severity still comes from the
+	// current knowledge store, and restoring proof must clear the signal.
+	writeInvariantFile(t, root, "INV-0002", "LOW")
+	low := callTool(t, server, "probe", mcp.ToolComplete, map[string]any{"task_id": taskID})
+	if slices.Contains(denialCodes(t, low), "TEST_GUARD_WEAKENED") {
+		t.Fatalf("snapshot cached obsolete CRITICAL policy: %+v", low)
 	}
-	_ = prod
+	writeInvariantFile(t, root, "INV-0002", "CRITICAL")
+	writeScopeFile(t, root, "tests/test_a.py", "def test_helper():\n    assert helper()\n")
+	repaired := callTool(t, server, "probe", mcp.ToolComplete, map[string]any{"task_id": taskID})
+	if slices.Contains(denialCodes(t, repaired), "TEST_GUARD_WEAKENED") {
+		t.Fatalf("restored proof kept a stale guard denial: %+v", repaired)
+	}
 }
 
 func registerUnit(t *testing.T, db *sql.DB, pkg string) string {
@@ -469,15 +517,15 @@ func TestCompleteVersionErrors(t *testing.T) {
 // ambiguity anchored to an active CRITICAL invariant denies with the
 // identity code.
 func TestCompleteDeniesAnchoredAmbiguity(t *testing.T) {
-	root := newTestRepo(t)
+	root := cleanCompletionRepo(t)
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
 	workspaceID, projectID := workspaceOf(t, db)
 	taskID, _ := openTaskAndSession(t, coord, workspaceID, projectID)
 	registerUnit(t, db, filepath.Join(root, "pkg"))
 	seedIdentity(t, db, "SYM-A-1", "amb-key")
-	seedBinding(t, db, "INV-A", "SYM-A-1", "bound")
-	writeInvariantFile(t, root, "INV-A", "CRITICAL")
+	seedBinding(t, db, "INV-0002", "SYM-A-1", "bound")
+	writeInvariantFile(t, root, "INV-0002", "CRITICAL")
 	if _, err := db.ExecContext(t.Context(), `INSERT INTO symbol_identity_ambiguities
 		(unit_id, removed_uid, removed_key, candidate_keys, created_at)
 		SELECT unit_id, 'SYM-A-1', 'amb-key', '["k1","k2"]', '2026-09-23T10:00:00Z'

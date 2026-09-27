@@ -11,9 +11,16 @@ import (
 	"github.com/PsyChaos/mindrail/internal/validation"
 )
 
-func provenanceForTest(t *testing.T, profile string, scope []string) string {
+func provenanceForTest(t *testing.T, profile, runID string, commandIndex, commandCount int, scopePaths, scope []string) string {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{"profile": profile, "command_index": 0, "scope": scope})
+	raw, err := json.Marshal(map[string]any{
+		"profile":       profile,
+		"run_id":        runID,
+		"command_index": commandIndex,
+		"command_count": commandCount,
+		"scope_paths":   scopePaths,
+		"scope":         scope,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,8 +39,9 @@ func evidenceRow(t *testing.T, id, profile, root string, rels []string) validati
 		Type:         "AUTOMATED_TEST",
 		Argv:         []string{"echo", "hi"},
 		Status:       validation.StatusPass,
+		ExitCode:     0,
 		SnapshotHash: snapshot.Hash,
-		Provenance:   provenanceForTest(t, profile, snapshot.Scope),
+		Provenance:   provenanceForTest(t, profile, "RUN-"+id, 0, 1, rels, snapshot.Scope),
 	}
 }
 
@@ -130,6 +138,27 @@ func TestCheckIgnoresOutOfScopeEdits(t *testing.T) {
 	}
 }
 
+func TestGlobIgnoresUnmatchedUnreadableSiblingBelowPrefix(t *testing.T) {
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "assert True\n")
+	writeScopeFile(t, root, "tests/private/deep.txt", "outside glob\n")
+	row := evidenceRow(t, "EVD-GLOB-SIBLING", "proof", root, []string{"tests/*.py"})
+
+	private := filepath.Join(root, "tests", "private")
+	if err := os.Chmod(private, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(private, 0o755) })
+
+	verdicts, coverage, err := validation.Check(root, []validation.Evidence{row}, []string{"proof"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verdicts) != 1 || verdicts[0].Status != validation.FreshCurrent || !coverage.Satisfied["proof"] {
+		t.Fatalf("unmatched unreadable sibling affected glob: verdicts=%+v coverage=%+v", verdicts, coverage)
+	}
+}
+
 // TestCheckRequiredCoverage is TASK-01 AC-01.4: satisfied, stale-only and
 // missing profiles report correctly, and the re-run list unions stale
 // rows' profiles with uncovered required ones, sorted, each with a reason.
@@ -172,6 +201,21 @@ func TestCheckRequiredCoverage(t *testing.T) {
 	}
 }
 
+func TestCheckToleratesRepeatedRequiredProfileRows(t *testing.T) {
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "print(1)\n")
+	row := evidenceRow(t, "EVD-1", "test", root, []string{"tests"})
+
+	_, coverage, err := validation.Check(root,
+		[]validation.Evidence{row, row}, []string{"test", "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !coverage.Satisfied["test"] {
+		t.Fatalf("duplicate required profile invalidated identical evidence: %+v", coverage)
+	}
+}
+
 // TestCheckMalformedProvenanceStales pins the fail-safe input edge:
 // provenance that cannot name a scope never evaluates current.
 func TestCheckMalformedProvenanceStales(t *testing.T) {
@@ -189,7 +233,8 @@ func TestCheckMalformedProvenanceStales(t *testing.T) {
 		t.Fatal("relative root accepted")
 	}
 	escaped := validation.Evidence{ID: "EVD-E", Profile: "test", SnapshotHash: "abc",
-		Provenance: provenanceForTest(t, "test", []string{filepath.Join(root, "..", "outside")})}
+		Provenance: provenanceForTest(t, "test", "RUN-ESCAPE", 0, 1,
+			[]string{"../outside"}, []string{filepath.Join(root, "..", "outside")})}
 	verdicts, _, err = validation.Check(root, []validation.Evidence{escaped}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +260,7 @@ func TestCheckReadOnlyPinsNoWrites(t *testing.T) {
 	}
 	if _, err := fx.store.Record(t.Context(), "test", "AUTOMATED_TEST", []string{"echo", "hi"},
 		validation.Result{Status: validation.StatusPass}, snapshot.Hash,
-		provenanceForTest(t, "test", snapshot.Scope), "OP-RO", redactor); err != nil {
+		provenanceForTest(t, "test", "RUN-RO", 0, 1, []string{"tests"}, snapshot.Scope), "OP-RO", redactor); err != nil {
 		t.Fatal(err)
 	}
 	dump := func() string {
@@ -248,8 +293,8 @@ func TestCheckReadOnlyPinsNoWrites(t *testing.T) {
 	}
 	before := dump()
 	rows := []validation.Evidence{{
-		ID: "EVD-1", Profile: "test", SnapshotHash: snapshot.Hash,
-		Provenance: provenanceForTest(t, "test", snapshot.Scope),
+		ID: "EVD-1", Profile: "test", Status: validation.StatusPass, SnapshotHash: snapshot.Hash,
+		Provenance: provenanceForTest(t, "test", "RUN-RO", 0, 1, []string{"tests"}, snapshot.Scope),
 	}}
 	if _, _, err := validation.Check(root, rows, []string{"test"}); err != nil {
 		t.Fatal(err)
@@ -292,7 +337,8 @@ func TestCheckDedupesScopesAndCleansRoots(t *testing.T) {
 	row := evidenceRow(t, "EVD-1", "test", root, []string{"tests"})
 	dup := row
 	dup.ID = "EVD-2"
-	dup.Provenance = provenanceForTest(t, "test", append(append([]string{}, rowScope(t, row)...), rowScope(t, row)...))
+	dup.Provenance = provenanceForTest(t, "test", "RUN-EVD-2", 0, 1, []string{"tests"},
+		append(append([]string{}, rowScope(t, row)...), rowScope(t, row)...))
 
 	for _, checkRoot := range []string{root, root + "/"} {
 		verdicts, _, err := validation.Check(checkRoot, []validation.Evidence{row, dup}, nil)
@@ -311,12 +357,17 @@ func TestCheckDedupesScopesAndCleansRoots(t *testing.T) {
 // empty scope is current only beside the hash of nothing.
 func TestCheckEmptyScopeNeedsEmptyHash(t *testing.T) {
 	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	empty := validation.Evidence{ID: "EVD-E", Profile: "test",
+		Status:       validation.StatusPass,
 		SnapshotHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-		Provenance:   provenanceForTest(t, "test", []string{})}
+		Provenance:   provenanceForTest(t, "test", "RUN-E", 0, 1, []string{"empty"}, []string{})}
 	junk := empty
 	junk.ID = "EVD-J"
 	junk.SnapshotHash = "junk"
+	junk.Provenance = provenanceForTest(t, "test", "RUN-J", 0, 1, []string{"empty"}, []string{})
 
 	verdicts, _, err := validation.Check(root, []validation.Evidence{empty, junk}, nil)
 	if err != nil {
@@ -327,6 +378,39 @@ func TestCheckEmptyScopeNeedsEmptyHash(t *testing.T) {
 	}
 	if verdicts[1].Status != validation.FreshStale {
 		t.Fatalf("malformed-empty = %+v", verdicts[1])
+	}
+}
+
+// TestCheckFailsClosedOnLegacyEvidence pins the upgrade policy: rows that
+// predate declarative scope and run-completeness provenance cannot prove that
+// no command or in-scope file is missing, so they must never satisfy coverage.
+func TestCheckFailsClosedOnLegacyEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeScopeFile(t, root, "tests/a.py", "print(1)\n")
+	snapshot, err := validation.SnapshotScope(root, []string{"tests"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"profile": "test", "command_index": 0, "scope": snapshot.Scope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := validation.Evidence{
+		ID: "EVD-LEGACY", Profile: "test", Status: validation.StatusPass,
+		ExitCode: 0, SnapshotHash: snapshot.Hash, Provenance: string(raw),
+	}
+
+	verdicts, coverage, err := validation.Check(root, []validation.Evidence{legacy}, []string{"test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verdicts) != 1 || verdicts[0].Status != validation.FreshStale {
+		t.Fatalf("legacy verdicts = %+v, want fail-closed stale", verdicts)
+	}
+	if coverage.Satisfied["test"] {
+		t.Fatalf("legacy evidence satisfied coverage: %+v", coverage)
 	}
 }
 

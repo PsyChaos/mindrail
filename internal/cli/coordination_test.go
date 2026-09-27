@@ -1,11 +1,14 @@
 package cli_test
 
 import (
+	"database/sql"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 	"github.com/PsyChaos/mindrail/internal/storage"
 )
 
@@ -179,7 +182,7 @@ func TestAMisspelledStateIsUsageAndAnUnavailableMoveIsNot(t *testing.T) {
 		}
 	}
 
-	unavailable := run(t, repo, "task", "state", task, "--to", "COMPLETED", "--session", session, "--json")
+	unavailable := run(t, repo, "task", "state", task, "--to", "IN_PROGRESS", "--session", session, "--json")
 	if unavailable.code != app.ExitFailed {
 		t.Errorf("an unavailable move exited %d, want %d", unavailable.code, app.ExitFailed)
 	}
@@ -187,7 +190,7 @@ func TestAMisspelledStateIsUsageAndAnUnavailableMoveIsNot(t *testing.T) {
 	if refusal.Code != app.CodeTaskStateInvalid {
 		t.Errorf("an unavailable move reported %q, want %q", refusal.Code, app.CodeTaskStateInvalid)
 	}
-	for _, expected := range []string{"OPEN", "COMPLETED"} {
+	for _, expected := range []string{"OPEN", "IN_PROGRESS"} {
 		if !strings.Contains(refusal.Why, expected) {
 			t.Errorf("the refusal does not name %s: %q", expected, refusal.Why)
 		}
@@ -207,6 +210,361 @@ func TestAMisspelledStateIsUsageAndAnUnavailableMoveIsNot(t *testing.T) {
 	decodeData(t, shown.stdout, &handover)
 	if handover.Task.State != "OPEN" {
 		t.Errorf("the task is %s after two refused moves, want OPEN", handover.Task.State)
+	}
+}
+
+// TestRawTaskCompletionIsRefusedWithoutMutatingTaskOrLease is REQ-006's
+// public boundary. A READY task is deliberately used: a refusal from OPEN
+// would only prove the ordinary lifecycle table, not that the raw terminal
+// transition is blocked before it can release the holder's lease.
+func TestRawTaskCompletionIsRefusedWithoutMutatingTaskOrLease(t *testing.T) {
+	repo := newInitializedRepo(t)
+	session := sessionID(t, repo)
+	task := openTask(t, repo, session, "complete through the gate")
+	for _, state := range []string{"CLAIMED", "IN_PROGRESS", "READY_TO_COMPLETE"} {
+		run(t, repo, "task", "state", task, "--to", state, "--session", session, "--json").requireExit(t, app.ExitSuccess)
+	}
+
+	before := run(t, repo, "task", "show", task, "--json")
+	before.requireExit(t, app.ExitSuccess)
+	var prior struct {
+		Task struct {
+			State    string `json:"state"`
+			Revision int64  `json:"revision"`
+		} `json:"task"`
+	}
+	decodeData(t, before.stdout, &prior)
+
+	got := run(t, repo, "task", "state", task, "--to", "COMPLETED", "--session", session, "--json")
+	got.requireExit(t, app.ExitFailed)
+	refusal := got.errorPayload(t)
+	if refusal.Code != app.CodeTaskStateInvalid {
+		t.Fatalf("code = %q, want %q", refusal.Code, app.CodeTaskStateInvalid)
+	}
+	if len(refusal.NextAction) == 0 || !strings.Contains(refusal.NextAction[0], "task complete") {
+		t.Errorf("next_action = %v, want evaluated completion as the READY action", refusal.NextAction)
+	}
+	for _, action := range refusal.NextAction {
+		if strings.Contains(action, "move it to:") && strings.Contains(action, "COMPLETED") {
+			t.Errorf("next_action = %v, must not offer raw COMPLETED as a lifecycle alternative", refusal.NextAction)
+		}
+	}
+
+	after := run(t, repo, "task", "show", task, "--json")
+	after.requireExit(t, app.ExitSuccess)
+	var current struct {
+		Task struct {
+			State    string `json:"state"`
+			Revision int64  `json:"revision"`
+		} `json:"task"`
+	}
+	decodeData(t, after.stdout, &current)
+	if current.Task.State != prior.Task.State || current.Task.Revision != prior.Task.Revision {
+		t.Errorf("task after raw completion refusal = %+v, want %+v", current.Task, prior.Task)
+	}
+
+	leases := run(t, repo, "lease", "list", "--json")
+	leases.requireExit(t, app.ExitSuccess)
+	if !strings.Contains(leases.stdout, session) {
+		t.Errorf("lease holder disappeared after raw completion refusal:\n%s", leases.stdout)
+	}
+}
+
+// TestRawCompletionRefusalIsStateSpecific keeps a refused raw COMPLETED move
+// actionable without offering an impossible command. Each row is a real task
+// state, not a fabricated database value, so the task and lease snapshot also
+// proves the refusal remains non-mutating.
+func TestRawCompletionRefusalIsStateSpecific(t *testing.T) {
+	for _, state := range coordination.States() {
+		t.Run(state.String(), func(t *testing.T) {
+			repo := newInitializedRepo(t)
+			session := sessionID(t, repo)
+			task := openTask(t, repo, session, "raw completion refusal "+state.String())
+			driveTaskToState(t, repo, task, session, state)
+
+			beforeTask := run(t, repo, "task", "show", task, "--json")
+			beforeTask.requireExit(t, app.ExitSuccess)
+			beforeLeases := run(t, repo, "lease", "list", "--json")
+			beforeLeases.requireExit(t, app.ExitSuccess)
+
+			refused := run(t, repo, "task", "state", task, "--to", coordination.StateCompleted.String(), "--session", session, "--json")
+			refused.requireExit(t, app.ExitFailed)
+			payload := refused.errorPayload(t)
+			if payload.Code != app.CodeTaskStateInvalid || len(payload.NextAction) == 0 {
+				t.Fatalf("refusal = %+v, want TASK_STATE_INVALID with actions", payload)
+			}
+			want := rawCompletionFirstAction(state)
+			if !strings.Contains(payload.NextAction[0], want) {
+				t.Fatalf("first action = %q, want executable %q", payload.NextAction[0], want)
+			}
+			for _, action := range payload.NextAction {
+				if state != coordination.StateReadyToComplete && strings.Contains(action, "task complete") {
+					t.Errorf("%s action wrongly offers completion: %q", state, action)
+				}
+				if !state.Terminal() && strings.Contains(action, "--to "+coordination.StateCompleted.String()) {
+					t.Errorf("%s action wrongly offers raw completion: %q", state, action)
+				}
+			}
+
+			afterTask := run(t, repo, "task", "show", task, "--json")
+			afterTask.requireExit(t, app.ExitSuccess)
+			afterLeases := run(t, repo, "lease", "list", "--json")
+			afterLeases.requireExit(t, app.ExitSuccess)
+			if afterTask.stdout != beforeTask.stdout || afterLeases.stdout != beforeLeases.stdout {
+				t.Fatalf("raw completion refusal mutated %s\ntask before: %s\ntask after: %s\nleases before: %s\nleases after: %s",
+					state, beforeTask.stdout, afterTask.stdout, beforeLeases.stdout, afterLeases.stdout)
+			}
+		})
+	}
+}
+
+func rawCompletionFirstAction(state coordination.State) string {
+	switch {
+	case state.Terminal():
+		return "task show <task-id>"
+	case state == coordination.StateReadyToComplete:
+		return "task complete <task-id> --session <session-id> --expect-revision <revision>"
+	}
+	for _, next := range coordination.TransitionsFrom(state) {
+		if next != coordination.StateCompleted && next != coordination.StateBlocked {
+			return "task state <task-id> --to " + next.String() + " --session <session-id>"
+		}
+	}
+	for _, next := range coordination.TransitionsFrom(state) {
+		if next == coordination.StateBlocked {
+			return "task state <task-id> --to " + next.String() + " --session <session-id> --reason <reason>"
+		}
+	}
+	panic("state has no executable non-terminal transition: " + state.String())
+}
+
+func driveTaskToState(t *testing.T, repo, task, session string, target coordination.State) {
+	t.Helper()
+	path := lifecyclePathTo(target)
+	for _, next := range path[1:] {
+		if next == coordination.StateCompleted {
+			shown := run(t, repo, "task", "show", task, "--json")
+			shown.requireExit(t, app.ExitSuccess)
+			var current struct {
+				Task struct {
+					Revision int64 `json:"revision"`
+				} `json:"task"`
+			}
+			decodeData(t, shown.stdout, &current)
+			run(t, repo, "task", "complete", task, "--session", session,
+				"--expect-revision", strconv.FormatInt(current.Task.Revision, 10), "--json").requireExit(t, app.ExitSuccess)
+			continue
+		}
+		args := []string{"task", "state", task, "--to", next.String(), "--session", session, "--json"}
+		if next == coordination.StateBlocked {
+			args = append(args, "--reason", "waiting")
+		}
+		run(t, repo, args...).requireExit(t, app.ExitSuccess)
+	}
+}
+
+func lifecyclePathTo(target coordination.State) []coordination.State {
+	start := coordination.StateOpen
+	queue := []coordination.State{start}
+	previous := map[coordination.State]coordination.State{}
+	seen := map[coordination.State]bool{start: true}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == target {
+			path := []coordination.State{current}
+			for current != start {
+				current = previous[current]
+				path = append([]coordination.State{current}, path...)
+			}
+			return path
+		}
+		for _, next := range coordination.TransitionsFrom(current) {
+			if !seen[next] {
+				seen[next] = true
+				previous[next] = current
+				queue = append(queue, next)
+			}
+		}
+	}
+	panic("unreachable lifecycle state " + target.String())
+}
+
+// TestTaskCompleteCouplesTerminalStateToTheGate is REQ-006: a denied gate
+// cannot release the READY holder or mutate its task, while a clean decision
+// commits COMPLETED and the lease release through the existing atomic move.
+func TestTaskCompleteCouplesTerminalStateToTheGate(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		required []string
+		allow    bool
+	}{
+		{name: "denied evidence", required: []string{"missing-proof"}},
+		{name: "clean allow", allow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newRepoWithCommit(t)
+			if got := run(t, repo, "init", "--json"); got.code != app.ExitSuccess {
+				t.Fatalf("init: %s", got.stdout)
+			}
+			gitCommitFile(t, repo, ".")
+			session := sessionID(t, repo)
+			task := openTask(t, repo, session, "evaluate terminal completion")
+			for _, state := range []string{"CLAIMED", "IN_PROGRESS", "READY_TO_COMPLETE"} {
+				run(t, repo, "task", "state", task, "--to", state, "--session", session, "--json").requireExit(t, app.ExitSuccess)
+			}
+
+			shown := run(t, repo, "task", "show", task, "--json")
+			shown.requireExit(t, app.ExitSuccess)
+			var before struct {
+				Task struct {
+					State    string `json:"state"`
+					Revision int64  `json:"revision"`
+				} `json:"task"`
+			}
+			decodeData(t, shown.stdout, &before)
+			args := []string{"task", "complete", task, "--session", session, "--expect-revision", strconv.FormatInt(before.Task.Revision, 10), "--operation-id", "complete-1", "--json"}
+			for _, profile := range tc.required {
+				args = append(args, "--required", profile)
+			}
+			got := run(t, repo, args...)
+			if tc.allow {
+				got.requireExit(t, app.ExitSuccess)
+				var completed struct {
+					Allow bool `json:"allow"`
+					Task  struct {
+						State    string `json:"state"`
+						Revision int64  `json:"revision"`
+					} `json:"task"`
+					Replayed bool `json:"replayed"`
+				}
+				decodeData(t, got.stdout, &completed)
+				if !completed.Allow || completed.Task.State != "COMPLETED" || completed.Task.Revision != before.Task.Revision+1 {
+					t.Fatalf("completion result = %+v, want allowed terminal revision", completed)
+				}
+				replay := run(t, repo, args...)
+				replay.requireExit(t, app.ExitSuccess)
+				decodeData(t, replay.stdout, &completed)
+				if !completed.Replayed || completed.Task.Revision != before.Task.Revision+1 {
+					t.Fatalf("completion replay = %+v, want original terminal result", completed)
+				}
+				changedRequired := append(append([]string{}, args...), "--required", "new-proof")
+				changed := run(t, repo, changedRequired...)
+				changed.requireExit(t, app.ExitFailed)
+				if payload := changed.errorPayload(t); payload.Code != app.CodeOperationIDConflict {
+					t.Fatalf("changed completion replay code = %q, want %q", payload.Code, app.CodeOperationIDConflict)
+				}
+			} else {
+				got.requireExit(t, app.ExitDenied)
+				payload := got.errorPayload(t)
+				if payload.Code != app.CodeRequiredEvidenceNotCurrent {
+					t.Fatalf("denial code = %q, want %q", payload.Code, app.CodeRequiredEvidenceNotCurrent)
+				}
+				current := run(t, repo, "task", "show", task, "--json")
+				current.requireExit(t, app.ExitSuccess)
+				decodeData(t, current.stdout, &before)
+				if before.Task.State != "READY_TO_COMPLETE" {
+					t.Errorf("denied task state = %s, want READY_TO_COMPLETE", before.Task.State)
+				}
+				leases := run(t, repo, "lease", "list", "--json")
+				leases.requireExit(t, app.ExitSuccess)
+				if !strings.Contains(leases.stdout, session) {
+					t.Errorf("denial released the task lease:\n%s", leases.stdout)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskCompleteRejectsExplicitBlankRequiredBeforeGate(t *testing.T) {
+	repo := newInitializedRepo(t)
+	session := sessionID(t, repo)
+	task := openTask(t, repo, session, "blank required is invalid")
+	for _, state := range []string{"CLAIMED", "IN_PROGRESS", "READY_TO_COMPLETE"} {
+		run(t, repo, "task", "state", task, "--to", state, "--session", session, "--json").requireExit(t, app.ExitSuccess)
+	}
+
+	shown := run(t, repo, "task", "show", task, "--json")
+	shown.requireExit(t, app.ExitSuccess)
+	var before struct {
+		Task struct {
+			State    string `json:"state"`
+			Revision int64  `json:"revision"`
+		} `json:"task"`
+	}
+	decodeData(t, shown.stdout, &before)
+
+	got := run(t, repo, "task", "complete", task, "--session", session,
+		"--expect-revision", strconv.FormatInt(before.Task.Revision, 10), "--required", "", "--json")
+	got.requireExit(t, app.ExitUsage)
+	if payload := got.errorPayload(t); payload.Code != app.CodeCommandLineInvalid {
+		t.Fatalf("blank required code = %q, want %q", payload.Code, app.CodeCommandLineInvalid)
+	}
+
+	after := run(t, repo, "task", "show", task, "--json")
+	after.requireExit(t, app.ExitSuccess)
+	decodeData(t, after.stdout, &before)
+	if before.Task.State != "READY_TO_COMPLETE" {
+		t.Fatalf("blank required moved task to %s", before.Task.State)
+	}
+
+	unicode := run(t, repo, "task", "complete", task, "--session", session,
+		"--expect-revision", strconv.FormatInt(before.Task.Revision, 10), "--required", "İ", "--json")
+	unicode.requireExit(t, app.ExitDenied)
+	if payload := unicode.errorPayload(t); payload.Code != app.CodeRequiredEvidenceNotCurrent {
+		t.Fatalf("unicode required code = %q, want %q", payload.Code, app.CodeRequiredEvidenceNotCurrent)
+	}
+}
+
+// TestTaskCompleteFinalCASRejectsRevisionChangedDuringGate makes the final
+// transition's optimistic lock observable. The trigger models an independent
+// writer changing the task while completion captures its first guard baseline.
+func TestTaskCompleteFinalCASRejectsRevisionChangedDuringGate(t *testing.T) {
+	repo := newInitializedRepo(t)
+	session := sessionID(t, repo)
+	task := openTask(t, repo, session, "final completion CAS")
+	for _, state := range []string{"CLAIMED", "IN_PROGRESS", "READY_TO_COMPLETE"} {
+		run(t, repo, "task", "state", task, "--to", state, "--session", session, "--json").requireExit(t, app.ExitSuccess)
+	}
+
+	shown := run(t, repo, "task", "show", task, "--json")
+	shown.requireExit(t, app.ExitSuccess)
+	var before struct {
+		Task struct {
+			State    string `json:"state"`
+			Revision int64  `json:"revision"`
+		} `json:"task"`
+	}
+	decodeData(t, shown.stdout, &before)
+
+	db, err := sql.Open("sqlite", "file:"+runtimeDBPath(t, repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TRIGGER completion_bumps_task_revision AFTER INSERT ON guard_baselines
+BEGIN UPDATE tasks SET revision = revision + 1 WHERE task_id = '` + task + `'; END`)
+	if closeErr := db.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("install revision trigger: %v", err)
+	}
+
+	got := run(t, repo, "task", "complete", task, "--session", session,
+		"--expect-revision", strconv.FormatInt(before.Task.Revision, 10), "--json")
+	got.requireExit(t, app.ExitFailed)
+	if payload := got.errorPayload(t); payload.Code != app.CodeStateRevisionConflict {
+		t.Fatalf("completion race code = %q, want %q", payload.Code, app.CodeStateRevisionConflict)
+	}
+
+	after := run(t, repo, "task", "show", task, "--json")
+	after.requireExit(t, app.ExitSuccess)
+	decodeData(t, after.stdout, &before)
+	if before.Task.State != "READY_TO_COMPLETE" {
+		t.Fatalf("revision race completed task: %s", before.Task.State)
+	}
+	if before.Task.Revision != 5 {
+		t.Fatalf("revision after trigger = %d, want 5", before.Task.Revision)
 	}
 }
 

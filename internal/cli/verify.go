@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +24,7 @@ func newVerifyCommand(o Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Evaluate staged changes through the shared gates",
+		Long:  "Verify the staged changes that would be committed. This is the default local mode. Use --ci for a committed merge-base range.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVerify(cmd, o)
@@ -74,15 +76,6 @@ func runVerify(cmd *cobra.Command, o Options) error {
 			"Re-run as `mindrail verify --ci --base <rev> --head <rev>`.",
 		))
 	}
-	if !staged && !ci {
-		return inv.emit(nil, nil, nil, "", app.NewError(
-			app.CodeCommandLineInvalid,
-			app.KindUsage,
-			"verify needs a mode: --staged or --ci",
-			"Without a mode the command cannot know whether the index or a committed range is judged.",
-			"Re-run as `mindrail verify --staged` or `mindrail verify --ci`.",
-		))
-	}
 	application := bootstrap.New(bootstrap.Options{
 		StartDir:    inv.startDir,
 		Mode:        bootstrap.ModeWrite,
@@ -104,6 +97,7 @@ func runVerify(cmd *cobra.Command, o Options) error {
 			mode = "verify --ci"
 			judged = "The committed range fails the shared gates; the push would not complete."
 		}
+		render := verifyHuman(verdict, ci)
 		if verdict.FatalKnown {
 			fatal := verdict.Knowledge[0]
 			for _, problem := range verdict.Knowledge {
@@ -112,7 +106,7 @@ func runVerify(cmd *cobra.Command, o Options) error {
 					break
 				}
 			}
-			return inv.emit(verdictReport(verdict), nil, a.Warnings(), a.Config().Config.Output.Color, app.NewError(
+			return inv.emit(verdictReport(verdict), render, a.Warnings(), a.Config().Config.Output.Color, app.NewError(
 				app.Code(fatal.Code),
 				app.KindFailed,
 				mode+" refuses: "+fatal.Message,
@@ -128,10 +122,37 @@ func runVerify(cmd *cobra.Command, o Options) error {
 				judged,
 				"Resolve the denials listed in the report, then re-run verify.",
 			)
-			return inv.emit(verdictReport(verdict), nil, a.Warnings(), a.Config().Config.Output.Color, denied)
+			return inv.emit(verdictReport(verdict), render, a.Warnings(), a.Config().Config.Output.Color, denied)
 		}
-		return inv.emit(verdictReport(verdict), nil, a.Warnings(), a.Config().Config.Output.Color, nil)
+		return inv.emit(verdictReport(verdict), render, a.Warnings(), a.Config().Config.Output.Color, nil)
 	})
+}
+
+func verifyHuman(verdict verify.Verdict, ci bool) humanRenderer {
+	return func(w io.Writer, _ bool) error {
+		mode := "staged changes (local)"
+		if ci {
+			mode = "committed range (CI)"
+		}
+		if _, err := fmt.Fprintf(w, "Verification mode: %s\n", mode); err != nil {
+			return err
+		}
+		if verdict.Allow {
+			_, err := fmt.Fprintln(w, "ALLOW: changes satisfy the configured gates.")
+			return err
+		}
+		for _, denial := range verdict.Denials {
+			if _, err := fmt.Fprintf(w, "DENY: %s\n", denial.Reason); err != nil {
+				return err
+			}
+			for _, action := range denial.NextAction {
+				if _, err := fmt.Fprintf(w, "  %s\n", action); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 }
 
 // verifyMode dispatches the judged source: the index for --staged, the

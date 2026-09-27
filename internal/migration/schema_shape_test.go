@@ -32,9 +32,10 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"lease_id", "project_id", "target_kind", "target_key", "holder",
 			"acquired_at", "renewed_at", "expires_at", "released_at", "release_reason",
 		},
-		"operations":       {"operation_id", "command", "request_hash", "result", "recorded_at"},
-		"project_units":    {"id", "path", "kind", "discovered_at"},
-		"file_index_state": {"path", "unit_id", "language", "content_hash", "state", "attempts", "last_error", "indexed_at"},
+		"operations":             {"operation_id", "command", "request_hash", "result", "recorded_at"},
+		"project_units":          {"id", "path", "kind", "discovered_at"},
+		"file_index_state":       {"path", "unit_id", "language", "content_hash", "state", "attempts", "last_error", "indexed_at"},
+		"file_index_generations": {"path", "generation"},
 		"symbols": {
 			"id", "unit_id", "path", "logical_key", "kind", "name", "container", "start_line", "start_col",
 			"end_line", "end_col", "signature_hash", "body_hash", "structure_hash",
@@ -53,6 +54,7 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		"change_operations":           {"operation_id", "task_id", "request_hash", "result", "recorded_at"},
 		"scope_attributions":          {"logical_key", "change_id", "decided_by", "reason", "decided_at"},
 		"evidence":                    {"evidence_id", "profile", "type", "command_argv", "status", "exit_code", "output", "snapshot_hash", "provenance", "created_at", "operation_id", "request_hash"},
+		"guard_baselines":             {"project_id", "workspace_id", "head_oid", "format_version", "mappings_json", "captured_at"},
 	}
 
 	got := map[string][]string{}

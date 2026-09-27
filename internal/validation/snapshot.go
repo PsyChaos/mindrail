@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,28 +20,67 @@ type Snapshot struct {
 	Hash  string
 }
 
-// SnapshotScope hashes every regular file under root-relative paths: dirs
-// walked, symlinks never followed, content addressed. Scope escapes
-// (anything resolving outside root, including through ..) and missing or
-// unreadable files fail before any execution: evidence never binds a
-// partial scope (decision D-158).
+// SnapshotScope hashes every regular file selected by root-relative literal
+// files, directories, or glob declarations. Directories are walked, ** is
+// recursive, symlinks are never followed, and content is addressed. Scope
+// escapes and missing/unreadable literal paths fail before execution; an empty
+// glob match remains a valid declaration whose later membership can go stale.
 func SnapshotScope(root string, paths []string) (Snapshot, error) {
+	root = filepath.Clean(root)
 	if root == "" || !filepath.IsAbs(root) {
 		return Snapshot{}, invalidInput("snapshot needs an absolute root")
 	}
 	if len(paths) == 0 {
 		return Snapshot{}, invalidInput("snapshot needs a scope")
 	}
-	var files []string
+	files, err := enumerateScope(root, paths)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	hash, err := hashFiles(root, files)
+	if err != nil {
+		return Snapshot{}, invalidInput("snapshot scope unreadable: " + err.Error())
+	}
+	return Snapshot{Scope: files, Hash: hash}, nil
+}
+
+// enumerateScope resolves literal files/directories and root-relative glob
+// declarations into one sorted regular-file set. A whole-segment ** matches
+// zero or more directories, which is the recursive form used by validation
+// profile configuration. Symlinks are never followed.
+func enumerateScope(root string, paths []string) ([]string, error) {
+	files := make([]string, 0)
 	seen := map[string]bool{}
 	for _, rel := range paths {
-		abs := filepath.Join(root, filepath.FromSlash(rel))
+		fromSlash := filepath.FromSlash(rel)
+		cleanRel := filepath.Clean(fromSlash)
+		if rel == "" || filepath.IsAbs(fromSlash) || cleanRel == ".." ||
+			strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+			return nil, invalidInput("snapshot scope escapes the root: " + rel)
+		}
+		if strings.ContainsAny(rel, "*?[") {
+			pattern := filepath.ToSlash(cleanRel)
+			if _, err := matchScopeGlob(pattern, ""); err != nil {
+				return nil, invalidInput("snapshot scope has an invalid glob: " + rel)
+			}
+			err := enumerateScopeGlob(root, pattern, func(file string) {
+				if !seen[file] {
+					seen[file] = true
+					files = append(files, file)
+				}
+			})
+			if err != nil {
+				return nil, invalidInput("snapshot scope unreadable: " + rel)
+			}
+			continue
+		}
+		abs := filepath.Join(root, cleanRel)
 		if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-			return Snapshot{}, invalidInput("snapshot scope escapes the root: " + rel)
+			return nil, invalidInput("snapshot scope escapes the root: " + rel)
 		}
 		info, err := os.Lstat(abs)
 		if err != nil {
-			return Snapshot{}, invalidInput("snapshot scope unreadable: " + rel)
+			return nil, invalidInput("snapshot scope unreadable: " + rel)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			continue
@@ -75,15 +115,166 @@ func SnapshotScope(root string, paths []string) (Snapshot, error) {
 			return nil
 		})
 		if err != nil {
-			return Snapshot{}, invalidInput("snapshot scope unreadable: " + rel)
+			return nil, invalidInput("snapshot scope unreadable: " + rel)
 		}
 	}
 	sort.Strings(files)
-	hash, err := hashFiles(root, files)
-	if err != nil {
-		return Snapshot{}, invalidInput("snapshot scope unreadable: " + err.Error())
+	return files, nil
+}
+
+// enumerateScopeGlob walks only path segments that can still produce a match.
+// Ordinary wildcards consume exactly one segment; ** consumes zero or more
+// directory segments. This keeps an unreadable, unmatched sibling outside the
+// declaration while still failing closed when an unreadable directory could
+// contain a selected file.
+func enumerateScopeGlob(root, pattern string, add func(string)) error {
+	parts := strings.Split(pattern, "/")
+	type state struct {
+		dir   string
+		index int
 	}
-	return Snapshot{Scope: files, Hash: hash}, nil
+	visited := map[state]bool{}
+	var walk func(string, int) error
+	walk = func(dir string, index int) error {
+		if index >= len(parts) {
+			return nil
+		}
+		key := state{dir: dir, index: index}
+		if visited[key] {
+			return nil
+		}
+		visited[key] = true
+		segment := parts[index]
+		last := index == len(parts)-1
+
+		if segment == "**" {
+			if !last {
+				if err := walk(dir, index+1); err != nil {
+					return err
+				}
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return err
+			}
+			for _, entry := range entries {
+				if entry.Type()&fs.ModeSymlink != 0 {
+					continue
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				file := filepath.Join(dir, entry.Name())
+				if info.IsDir() {
+					if err := walk(file, index); err != nil {
+						return err
+					}
+					continue
+				}
+				if last && info.Mode().IsRegular() {
+					add(file)
+				}
+			}
+			return nil
+		}
+
+		if strings.ContainsAny(segment, "*?[") {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return err
+			}
+			for _, entry := range entries {
+				matched, err := path.Match(segment, entry.Name())
+				if err != nil {
+					return err
+				}
+				if !matched || entry.Type()&fs.ModeSymlink != 0 {
+					continue
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				file := filepath.Join(dir, entry.Name())
+				if last {
+					if info.Mode().IsRegular() {
+						add(file)
+					}
+					continue
+				}
+				if info.IsDir() {
+					if err := walk(file, index+1); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
+
+		file := filepath.Join(dir, filepath.FromSlash(segment))
+		info, err := os.Lstat(file)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if last {
+			if info.Mode().IsRegular() {
+				add(file)
+			}
+			return nil
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		return walk(file, index+1)
+	}
+	return walk(root, 0)
+}
+
+func matchScopeGlob(pattern, name string) (bool, error) {
+	patternParts := strings.Split(pattern, "/")
+	nameParts := []string{}
+	if name != "" {
+		nameParts = strings.Split(name, "/")
+	}
+	for _, part := range patternParts {
+		if part == "**" {
+			continue
+		}
+		if _, err := path.Match(part, ""); err != nil {
+			return false, err
+		}
+	}
+	type state struct{ pattern, name int }
+	memo := map[state]bool{}
+	seen := map[state]bool{}
+	var match func(int, int) bool
+	match = func(pi, ni int) bool {
+		key := state{pattern: pi, name: ni}
+		if seen[key] {
+			return memo[key]
+		}
+		seen[key] = true
+		var matched bool
+		switch {
+		case pi == len(patternParts):
+			matched = ni == len(nameParts)
+		case patternParts[pi] == "**":
+			matched = match(pi+1, ni) || ni < len(nameParts) && match(pi, ni+1)
+		case ni < len(nameParts):
+			segment, _ := path.Match(patternParts[pi], nameParts[ni])
+			matched = segment && match(pi+1, ni+1)
+		}
+		memo[key] = matched
+		return matched
+	}
+	return match(0, 0), nil
 }
 
 // hashFiles content-addresses sorted absolute files as rel + NUL + content

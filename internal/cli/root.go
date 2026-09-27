@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,13 +39,22 @@ type Options struct {
 	// hold the lock and drive a command into the refusal, which at the
 	// production budget would cost five seconds per row.
 	BusyTimeout time.Duration
+
+	// RunMCP starts the SDK-backed MCP server for a resolved working directory.
+	// It is injected by cmd/mindrail so ordinary CLI commands remain isolated
+	// from the SDK's network-capable optional transports.
+	RunMCP func(context.Context, string) error
 }
 
 const rootLong = `Mindrail is a local engineering gate for AI coding agents.
 
 It discovers the actual code change from Git, binds durable engineering
 constraints to it, requires snapshot-bound evidence and denies completion
-when the proof is insufficient.`
+when the proof is insufficient.
+
+Start once with mindrail init. Your coding agent handles task coordination
+through MCP. Use status, doctor and verify to inspect readiness and changes.
+Advanced commands remain available through mindrail help <command>.`
 
 // Root is the command tree together with the command line it was handed.
 //
@@ -118,7 +128,16 @@ func NewRootWith(o Options) *Root {
 		newVerifyCommand(o),
 		newKnowledgeCommand(o),
 		newHookCommand(o),
+		newMCPCommand(o),
 	)
+	for _, sub := range cmd.Commands() {
+		switch sub.Name() {
+		case "init", "status", "doctor", "verify", "version":
+		default:
+			sub.Hidden = true
+		}
+	}
+	cmd.CompletionOptions.HiddenDefaultCmd = true
 
 	// A help command of our own, because cobra's prints the whole root help on
 	// stdout and exits 0 for a topic it cannot find. `mindrail help bogus` is a
@@ -351,10 +370,48 @@ func suggestionRemedies(cmd *cobra.Command, args []string) []string {
 // at this point — the command body never ran — so the envelope is still the only
 // value on it.
 func (r *Root) emitUsageEnvelope(cmd *cobra.Command, verdict error) {
+	// MCP owns stdout even when parsing refuses the invocation before RunE;
+	// its typed usage error is rendered on stderr by the process entrypoint.
+	if r.mcpRequested(cmd) {
+		return
+	}
 	if !r.jsonRequested() {
 		return
 	}
 	_ = app.WriteJSON(cmd.OutOrStdout(), publishedName(cmd), nil, nil, verdict)
+}
+
+// mcpRequested inspects only the first positional command candidate, skipping
+// values of known root flags. Unknown leading flags can make Cobra resolve the
+// wrong command, so a path or help argument named "mcp" must not be mistaken
+// for a protocol invocation when deciding whether to emit a usage envelope.
+func (r *Root) mcpRequested(cmd *cobra.Command) bool {
+	if len(r.commandLine) == 0 {
+		return cmd.Name() == "mcp" && cmd.Parent() == r.Command
+	}
+	for i := 0; i < len(r.commandLine); i++ {
+		arg := r.commandLine[i]
+		if arg == "--" {
+			return false
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, hasValue := strings.Cut(arg[2:], "=")
+			flag := r.PersistentFlags().Lookup(name)
+			if flag != nil && flag.NoOptDefVal == "" && !hasValue {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+			flag := r.PersistentFlags().ShorthandLookup(arg[1:2])
+			if flag != nil && flag.NoOptDefVal == "" && len(arg) == 2 {
+				i++
+			}
+			continue
+		}
+		return arg == "mcp"
+	}
+	return false
 }
 
 // publishedName is the command a reader typed, without the binary in front of
@@ -409,7 +466,53 @@ func (r *Root) jsonRequested() bool {
 // Execute runs the command tree against ctx and returns the command error
 // unchanged so that main can map it to an exit code.
 func Execute(ctx context.Context) error {
-	root := NewRoot()
-	root.SetArgs(os.Args[1:])
+	return ExecuteWith(ctx, os.Args[1:], Options{})
+}
+
+// ExecuteWith runs an explicit command line against injected process seams.
+// Production main uses it to wire the public MCP stdio launcher without making
+// the normal CLI package depend on the MCP SDK.
+func ExecuteWith(ctx context.Context, args []string, options Options) error {
+	root := NewRootWith(options)
+	root.SetArgs(args)
 	return root.ExecuteContext(ctx)
+}
+
+// newMCPCommand reserves the public `mindrail mcp` command in the normal
+// command tree while leaving SDK construction to the executable's composition
+// root. MCP owns stdout, so this command must not emit CLI envelopes itself.
+func newMCPCommand(o Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "mcp",
+		Short: "Serve Mindrail's MCP tools over stdio",
+		Long:  "Serve the Mindrail MCP protocol over stdin/stdout. Diagnostics go to stderr; stdout is protocol-only.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if o.RunMCP == nil {
+				return app.NewError(app.CodeStartupIncomplete, app.KindUnavailable,
+					"MCP server launcher is unavailable in this command composition",
+					"The MCP protocol did not start.",
+					"Run the packaged mindrail binary, which wires the MCP launcher.")
+			}
+			if jsonRequested, _ := cmd.Flags().GetBool(flagJSON); jsonRequested {
+				return app.NewError(app.CodeCommandLineInvalid, app.KindUsage,
+					"mcp owns stdout for protocol frames; remove --json",
+					"The MCP server did not start and stdout remained protocol-only.",
+					"Re-run `mindrail mcp` without --json and connect an MCP stdio client.")
+			}
+			startDir, _ := cmd.Flags().GetString(flagChdir)
+			if startDir == "" {
+				var err error
+				startDir, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			root, err := filepath.Abs(startDir)
+			if err != nil {
+				return err
+			}
+			return o.RunMCP(cmd.Context(), root)
+		},
+	}
 }

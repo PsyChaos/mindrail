@@ -10,6 +10,7 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/changes"
 	"github.com/PsyChaos/mindrail/internal/coordination"
+	"github.com/PsyChaos/mindrail/internal/git"
 )
 
 // insideRoot reports whether an absolute path resolves inside the
@@ -39,7 +40,7 @@ func (s *Server) projectID(ctx context.Context, taskID string) (string, error) {
 
 func (s *Server) registerLifecycle() {
 	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolClaim, Description: "Claim an open task under a session."}, s.claim)
-	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolBeforeChange, Description: "Declare the scope a change will cover."}, s.beforeChange)
+	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolBeforeChange, Description: "Declare scope before editing. Required if automatic bootstrap omitted paths or an edit expands the declared scope."}, s.beforeChange)
 	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolAfterChange, Description: "Record a change with its attribution findings."}, s.afterChange)
 }
 
@@ -95,7 +96,7 @@ func (s *Server) claim(ctx context.Context, _ *sdk.CallToolRequest, in ClaimIn) 
 // BeforeChangeIn declares scope. Claim is never required: the store needs
 // the task to exist, not to be claimed (decision D-197).
 type BeforeChangeIn struct {
-	TaskID      string   `json:"task_id"`
+	TaskID      string   `json:"task_id,omitempty"`
 	Paths       []string `json:"paths"`
 	OperationID *string  `json:"operation_id,omitempty"`
 }
@@ -107,9 +108,24 @@ type BeforeChangeOut struct {
 	Scope  []string `json:"scope"`
 }
 
-func (s *Server) beforeChange(ctx context.Context, _ *sdk.CallToolRequest, in BeforeChangeIn) (*sdk.CallToolResult, BeforeChangeOut, error) {
-	if in.TaskID == "" || len(in.Paths) == 0 {
+func (s *Server) beforeChange(ctx context.Context, req *sdk.CallToolRequest, in BeforeChangeIn) (*sdk.CallToolResult, BeforeChangeOut, error) {
+	if len(in.Paths) == 0 {
 		return nil, BeforeChangeOut{}, Invalid("before_change needs a task and paths")
+	}
+	if in.TaskID == "" {
+		if in.OperationID != nil {
+			return nil, BeforeChangeOut{}, Invalid("automatic before_change does not accept operation_id")
+		}
+		run, _, err := s.automaticRun(ctx, req, "")
+		if err != nil {
+			return nil, BeforeChangeOut{}, err
+		}
+		run, err = s.workflow.ExtendScope(ctx, run.RunKey, in.Paths)
+		if err != nil {
+			return nil, BeforeChangeOut{}, err
+		}
+		s.updateAutomatic(req.Session, run)
+		return nil, BeforeChangeOut{TaskID: run.TaskID, Files: len(run.Paths), Scope: run.Paths}, nil
 	}
 	for _, path := range in.Paths {
 		if !insideRoot(s.root, path) {
@@ -139,7 +155,7 @@ func (s *Server) beforeChange(ctx context.Context, _ *sdk.CallToolRequest, in Be
 // AfterChangeIn records a change. OperationID absent runs without
 // idempotency; present replays the first delivery.
 type AfterChangeIn struct {
-	TaskID      string  `json:"task_id"`
+	TaskID      string  `json:"task_id,omitempty"`
 	OperationID *string `json:"operation_id,omitempty"`
 }
 
@@ -162,9 +178,32 @@ type AfterChangeOut struct {
 	Pending  bool                 `json:"pending"`
 }
 
-func (s *Server) afterChange(ctx context.Context, _ *sdk.CallToolRequest, in AfterChangeIn) (*sdk.CallToolResult, AfterChangeOut, error) {
+func (s *Server) afterChange(ctx context.Context, req *sdk.CallToolRequest, in AfterChangeIn) (*sdk.CallToolResult, AfterChangeOut, error) {
 	if in.TaskID == "" {
-		return nil, AfterChangeOut{}, Invalid("after_change needs a task")
+		if in.OperationID != nil {
+			return nil, AfterChangeOut{}, Invalid("automatic after_change does not accept operation_id")
+		}
+		run, _, err := s.automaticRun(ctx, req, "")
+		if err != nil {
+			return nil, AfterChangeOut{}, err
+		}
+		projectID, err := s.projectID(ctx, run.TaskID)
+		if err != nil {
+			return nil, AfterChangeOut{}, err
+		}
+		runner := git.NewExecRunner()
+		baseline, err := s.store.EnsureGuardBaseline(ctx, projectID, s.root, runner)
+		if err != nil {
+			return nil, AfterChangeOut{}, err
+		}
+		reconciled, err := s.workflow.Reconcile(ctx, run.RunKey)
+		if err != nil {
+			return nil, AfterChangeOut{}, err
+		}
+		if err := baseline.CheckHead(ctx, s.root, runner); err != nil {
+			return nil, AfterChangeOut{}, err
+		}
+		return s.describeChange(ctx, reconciled.Change.ID, run.TaskID)
 	}
 	var operationID string
 	if in.OperationID != nil {
@@ -174,8 +213,16 @@ func (s *Server) afterChange(ctx context.Context, _ *sdk.CallToolRequest, in Aft
 	if err != nil {
 		return nil, AfterChangeOut{}, err
 	}
+	runner := git.NewExecRunner()
+	baseline, err := s.store.EnsureGuardBaseline(ctx, projectID, s.root, runner)
+	if err != nil {
+		return nil, AfterChangeOut{}, err
+	}
 	change, err := s.changes.AfterChange(ctx, projectID, s.root, in.TaskID, operationID)
 	if err != nil {
+		return nil, AfterChangeOut{}, err
+	}
+	if err := baseline.CheckHead(ctx, s.root, runner); err != nil {
 		return nil, AfterChangeOut{}, err
 	}
 	return s.describeChange(ctx, change.ID, in.TaskID)

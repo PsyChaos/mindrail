@@ -65,6 +65,7 @@ func TestMainImportsAreMinimal(t *testing.T) {
 	allowed := map[string]struct{}{
 		module + "/internal/app": {},
 		module + "/internal/cli": {},
+		module + "/internal/mcp": {},
 	}
 
 	mainDir := filepath.Join(root, "cmd", "mindrail")
@@ -79,7 +80,7 @@ func TestMainImportsAreMinimal(t *testing.T) {
 				continue
 			}
 			if _, ok := allowed[imported]; !ok {
-				t.Errorf("%s imports %q; package main may import only the standard library, internal/app and internal/cli",
+				t.Errorf("%s imports %q; package main may import only the standard library, internal/app, internal/cli and the MCP stdio launcher",
 					filepath.Base(file), imported)
 			}
 		}

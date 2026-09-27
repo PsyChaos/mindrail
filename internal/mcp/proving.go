@@ -14,7 +14,7 @@ const (
 
 func (s *Server) registerProving() {
 	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolValidate, Description: "Run a named project validation profile to evidence."}, s.validate)
-	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolComplete, Description: "Decide local completion over composed evidence."}, s.complete)
+	sdk.AddTool(s.impl, &sdk.Tool{Name: ToolComplete, Description: "Evaluate explicit completion, or finalize the current automatic run."}, s.complete)
 }
 
 // ValidateIn names a project profile. Budget, escalation and approval are

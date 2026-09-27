@@ -24,10 +24,9 @@ var (
 	dirty     = ""
 )
 
-// mcpCompatibility is what this binary offers over MCP. MR-014 through MR-016
-// own the server; until then the honest answer is none, and an agent that reads
-// this field must be able to trust it (decision D-09).
-const mcpCompatibility = "none"
+// mcpCompatibility is the public MCP transport this binary serves. An agent
+// reads it before choosing `mindrail mcp` as its stdio command.
+const mcpCompatibility = "stdio"
 
 // versionInfo is the `mindrail version` payload.
 //

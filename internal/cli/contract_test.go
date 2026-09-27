@@ -223,6 +223,9 @@ func TestVersionJSONContract(t *testing.T) {
 			t.Errorf("data.%s is empty", key)
 		}
 	}
+	if got := data["mcp_compatibility"]; got != "stdio" {
+		t.Errorf("mcp_compatibility = %v, want stdio", got)
+	}
 	if data["write_schema_version"] != float64(1) {
 		t.Errorf("write_schema_version = %v, want 1", data["write_schema_version"])
 	}
@@ -2147,6 +2150,12 @@ func newInitializedRepo(t *testing.T) string {
 	repo := newRepo(t)
 	if got := run(t, repo, "init"); got.code != app.ExitSuccess {
 		t.Fatalf("init exited %d: %v\n%s", got.code, got.err, got.stdout)
+	}
+	// Legacy command tests start with no source dirt and no HEAD. Agent setup
+	// is exercised separately against fresh init; discard only its generated
+	// instruction file in this historical fixture rather than invent a commit.
+	if err := os.Remove(filepath.Join(repo, "AGENTS.md")); err != nil {
+		t.Fatal(err)
 	}
 	return repo
 }
