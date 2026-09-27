@@ -9,8 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/PsyChaos/mindrail/internal/credential"
 )
 
 type panicReader struct{}
@@ -20,6 +24,34 @@ func (panicReader) Read([]byte) (int, error) { panic("stdin must not be read") }
 type failingReader struct{ err error }
 
 func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+type fakeCredentialStore struct {
+	value    string
+	getErr   error
+	getCalls int
+}
+
+func (s *fakeCredentialStore) Get(context.Context) (string, error) {
+	s.getCalls++
+	return s.value, s.getErr
+}
+
+func (*fakeCredentialStore) Set(context.Context, string) error { return nil }
+func (*fakeCredentialStore) Delete(context.Context) error      { return nil }
+
+type blockingAgentCredentialStore struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingAgentCredentialStore) Get(context.Context) (string, error) {
+	close(s.started)
+	<-s.release
+	return "late secret", nil
+}
+
+func (*blockingAgentCredentialStore) Set(context.Context, string) error { return nil }
+func (*blockingAgentCredentialStore) Delete(context.Context) error      { return nil }
 
 func executeAgentRoute(t *testing.T, deps agentCommandDeps, input io.Reader) (string, error) {
 	t.Helper()
@@ -46,7 +78,7 @@ func TestAgentRouteMissingKeyDoesNotReadOrLaunch(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", " \t\n")
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { t.Fatal("python lookup called"); return "", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			t.Fatal("python called")
 			return nil, nil
 		},
@@ -61,13 +93,190 @@ func TestAgentRouteMissingKeyDoesNotReadOrLaunch(t *testing.T) {
 	}
 }
 
+func TestAgentRouteEnvironmentKeyWinsOverKeyring(t *testing.T) {
+	const envSecret = "ENV_SENTINEL_SECRET"
+	t.Setenv("TYPESAFE_API_KEY", envSecret)
+	store := &fakeCredentialStore{value: "KEYRING_SENTINEL_SECRET"}
+	input := `{"goal":"choose","tools":[{"id":"rg","description":"search"}]}`
+	deps := agentCommandDeps{
+		store:      store,
+		findPython: func() (string, error) { return "/trusted/python3", nil },
+		runPython: func(_ context.Context, _ string, gotInput []byte, key string) ([]byte, error) {
+			if key != envSecret {
+				t.Fatalf("resolved key = %q", key)
+			}
+			if string(gotInput) != input || bytes.Contains(gotInput, []byte(envSecret)) {
+				t.Fatalf("secret entered adapter request: %q", gotInput)
+			}
+			return []byte(`{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"ok","reason":"advice_available","selections":{"tool":{"candidate":"rg","confidence":0.9,"accepted":true,"reason":"accepted"}}}`), nil
+		},
+	}
+	output, err := executeAgentRoute(t, deps, strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.getCalls != 0 {
+		t.Fatal("keyring was read despite environment override")
+	}
+	if strings.Contains(output, envSecret) {
+		t.Fatal("environment secret leaked to output")
+	}
+}
+
+func TestAgentRouteUsesKeyringWithoutMutatingParentEnvironment(t *testing.T) {
+	const keyringSecret = "KEYRING_SENTINEL_SECRET"
+	t.Setenv("TYPESAFE_API_KEY", " \t")
+	store := &fakeCredentialStore{value: keyringSecret}
+	deps := agentCommandDeps{
+		store:      store,
+		findPython: func() (string, error) { return "/trusted/python3", nil },
+		runPython: func(_ context.Context, _ string, input []byte, key string) ([]byte, error) {
+			if key != keyringSecret {
+				t.Fatalf("resolved key = %q", key)
+			}
+			if bytes.Contains(input, []byte(keyringSecret)) {
+				t.Fatal("keyring secret entered adapter request")
+			}
+			return []byte(`{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"fallback","reason":"provider_unavailable","selections":{}}`), nil
+		},
+	}
+	output, err := executeAgentRoute(t, deps, strings.NewReader(`{"goal":"choose"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.getCalls != 1 {
+		t.Fatalf("keyring Get calls = %d", store.getCalls)
+	}
+	if got := os.Getenv("TYPESAFE_API_KEY"); got != " \t" {
+		t.Fatalf("parent environment mutated: %q", got)
+	}
+	if strings.Contains(output, keyringSecret) {
+		t.Fatal("keyring secret leaked to output")
+	}
+}
+
+func TestAgentRouteMissingKeyringCredentialIsDisabled(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	store := &fakeCredentialStore{getErr: credential.ErrNotFound}
+	deps := agentCommandDeps{
+		store: store,
+		findPython: func() (string, error) {
+			t.Fatal("python lookup called")
+			return "", nil
+		},
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
+			t.Fatal("python called")
+			return nil, nil
+		},
+	}
+	output, err := executeAgentRoute(t, deps, panicReader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := decodeAgentResult(t, output)
+	if result["status"] != "disabled" || result["reason"] != "api_key_missing" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestAgentRouteUnavailableKeyringFailsOpenWithoutDisclosure(t *testing.T) {
+	const sentinel = "KEYRING_ERROR_SENTINEL"
+	t.Setenv("TYPESAFE_API_KEY", "")
+	store := &fakeCredentialStore{getErr: errors.New("backend failure " + sentinel)}
+	deps := agentCommandDeps{
+		store: store,
+		findPython: func() (string, error) {
+			t.Fatal("python lookup called")
+			return "", nil
+		},
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
+			t.Fatal("python called")
+			return nil, nil
+		},
+	}
+	output, err := executeAgentRoute(t, deps, panicReader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output, sentinel) {
+		t.Fatal("credential backend detail leaked")
+	}
+	result := decodeAgentResult(t, output)
+	if result["status"] != "fallback" || result["reason"] != "credential_unavailable" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestAgentRouteBlockingCredentialStoreFailsOpenOnContextDeadline(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	store := &blockingAgentCredentialStore{started: make(chan struct{}), release: make(chan struct{})}
+	deps := agentCommandDeps{
+		store: store,
+		findPython: func() (string, error) {
+			t.Fatal("python lookup called")
+			return "", nil
+		},
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
+			t.Fatal("python called")
+			return nil, nil
+		},
+	}
+	command := newAgentCommandWith(deps)
+	command.SetArgs([]string{"route"})
+	command.SetIn(panicReader{})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- command.ExecuteContext(ctx) }()
+	<-store.started
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("agent route hung on a blocking credential store")
+	}
+	close(store.release)
+
+	result := decodeAgentResult(t, output.String())
+	if result["status"] != "fallback" || result["reason"] != "credential_unavailable" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestJEVChildEnvironmentContainsOnlyResolvedKey(t *testing.T) {
+	const resolved = "RESOLVED_SENTINEL_SECRET"
+	hostile := map[string]string{
+		"HTTPS_PROXY":      "http://attacker.invalid:8080",
+		"ALL_PROXY":        "socks5://attacker.invalid:1080",
+		"SSL_CERT_FILE":    "/attacker/ca.pem",
+		"SSL_CERT_DIR":     "/attacker/certs",
+		"LD_PRELOAD":       "/attacker/inject.so",
+		"PYTHONPATH":       "/attacker/python",
+		"TYPESAFE_API_KEY": "INHERITED_SENTINEL_SECRET",
+	}
+	for name, value := range hostile {
+		t.Setenv(name, value)
+	}
+	got := jevChildEnvironment(resolved)
+	want := []string{"TYPESAFE_API_KEY=" + resolved}
+	if !slices.Equal(got, want) {
+		t.Fatalf("child environment = %#v want %#v", got, want)
+	}
+}
+
 func TestAgentRoutePassesInputAndValidResultThrough(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "env-secret")
 	wantInput := `{"goal":"choose","tools":[{"id":"rg","description":"search"}]}`
 	wantOutput := `{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"ok","reason":"advice_available","selections":{"tool":{"candidate":"rg","confidence":0.9,"accepted":true,"reason":"accepted"}}}`
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(_ context.Context, python string, input []byte) ([]byte, error) {
+		runPython: func(_ context.Context, python string, input []byte, _ string) ([]byte, error) {
 			if python != "/trusted/python3" {
 				t.Fatalf("python=%q", python)
 			}
@@ -90,7 +299,7 @@ func TestAgentRouteMissingInterpreterFailsOpen(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "env-secret")
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "", exec.ErrNotFound },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			t.Fatal("python called")
 			return nil, nil
 		},
@@ -110,7 +319,7 @@ func TestAgentRouteInvalidOutputIsSanitized(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", secret)
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return []byte("traceback contains " + secret), errors.New("launch detail " + secret)
 		},
 	}
@@ -133,7 +342,7 @@ func TestAgentRouteRejectsSecretInOtherwiseValidOutput(t *testing.T) {
 	adapterOutput := `{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"fallback","reason":"provider_` + secret + `","selections":{}}`
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return []byte(adapterOutput), nil
 		},
 	}
@@ -154,7 +363,7 @@ func TestAgentRouteRejectsInconsistentFallbackStatus(t *testing.T) {
 	adapterOutput := `{"version":1,"enabled":false,"advisory":true,"mode":"shadow","status":"fallback","reason":"provider_unavailable","selections":{}}`
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return []byte(adapterOutput), nil
 		},
 	}
@@ -172,7 +381,7 @@ func TestAgentRouteBoundsStdinBeforeLaunchingAdapter(t *testing.T) {
 	read := -1
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(_ context.Context, _ string, input []byte) ([]byte, error) {
+		runPython: func(_ context.Context, _ string, input []byte, _ string) ([]byte, error) {
 			read = len(input)
 			return []byte(`{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"fallback","reason":"input_too_large","selections":{}}`), nil
 		},
@@ -197,7 +406,7 @@ func TestAgentRouteRejectsOversizedAdapterOutput(t *testing.T) {
 	adapterOutput := prefix + strings.Repeat("x", maxAgentRouteOutput) + suffix
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return []byte(adapterOutput), nil
 		},
 	}
@@ -229,7 +438,7 @@ func TestAgentRouteReadErrorFailsOpenWithoutLaunching(t *testing.T) {
 	sentinel := errors.New("sentinel read failure")
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			t.Fatal("adapter launched after stdin read error")
 			return nil, nil
 		},
@@ -248,7 +457,7 @@ func TestAgentRouteAddsRecordTerminatingNewline(t *testing.T) {
 	adapterOutput := `{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"fallback","reason":"provider_unavailable","selections":{}}`
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return []byte(adapterOutput), nil
 		},
 	}
@@ -265,7 +474,7 @@ func TestAgentRouteClassifiesInterpreterRaceAsUnavailable(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "env-secret")
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return nil, &os.PathError{Op: "fork/exec", Path: "/trusted/python3", Err: os.ErrNotExist}
 		},
 	}
@@ -288,7 +497,7 @@ func TestAgentRouteRejectsEscapedSecretAndInconsistentStatus(t *testing.T) {
 	for _, adapterOutput := range outputs {
 		deps := agentCommandDeps{
 			findPython: func() (string, error) { return "/trusted/python3", nil },
-			runPython: func(context.Context, string, []byte) ([]byte, error) {
+			runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 				return []byte(adapterOutput), nil
 			},
 		}
@@ -320,7 +529,7 @@ func TestAgentRouteRejectsInvalidSelectionContracts(t *testing.T) {
 	for _, adapterOutput := range outputs {
 		deps := agentCommandDeps{
 			findPython: func() (string, error) { return "/trusted/python3", nil },
-			runPython: func(context.Context, string, []byte) ([]byte, error) {
+			runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 				return []byte(adapterOutput), nil
 			},
 		}
@@ -340,7 +549,7 @@ func TestAgentRouteRejectsSuccessfulAdviceFromFailedProcess(t *testing.T) {
 	valid := `{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"ok","reason":"advice_available","selections":{"tool":{"candidate":"rg","confidence":0.9,"accepted":true,"reason":"accepted"}}}`
 	deps := agentCommandDeps{
 		findPython: func() (string, error) { return "/trusted/python3", nil },
-		runPython: func(context.Context, string, []byte) ([]byte, error) {
+		runPython: func(context.Context, string, []byte, string) ([]byte, error) {
 			return []byte(valid), errors.New("process crashed after output")
 		},
 	}

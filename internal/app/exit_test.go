@@ -52,6 +52,7 @@ func TestExitCodeFromDomainError(t *testing.T) {
 		{"unopenable database is unavailable", domain(CodeRuntimeDBUnavailable, KindUnavailable), ExitUnavailable},
 		{"corrupt database is unavailable", domain(CodeRuntimeDBCorrupt, KindUnavailable), ExitUnavailable},
 		{"git timeout is unavailable", domain(CodeGitTimeout, KindUnavailable), ExitUnavailable},
+		{"indeterminate JEV disconnect is unavailable", domain(CodeJEVDisconnectIndeterminate, KindUnavailable), ExitUnavailable},
 		{"migration failure is an operation failure", domain(CodeMigrationFailed, KindFailed), ExitFailed},
 		{"schema ahead is an operation failure", domain(CodeRuntimeDBSchemaTooNew, KindFailed), ExitFailed},
 		{"denied classification is honoured", domain(CodeKnowledgeSchemaUnsupported, KindDenied), ExitDenied},

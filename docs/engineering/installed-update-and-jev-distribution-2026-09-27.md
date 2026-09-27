@@ -1,8 +1,14 @@
 # Installed update and JEV distribution — 2026-09-27
 
-Status: FROZEN FOR IMPLEMENTATION
+Status: IMPLEMENTED; credential-distribution portions superseded by
+[`client-neutral-jev-credentials-2026-09-27.md`](client-neutral-jev-credentials-2026-09-27.md)
 Tier: 3 — backwards compatibility, repository setup, deployment, and secret handling
 Base: `64e8f8a533dc6bbf34b60edd8455f5d5120ddace`
+
+This document remains the historical contract for repository update and embedded
+adapter distribution. Its environment-only key provisioning requirements are no
+longer current; the client-neutral credential document defines the active OS-keyring
+and browser-connection behavior.
 
 ## Original request
 

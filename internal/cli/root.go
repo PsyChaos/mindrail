@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/credential"
 	"github.com/PsyChaos/mindrail/internal/git"
 )
 
@@ -44,6 +45,11 @@ type Options struct {
 	// It is injected by cmd/mindrail so ordinary CLI commands remain isolated
 	// from the SDK's network-capable optional transports.
 	RunMCP func(context.Context, string) error
+
+	// RunJEVConnect owns the loopback-only browser flow. It is injected by the
+	// executable so package cli—and therefore repository initialization—keeps
+	// its compile-time no-network boundary.
+	RunJEVConnect func(context.Context, credential.Store) error
 }
 
 const rootLong = `Mindrail is a local engineering gate for AI coding agents.
@@ -119,6 +125,7 @@ func NewRootWith(o Options) *Root {
 	cmd.AddCommand(
 		newAgentCommand(),
 		newInitCommand(o),
+		newJEVCommand(o),
 		newUpdateCommand(o),
 		newStatusCommand(o),
 		newDoctorCommand(o),
@@ -134,7 +141,7 @@ func NewRootWith(o Options) *Root {
 	)
 	for _, sub := range cmd.Commands() {
 		switch sub.Name() {
-		case "init", "update", "status", "doctor", "verify", "version":
+		case "init", "jev", "update", "status", "doctor", "verify", "version":
 		default:
 			sub.Hidden = true
 		}

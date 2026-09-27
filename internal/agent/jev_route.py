@@ -438,7 +438,12 @@ def route(caller_input: Any, *, api_key: Any = _FROM_ENV,
         method="POST",
     )
     if opener is None:
-        opener = urllib.request.build_opener(_NoRedirect())
+        # Never honor process proxy settings for the secret-bearing request.
+        # The Go bridge also supplies a minimal environment, but keeping this
+        # defense in the canonical adapter protects direct/offline use too.
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _NoRedirect()
+        )
 
     try:
         with _provider_deadline(TIMEOUT_SECONDS) as deadline:

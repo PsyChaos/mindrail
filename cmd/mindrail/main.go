@@ -10,6 +10,7 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/cli"
+	"github.com/PsyChaos/mindrail/internal/jevconnect"
 	mindrailMCP "github.com/PsyChaos/mindrail/internal/mcp"
 )
 
@@ -18,7 +19,8 @@ func main() {
 	defer stop()
 
 	err := cli.ExecuteWith(ctx, os.Args[1:], cli.Options{
-		RunMCP: mindrailMCP.RunStdio,
+		RunMCP:        mindrailMCP.RunStdio,
+		RunJEVConnect: jevconnect.Connect,
 	})
 
 	// The command has drained its own application by the time Execute returns:

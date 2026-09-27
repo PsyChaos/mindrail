@@ -30,6 +30,13 @@ const (
 	CodeWorkspaceRegistrationFailed Code = "WORKSPACE_REGISTRATION_FAILED"
 	CodeConfigInvalid               Code = "CONFIG_INVALID"
 	CodeConfigUnknownEnvVar         Code = "CONFIG_UNKNOWN_ENV_VAR"
+	CodeJEVPersistenceUnsupported   Code = "JEV_PERSISTENCE_UNSUPPORTED"
+	CodeJEVCredentialUnavailable    Code = "JEV_CREDENTIAL_UNAVAILABLE"
+	CodeJEVBrowserUnavailable       Code = "JEV_BROWSER_UNAVAILABLE"
+	CodeJEVConnectUnavailable       Code = "JEV_CONNECT_UNAVAILABLE"
+	CodeJEVConnectTimeout           Code = "JEV_CONNECT_TIMEOUT"
+	CodeJEVConnectCancelled         Code = "JEV_CONNECT_CANCELLED"
+	CodeJEVDisconnectIndeterminate  Code = "JEV_DISCONNECT_INDETERMINATE"
 	CodeKnowledgeUnreadable         Code = "KNOWLEDGE_UNREADABLE"
 	CodeKnowledgeSchemaUnsupported  Code = "KNOWLEDGE_SCHEMA_UNSUPPORTED"
 
@@ -289,6 +296,13 @@ var allCodes = sortedCodes([]Code{
 	CodeWorkspaceRegistrationFailed,
 	CodeConfigInvalid,
 	CodeConfigUnknownEnvVar,
+	CodeJEVPersistenceUnsupported,
+	CodeJEVCredentialUnavailable,
+	CodeJEVBrowserUnavailable,
+	CodeJEVConnectUnavailable,
+	CodeJEVConnectTimeout,
+	CodeJEVConnectCancelled,
+	CodeJEVDisconnectIndeterminate,
 	CodeKnowledgeUnreadable,
 	CodeKnowledgeSchemaUnsupported,
 	CodeKnowledgeInvalid,

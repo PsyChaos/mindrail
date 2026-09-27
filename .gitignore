@@ -198,6 +198,7 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 *.tmp
 *.bak
 /tmp/
+.mindrail-task-tmp/
 .temp_files/
 
 .wrongstack/

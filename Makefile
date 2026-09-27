@@ -137,7 +137,7 @@ check: fmt-check vet test install-test ## Local quality gate (fast: runs on ever
 # unknown contents. A tree git cannot read at all stamps "unknown"; a
 # tree whose git answers brokenly stamps "dirty" — a repository no git
 # command can inspect must never claim clean.
-RELEASE_VERSION ?= 0.1.0
+RELEASE_VERSION ?= 0.2.0
 RELEASE_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 RELEASE_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
 RELEASE_DIRTY := $(shell if ! git rev-parse --git-dir >/dev/null 2>&1; then echo unknown; else \

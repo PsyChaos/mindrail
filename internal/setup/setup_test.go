@@ -225,7 +225,8 @@ func TestExistingManagedInstructionsUpgradeJEVAndRemainStable(t *testing.T) {
 	text := string(agentsBody)
 	for _, required := range []string{
 		"mindrail agent route", "TYPESAFE_API_KEY", "top-level status is `ok`",
-		"password manager or OS keyring", "never raw secrets, logs, or source code",
+		"mindrail jev connect", "operating-system keyring", "optional CI/container override",
+		"never raw secrets, logs, or source code",
 		"ambiguous tool, agent, model, or reasoning-effort choice",
 		"required `goal` string", "optional", "`context` JSON", "one or more",
 		"`tools`, `agents`, `models`, or `efforts`", "exactly `id` and `description`",
@@ -233,6 +234,11 @@ func TestExistingManagedInstructionsUpgradeJEVAndRemainStable(t *testing.T) {
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("upgraded guidance missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"environment that launches the agent", "Use it only when"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("upgraded guidance retained client-specific activation text %q", forbidden)
 		}
 	}
 	if !strings.HasPrefix(text, userPrefix) || !strings.HasSuffix(text, userSuffix) || strings.Contains(text, "Old initialized guidance") {

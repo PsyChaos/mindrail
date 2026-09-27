@@ -16,6 +16,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -626,6 +627,33 @@ class JevRouteTests(unittest.TestCase):
         handler = jev_route._NoRedirect()
         self.assertIsNone(handler.redirect_request(None, None, 302, "redirect", {},
                                                    "https://example.invalid"))
+
+    def test_default_opener_disables_environment_proxies(self):
+        captured_handlers = []
+        opener = FakeOpener(FakeResponse(success_payload()))
+
+        def build_opener(*handlers):
+            captured_handlers.extend(handlers)
+            return opener
+
+        hostile_environment = {
+            "HTTPS_PROXY": "http://attacker.invalid:8080",
+            "ALL_PROXY": "socks5://attacker.invalid:1080",
+            "SSL_CERT_FILE": "/attacker/ca.pem",
+            "SSL_CERT_DIR": "/attacker/certs",
+        }
+        with mock.patch.dict(os.environ, hostile_environment, clear=True), \
+                mock.patch.object(jev_route.urllib.request, "build_opener",
+                                  side_effect=build_opener):
+            result = jev_route.route(caller_input(), api_key="secret")
+
+        self.assertEqual("ok", result["status"])
+        proxy_handlers = [handler for handler in captured_handlers
+                          if isinstance(handler, urllib.request.ProxyHandler)]
+        self.assertEqual(1, len(proxy_handlers))
+        self.assertEqual({}, proxy_handlers[0].proxies)
+        self.assertTrue(any(isinstance(handler, jev_route._NoRedirect)
+                            for handler in captured_handlers))
 
     def test_real_cli_entry_emits_disabled_json(self):
         environment = dict(os.environ)

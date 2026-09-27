@@ -11,26 +11,31 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	agentasset "github.com/PsyChaos/mindrail/internal/agent"
+	"github.com/PsyChaos/mindrail/internal/credential"
 )
 
 const (
-	maxAgentRouteInput  = 64*1024 + 1
-	maxAgentRouteOutput = 1024 * 1024
+	maxAgentRouteInput       = 64*1024 + 1
+	maxAgentRouteOutput      = 1024 * 1024
+	jevCredentialReadTimeout = time.Second
 )
 
 type agentCommandDeps struct {
 	findPython func() (string, error)
-	runPython  func(context.Context, string, []byte) ([]byte, error)
+	runPython  func(context.Context, string, []byte, string) ([]byte, error)
+	store      credential.Store
 }
 
 func newAgentCommand() *cobra.Command {
 	return newAgentCommandWith(agentCommandDeps{
 		findPython: findTrustedPython,
 		runPython:  runEmbeddedJEV,
+		store:      credential.NewOSStore(),
 	})
 }
 
@@ -55,9 +60,12 @@ func newAgentCommandWith(deps agentCommandDeps) *cobra.Command {
 }
 
 func runAgentRoute(cmd *cobra.Command, deps agentCommandDeps) error {
-	key := os.Getenv("TYPESAFE_API_KEY")
-	if strings.TrimSpace(key) == "" {
+	key, keyState := resolveJEVKey(cmd.Context(), deps.store)
+	if keyState == "missing" {
 		return writeAgentResult(cmd.OutOrStdout(), disabledAgentResult())
+	}
+	if keyState == "unavailable" {
+		return writeAgentResult(cmd.OutOrStdout(), fallbackAgentResult("credential_unavailable"))
 	}
 
 	python, err := deps.findPython()
@@ -69,7 +77,7 @@ func runAgentRoute(cmd *cobra.Command, deps agentCommandDeps) error {
 	if readErr != nil {
 		return writeAgentResult(cmd.OutOrStdout(), fallbackAgentResult("adapter_failure"))
 	}
-	raw, runErr := deps.runPython(cmd.Context(), python, input)
+	raw, runErr := deps.runPython(cmd.Context(), python, input, key)
 	status, valid := validateAgentResult(raw, key, allowedRouteCandidates(input))
 	if valid && acceptableAdapterExit(status, runErr) {
 		if len(raw) == 0 || raw[len(raw)-1] != '\n' {
@@ -84,6 +92,45 @@ func runAgentRoute(cmd *cobra.Command, deps agentCommandDeps) error {
 		reason = "python_unavailable"
 	}
 	return writeAgentResult(cmd.OutOrStdout(), fallbackAgentResult(reason))
+}
+
+func resolveJEVKey(ctx context.Context, store credential.Store) (string, string) {
+	if key := os.Getenv("TYPESAFE_API_KEY"); strings.TrimSpace(key) != "" {
+		return key, "available"
+	}
+	if store == nil {
+		return "", "missing"
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	readCtx, cancel := context.WithTimeout(ctx, jevCredentialReadTimeout)
+	defer cancel()
+	type readResult struct {
+		key string
+		err error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		key, err := store.Get(readCtx)
+		result <- readResult{key: key, err: err}
+	}()
+
+	var key string
+	var err error
+	select {
+	case value := <-result:
+		key, err = value.key, value.err
+	case <-readCtx.Done():
+		return "", "unavailable"
+	}
+	if errors.Is(err, credential.ErrNotFound) || (err == nil && strings.TrimSpace(key) == "") {
+		return "", "missing"
+	}
+	if err != nil {
+		return "", "unavailable"
+	}
+	return key, "available"
 }
 
 func disabledAgentResult() map[string]any {
@@ -247,15 +294,22 @@ func jsonValueContainsSecret(value any, key string) bool {
 	return false
 }
 
-func runEmbeddedJEV(ctx context.Context, python string, input []byte) ([]byte, error) {
+func runEmbeddedJEV(ctx context.Context, python string, input []byte, key string) ([]byte, error) {
 	command := exec.CommandContext(ctx, python, "-I", "-c", agentasset.JevRouteSource())
 	var output boundedBuffer
 	command.Stdin = bytes.NewReader(input)
-	command.Env = os.Environ()
+	command.Env = jevChildEnvironment(key)
 	command.Stdout = &output
 	command.Stderr = io.Discard
 	err := command.Run()
 	return output.Bytes(), err
+}
+
+func jevChildEnvironment(key string) []string {
+	// The interpreter path is absolute and the adapter needs no inherited
+	// process settings. In particular, proxy, TLS trust, and dynamic-loader
+	// variables must not reach the secret-bearing child.
+	return []string{"TYPESAFE_API_KEY=" + key}
 }
 
 type boundedBuffer struct{ bytes.Buffer }

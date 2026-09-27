@@ -97,6 +97,30 @@ func TestTheKnowledgeCodesCarryTheSpellingConsumersBranchOn(t *testing.T) {
 	}
 }
 
+func TestTheJEVCodesCarryTheSpellingConsumersBranchOn(t *testing.T) {
+	pinned := []struct {
+		got  Code
+		want string
+	}{
+		{CodeJEVPersistenceUnsupported, "JEV_PERSISTENCE_UNSUPPORTED"},
+		{CodeJEVCredentialUnavailable, "JEV_CREDENTIAL_UNAVAILABLE"},
+		{CodeJEVBrowserUnavailable, "JEV_BROWSER_UNAVAILABLE"},
+		{CodeJEVConnectUnavailable, "JEV_CONNECT_UNAVAILABLE"},
+		{CodeJEVConnectTimeout, "JEV_CONNECT_TIMEOUT"},
+		{CodeJEVConnectCancelled, "JEV_CONNECT_CANCELLED"},
+		{CodeJEVDisconnectIndeterminate, "JEV_DISCONNECT_INDETERMINATE"},
+	}
+
+	for _, tc := range pinned {
+		if string(tc.got) != tc.want {
+			t.Errorf("a JEV code reaches the wire as %q, want %q", tc.got, tc.want)
+		}
+		if !IsRegistered(tc.got) {
+			t.Errorf("code %q is pinned here but not registered", tc.got)
+		}
+	}
+}
+
 // TestRegisteredCodesIsNotAliased guards the registry against a caller that
 // sorts or truncates the slice it was handed.
 func TestRegisteredCodesIsNotAliased(t *testing.T) {
