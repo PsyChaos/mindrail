@@ -3,9 +3,156 @@ package index
 import (
 	"context"
 	"database/sql"
+	"sort"
+	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 )
+
+// GuardReference is one invariant-bound production identity referenced by a
+// named test declaration in a changed file. The set-based read keeps commit
+// guard cost proportional to changed test paths instead of all bindings.
+type GuardReference struct {
+	InvariantID   string
+	ProductionUID string
+	Path          string
+	Test          string
+}
+
+// LogicalBinding is one invariant binding resolved through an identity's
+// current or previous exact logical key.
+type LogicalBinding struct {
+	LogicalKey    string
+	InvariantID   string
+	ProductionUID string
+}
+
+// BindingsForLogicalKeys resolves exact current and historical identity keys
+// in bounded chunks. Previous keys keep renamed baseline references stable.
+func (s *Store) BindingsForLogicalKeys(ctx context.Context, keys []string) ([]LogicalBinding, error) {
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	unique := map[string]bool{}
+	for _, key := range keys {
+		if key != "" {
+			unique[key] = true
+		}
+	}
+	ordered := make([]string, 0, len(unique))
+	for key := range unique {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	var out []LogicalBinding
+	const chunkSize = 100
+	for start := 0; start < len(ordered); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ordered) {
+			end = len(ordered)
+		}
+		placeholders := make([]string, end-start)
+		args := make([]any, 0, 2*(end-start))
+		for _, key := range ordered[start:end] {
+			placeholders[len(args)] = "?"
+			args = append(args, key)
+		}
+		for _, key := range ordered[start:end] {
+			args = append(args, key)
+		}
+		in := strings.Join(placeholders, ",")
+		rows, err := s.db.QueryContext(ctx, `WITH matched(logical_key, symbol_uid) AS (
+			SELECT logical_key, symbol_uid FROM symbol_identities WHERE logical_key IN (`+in+`)
+			UNION
+			SELECT previous.value, identities.symbol_uid
+			FROM symbol_identities identities, json_each(identities.previous_keys) previous
+			WHERE previous.value IN (`+in+`)
+		)
+		SELECT DISTINCT matched.logical_key, b.invariant_id, b.symbol_uid
+		FROM matched JOIN invariant_symbol_bindings b ON b.symbol_uid = matched.symbol_uid
+		ORDER BY matched.logical_key, b.invariant_id, b.symbol_uid`, args...)
+		if err != nil {
+			return nil, corruptState(err)
+		}
+		for rows.Next() {
+			var row LogicalBinding
+			if err := rows.Scan(&row.LogicalKey, &row.InvariantID, &row.ProductionUID); err != nil {
+				rows.Close()
+				return nil, corruptState(err)
+			}
+			out = append(out, row)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, corruptState(err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, corruptState(err)
+		}
+	}
+	return out, nil
+}
+
+// GuardReferencesInFiles returns guard mappings for exact test paths. Paths
+// are queried in bounded chunks to stay below SQLite variable limits.
+func (s *Store) GuardReferencesInFiles(ctx context.Context, paths []string) ([]GuardReference, error) {
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	unique := map[string]bool{}
+	for _, path := range paths {
+		if path != "" {
+			unique[path] = true
+		}
+	}
+	ordered := make([]string, 0, len(unique))
+	for path := range unique {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	var out []GuardReference
+	const chunkSize = 200
+	for start := 0; start < len(ordered); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ordered) {
+			end = len(ordered)
+		}
+		placeholders := make([]string, end-start)
+		args := make([]any, end-start)
+		for i, path := range ordered[start:end] {
+			placeholders[i] = "?"
+			args[i] = path
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT b.invariant_id, b.symbol_uid,
+			r.path, ref.name
+			FROM invariant_symbol_bindings b
+			JOIN symbols target ON target.symbol_uid = b.symbol_uid
+			JOIN symbol_references r ON r.resolved_symbol_id = target.id
+			JOIN symbols ref ON ref.unit_id = r.unit_id AND ref.path = r.path
+				AND ref.logical_key = r.referrer_key
+			WHERE r.path IN (`+strings.Join(placeholders, ",")+`)
+			ORDER BY b.invariant_id, b.symbol_uid, r.path, ref.name`, args...)
+		if err != nil {
+			return nil, corruptState(err)
+		}
+		for rows.Next() {
+			var row GuardReference
+			if err := rows.Scan(&row.InvariantID, &row.ProductionUID, &row.Path, &row.Test); err != nil {
+				rows.Close()
+				return nil, corruptState(err)
+			}
+			out = append(out, row)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, corruptState(err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, corruptState(err)
+		}
+	}
+	return out, nil
+}
 
 // Referrer is one resolved reference edge into a symbol: who refers, from
 // which file, with the words the extraction saw. MR-009's traversal reads

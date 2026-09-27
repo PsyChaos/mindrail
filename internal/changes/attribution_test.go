@@ -246,6 +246,48 @@ func TestAttributeTaskNeverInventsPaths(t *testing.T) {
 	}
 }
 
+// A removed staged symbol has no live symbols row after indexing. Global
+// commit attribution recovers its exact file from the qualified logical key
+// and the fixed staged projection, so normal test deletion remains owned.
+func TestAttributeChangesResolvesRemovedSymbolFromProjection(t *testing.T) {
+	fx := newServiceFixture(t)
+	file := "/r/pkg/a.py"
+	key := `["pkg/a.py","function:test_a"]`
+	attributionSetup(t, fx, "TSK-A", file, file, "", "")
+	change, err := fx.store.EnsureOpenChange(t.Context(), "", "verify-staged-v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.db.ExecContext(t.Context(), `INSERT INTO symbol_identities
+		(symbol_uid, project_id, unit_id, language, logical_key, previous_keys, created_at)
+		VALUES (?, 'PRJ-1', ?, 'python', ?, '[]', '2026-09-23T10:00:00Z')`,
+		"SYM-REMOVED", fx.units["py"].ID, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.store.UpsertFileRows(t.Context(), change.ID, []changes.FileChange{
+		{Path: file, Kind: changes.FileModified, Via: changes.ViaReconcile},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.store.UpsertSymbolRows(t.Context(), change.ID, []changes.SymbolChange{
+		{Key: key, UID: "SYM-REMOVED", Kind: changes.SymbolRemoved, Via: changes.ViaReconcile},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := fx.service.AttributeChanges(t.Context(), []string{change.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answer.Symbols) != 1 {
+		t.Fatalf("symbols = %d, want 1", len(answer.Symbols))
+	}
+	symbol := answer.Symbols[0]
+	if symbol.File != file || symbol.Outcome != changes.AttributedOutcome {
+		t.Fatalf("symbol = %+v, want removed symbol attributed through %s", symbol, file)
+	}
+}
+
 // TestAttributeTaskWithoutChangeIsEmpty pins the no-discovery rule: a task
 // with a baseline but no open Change evaluates empty, never an error.
 func TestAttributeTaskWithoutChangeIsEmpty(t *testing.T) {

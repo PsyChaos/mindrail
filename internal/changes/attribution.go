@@ -100,6 +100,59 @@ func (s *Store) ReadAllBaselines(ctx context.Context) (map[string][]string, erro
 	return scopes, nil
 }
 
+// ReadTaskStates returns the lifecycle state beside each durable task scope.
+// Commit attribution prefers a current owner when one exists, but a completed
+// task remains the owner of work committed after completion.
+func (s *Store) ReadTaskStates(ctx context.Context) (map[string]string, error) {
+	if err := s.requireSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id, state FROM tasks ORDER BY task_id`)
+	if err != nil {
+		return nil, corruptState(err)
+	}
+	defer rows.Close()
+	states := map[string]string{}
+	for rows.Next() {
+		var taskID, state string
+		if err := rows.Scan(&taskID, &state); err != nil {
+			return nil, corruptState(err)
+		}
+		states[taskID] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, corruptState(err)
+	}
+	return states, nil
+}
+
+// PreferredTaskOwners resolves exact file ownership. Non-terminal owners take
+// precedence over historical owners so a completed overlapping task does not
+// compete with current work. When no current owner exists, completed ownership
+// remains valid for the normal complete-then-commit workflow.
+func PreferredTaskOwners(scopes map[string][]string, states map[string]string, file string) []string {
+	var current, historical []string
+	for taskID, scope := range scopes {
+		for _, candidate := range scope {
+			if candidate != file {
+				continue
+			}
+			if states[taskID] == "COMPLETED" {
+				historical = append(historical, taskID)
+			} else if states[taskID] != "ABANDONED" {
+				current = append(current, taskID)
+			}
+			break
+		}
+	}
+	if len(current) > 0 {
+		sort.Strings(current)
+		return current
+	}
+	sort.Strings(historical)
+	return historical
+}
+
 // AttributeTask answers which Change owns each of one task's changed
 // symbols, and which of its changed files drift outside its declared scope.
 // A task with no open Change has no discovery rows to judge: the answer is

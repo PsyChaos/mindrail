@@ -12,7 +12,7 @@ import (
 
 // ParseSchemaVersion invalidates snapshots when extraction semantics change.
 // It is independent of the database migration version.
-const ParseSchemaVersion = 2
+const ParseSchemaVersion = 3
 
 var (
 	ErrSyntax      = errors.New("source contains syntax errors")
@@ -68,6 +68,8 @@ type Reference struct {
 	Name, Kind                                      string
 	Range                                           Range
 	ReferrerLocalKey, ScopeLocalKey, TargetLocalKey string
+	ImportedModule, ImportedName                    string
+	ImportedRelative                                bool
 }
 
 type Facts struct {

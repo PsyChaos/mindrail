@@ -236,6 +236,16 @@ func qualifiedKey(unit ProjectUnit, path, local string) string {
 	return string(key)
 }
 
+// RequalifyLogicalKey keeps an exact path-independent local identity while
+// moving its qualified file component to path.
+func RequalifyLogicalKey(unit ProjectUnit, path, key string) (string, bool) {
+	var qualified [2]string
+	if err := json.Unmarshal([]byte(key), &qualified); err != nil || qualified[1] == "" {
+		return "", false
+	}
+	return qualifiedKey(unit, path, qualified[1]), true
+}
+
 // ExtractCurrent parses source bytes without touching the database: change
 // discovery needs current facts beside stored ones before indexing replaces
 // them. Unsupported languages return no symbols and no error — there is no
@@ -267,6 +277,59 @@ func (i *Indexer) ExtractCurrent(ctx context.Context, unit ProjectUnit, path str
 			EndLine: int(sym.Range.EndRow), EndCol: int(sym.Range.EndColumn), SignatureHash: sym.SignatureHash, BodyHash: sym.BodyHash, StructureHash: sym.StructureHash})
 	}
 	return symbols, nil
+}
+
+// GuardSourceReference is one named declaration's reference in supplied
+// source bytes. It is intentionally path-independent; verification maps the
+// baseline file onto the changed destination path after parsing.
+type GuardSourceReference struct {
+	Test           string
+	TargetKey      string
+	TargetModule   string
+	TargetText     string
+	TargetLanguage string
+	TargetRelative bool
+}
+
+// ExtractGuardReferences parses source bytes without mutating the index and
+// returns only references whose referrer is a named declaration.
+func (i *Indexer) ExtractGuardReferences(ctx context.Context, unit ProjectUnit, path string, content []byte) ([]GuardSourceReference, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if i == nil || i.registry == nil {
+		return nil, invalidInput("guard extraction needs a parser registry")
+	}
+	if unit.ID == "" || !isCleanAbsolutePath(unit.Path) || !isCleanAbsolutePath(path) || !pathInRoot(unit.Path, path) || path == unit.Path {
+		return nil, invalidInput("guard source path must be clean, absolute and inside its project unit")
+	}
+	adapter, ok := i.registry.Lookup(path)
+	if !ok {
+		return nil, nil
+	}
+	facts, err := i.extract(ctx, adapter, parser.SourceFile{Content: content})
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]string, len(facts.Symbols))
+	for _, symbol := range facts.Symbols {
+		if symbol.LocalKey != "" && symbol.Name != "" {
+			names[symbol.LocalKey] = symbol.Name
+		}
+	}
+	var out []GuardSourceReference
+	for _, ref := range facts.References {
+		if test := names[ref.ReferrerLocalKey]; test != "" && ref.Name != "" {
+			targetText := ref.Name
+			if ref.ImportedName != "" {
+				targetText = ref.ImportedName
+			}
+			out = append(out, GuardSourceReference{Test: test,
+				TargetKey: qualifiedKey(unit, path, ref.TargetLocalKey), TargetModule: ref.ImportedModule, TargetText: targetText,
+				TargetLanguage: adapter.Info().Language, TargetRelative: ref.ImportedRelative})
+		}
+	}
+	return out, nil
 }
 
 func mapFacts(projectID string, unit ProjectUnit, path, language, hash string, state FileState, lastError string, facts parser.Facts, hints []RenameHint) FileFacts {

@@ -118,7 +118,7 @@ func TestIdenticalContentSharesOneValidatedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(entry, []byte(info.Language)) || !bytes.Contains(entry, []byte(info.GrammarVersion)) ||
-		!bytes.Contains(entry, []byte("\"schema_version\":2")) ||
+		!bytes.Contains(entry, []byte("\"schema_version\":3")) ||
 		!bytes.Contains(entry, []byte(contentHash(source))) {
 		t.Fatalf("entry omits key identity: %s", entry)
 	}

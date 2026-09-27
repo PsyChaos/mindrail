@@ -9,16 +9,19 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/gate"
 	"github.com/PsyChaos/mindrail/internal/git"
+	"github.com/PsyChaos/mindrail/internal/index/symbol"
+	"github.com/PsyChaos/mindrail/internal/knowledge/record"
 	"github.com/PsyChaos/mindrail/internal/testguard"
 )
 
 // VerifyCI evaluates a committed range: knowledge first (fail-closed),
-// then base/head resolution, merge-base computation, range reconciliation
-// into rows, and the shared gate. baseRev empty selects the documented
+// then base/head resolution, merge-base computation, immutable baseline guard
+// capture, range reconciliation into rows, and the shared gate. baseRev empty selects the documented
 // default chain (decision D-223); headRev empty means HEAD. Resolution and
 // merge-base failures refuse with usage codes before any source check — a
 // range that cannot be named must never read as a clean one.
@@ -80,19 +83,22 @@ func (s *Service) VerifyCI(ctx context.Context, projectID, root string, runner g
 	if err := refuseDeskMismatch(ctx, runner, root, headSHA); err != nil {
 		return Verdict{}, err
 	}
-	result, err := s.changes.ReconcileRange(ctx, projectID, root, mergeBase, headSHA, runner)
-	if err != nil {
-		return Verdict{}, err
-	}
 	knowledge, err := loadScopes(ctx, root)
 	if err != nil {
 		return Verdict{}, err
 	}
-	ranged, err := s.guardRange(ctx, root, runner, mergeBase, headSHA, result.Change.ID, knowledge)
+	if err := s.prepareCIBindings(ctx, projectID, root, knowledge); err != nil {
+		return Verdict{}, err
+	}
+	ranged, err := s.guardRange(ctx, root, runner, mergeBase, headSHA, knowledge)
 	if err != nil {
 		return Verdict{}, err
 	}
-	composed, err := s.compose(ctx, result.Change.ID, knowledge, ranged)
+	result, err := s.changes.ReconcileRange(ctx, projectID, root, mergeBase, headSHA, runner)
+	if err != nil {
+		return Verdict{}, err
+	}
+	composed, err := s.compose(ctx, result.Change.ID, knowledge, ranged, false)
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -100,11 +106,54 @@ func (s *Service) VerifyCI(ctx context.Context, projectID, root string, runner g
 	return composed, nil
 }
 
+func (s *Service) prepareCIBindings(ctx context.Context, projectID, root string, knowledge knowledgeScope) error {
+	var targets []string
+	var explicit []record.Invariant
+	for _, invariant := range knowledge.records {
+		if invariant.Status != record.StatusActive ||
+			(invariant.Scope.Level != record.ScopeFile && invariant.Scope.Level != record.ScopeSymbol) {
+			continue
+		}
+		file := invariant.Scope.Target
+		if at := strings.LastIndex(file, ":"); at >= 0 {
+			file = file[:at]
+		}
+		if file != "" {
+			targets = append(targets, filepath.Join(root, filepath.FromSlash(file)))
+			explicit = append(explicit, invariant)
+		}
+	}
+	if len(explicit) == 0 {
+		return nil
+	}
+	if err := s.changes.IndexPaths(ctx, projectID, root, targets); err != nil {
+		return err
+	}
+	units, err := s.indexes.ListUnits(ctx, root)
+	if err != nil {
+		return err
+	}
+	bindings, err := symbol.New(s.indexes)
+	if err != nil {
+		return err
+	}
+	report, err := bindings.RefreshBindings(ctx, projectID, root, units, explicit)
+	if err != nil {
+		return err
+	}
+	for _, outcome := range report.Outcomes {
+		if outcome.Blocking && outcome.Finding != nil {
+			return outcome.Finding
+		}
+	}
+	return nil
+}
+
 // compose runs the gate over one reconciled change: global attribution,
 // bindings with knowledge severity, ambiguities, the caller's guard
 // findings, and staged-scope drift. It is the half VerifyStaged and
 // VerifyCI share (decision D-225); only the file source differs.
-func (s *Service) compose(ctx context.Context, changeID string, knowledge knowledgeScope, guard []testguard.Finding) (Verdict, error) {
+func (s *Service) compose(ctx context.Context, changeID string, knowledge knowledgeScope, guard []testguard.Finding, requireFileOwner bool) (Verdict, error) {
 	attributed, err := s.changes.AttributeChanges(ctx, []string{changeID})
 	if err != nil {
 		return Verdict{}, err
@@ -147,7 +196,7 @@ func (s *Service) compose(ctx context.Context, changeID string, knowledge knowle
 		}
 	}
 	input.Guard = guard
-	drifted, err := s.stagedDrift(ctx, changeID)
+	drifted, err := s.stagedDrift(ctx, changeID, requireFileOwner)
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -162,27 +211,39 @@ func (s *Service) compose(ctx context.Context, changeID string, knowledge knowle
 // guardRange runs the guard over ranged test files: before bytes from the
 // merge-base SHA, after bytes from head, mapping from bound-uid referrers
 // resolved to test names — the staged rule with committed sides.
-func (s *Service) guardRange(ctx context.Context, root string, runner git.CommandRunner, mergeBaseSHA, headSHA, changeID string, knowledge knowledgeScope) ([]testguard.Finding, error) {
-	files, err := s.changes.Store().ReadChangeFiles(ctx, changeID)
+func (s *Service) guardRange(ctx context.Context, root string, runner git.CommandRunner, mergeBaseSHA, headSHA string, knowledge knowledgeScope) ([]testguard.Finding, error) {
+	files, err := s.changes.Store().DiscoverFilesRange(ctx, runner, root, mergeBaseSHA, headSHA)
 	if err != nil {
 		return nil, err
 	}
 	var deltas []testguard.FileDelta
+	baselinePaths := map[string]string{}
 	for _, file := range files {
+		baselinePath := file.Path
+		if file.OldPath != "" {
+			baselinePath = file.OldPath
+		}
 		language, ok := guardLanguage(file.Path)
-		if !ok || !isTestFile(file.Path) {
+		if !ok {
+			language, ok = guardLanguage(baselinePath)
+		}
+		if !ok || (!isTestFile(file.Path) && !isTestFile(baselinePath)) {
 			continue
 		}
-		rel, err := filepath.Rel(root, file.Path)
+		beforeRel, err := filepath.Rel(root, baselinePath)
 		if err != nil {
 			continue
 		}
-		rel = filepath.ToSlash(rel)
-		before, _, err := git.ShowRev(ctx, runner, root, mergeBaseSHA, rel)
+		beforeRel = filepath.ToSlash(beforeRel)
+		before, _, err := git.ShowRev(ctx, runner, root, mergeBaseSHA, beforeRel)
 		if err != nil {
 			return nil, err
 		}
-		after, _, err := git.ShowRev(ctx, runner, root, headSHA, rel)
+		afterRel, err := filepath.Rel(root, file.Path)
+		if err != nil {
+			continue
+		}
+		after, _, err := git.ShowRev(ctx, runner, root, headSHA, filepath.ToSlash(afterRel))
 		if err != nil {
 			return nil, err
 		}
@@ -192,11 +253,12 @@ func (s *Service) guardRange(ctx context.Context, root string, runner git.Comman
 			Before:   before,
 			After:    after,
 		})
+		baselinePaths[file.Path] = baselinePath
 	}
 	if len(deltas) == 0 {
 		return nil, nil
 	}
-	mappings, err := s.guardMappings(ctx, changeID, knowledge, deltas)
+	mappings, err := s.guardMappings(ctx, root, knowledge, deltas, baselinePaths)
 	if err != nil {
 		return nil, err
 	}

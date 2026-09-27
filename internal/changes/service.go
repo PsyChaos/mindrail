@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/index/inventory"
@@ -41,6 +42,7 @@ type Service struct {
 	indexes   *index.Store
 	indexer   *index.Indexer
 	automatic *AutomaticScope
+	stagedMu  *sync.Mutex
 }
 
 // New builds a Service over the three stores it composes.
@@ -48,7 +50,71 @@ func New(store *Store, indexes *index.Store, indexer *index.Indexer) (*Service, 
 	if store == nil || indexes == nil || indexer == nil {
 		return nil, fmt.Errorf("changes: service needs a change store, an index store and an indexer")
 	}
-	return &Service{store: store, indexes: indexes, indexer: indexer}, nil
+	return &Service{store: store, indexes: indexes, indexer: indexer, stagedMu: &sync.Mutex{}}, nil
+}
+
+// ExtractGuardReferences parses baseline test bytes without changing the
+// semantic index. Verify uses it when persisted referrer rows are absent or
+// were replaced by an earlier verification attempt.
+func (s *Service) ExtractGuardReferences(ctx context.Context, repoRoot, path string, content []byte) ([]index.GuardSourceReference, error) {
+	units, err := s.indexes.ListUnits(ctx, repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	unit, ok := s.unitFor(path, units)
+	if !ok {
+		return nil, nil
+	}
+	return s.indexer.ExtractGuardReferences(ctx, unit, path, content)
+}
+
+// RequalifyGuardKey maps a baseline key's exact local identity to a renamed
+// destination path without falling back to symbol-name equality.
+func (s *Service) RequalifyGuardKey(ctx context.Context, repoRoot, path, key string) (string, bool, error) {
+	units, err := s.indexes.ListUnits(ctx, repoRoot)
+	if err != nil {
+		return "", false, err
+	}
+	unit, ok := s.unitFor(path, units)
+	if !ok {
+		return "", false, nil
+	}
+	qualified, ok := index.RequalifyLogicalKey(unit, path, key)
+	return qualified, ok, nil
+}
+
+// IndexPaths refreshes explicit committed knowledge targets from a clean
+// checkout. Missing targets are left for binding refresh to classify.
+func (s *Service) IndexPaths(ctx context.Context, projectID, repoRoot string, paths []string) error {
+	units, err := s.indexes.ListUnits(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return statErr
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		unit, ok := s.unitFor(path, units)
+		if !ok {
+			continue
+		}
+		if _, err := s.indexer.IndexFile(ctx, projectID, unit, path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // unitFor resolves the owning unit for an absolute path, or reports that no
@@ -70,39 +136,62 @@ func (s *Service) unitFor(path string, units []index.ProjectUnit) (index.Project
 // stored row removed. Unsupported or out-of-unit files contribute nothing
 // beyond their file row.
 func (s *Service) SyncFileSymbols(ctx context.Context, projectID, repoRoot, changeID, path, content string, deleted bool, hints []index.RenameHint, via string, units []index.ProjectUnit) error {
-	if err := ctx.Err(); err != nil {
+	if changeID == "" {
+		return invalidInput("symbol sync needs a change")
+	}
+	rows, err := s.fileSymbolRows(ctx, projectID, repoRoot, path, content, deleted, hints, via, units, nil, false)
+	if err != nil {
 		return err
 	}
-	if projectID == "" || changeID == "" || path == "" {
-		return invalidInput("symbol sync needs a project, a change and a path")
+	return s.store.UpsertSymbolRows(ctx, changeID, rows)
+}
+
+// fileSymbolRows performs extraction and indexing but leaves publication to
+// its caller. Staged reconciliation uses this seam to assemble a complete
+// projection in memory before one atomic database replacement.
+func (s *Service) fileSymbolRows(ctx context.Context, projectID, repoRoot, path, content string, deleted bool, hints []index.RenameHint, via string, units []index.ProjectUnit, stagedProjection []SymbolChange, stagedProjectionAuthoritative bool) ([]SymbolChange, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if projectID == "" || path == "" {
+		return nil, invalidInput("symbol sync needs a project and a path")
 	}
 	switch via {
 	case ViaBaseline, ViaReconcile:
 	default:
-		return invalidInput("symbol sync provenance must be baseline or reconcile")
+		return nil, invalidInput("symbol sync provenance must be baseline or reconcile")
 	}
 	unit, ok := s.unitFor(path, units)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	stored, err := s.indexes.ListSymbolsInFile(ctx, unit.ID, path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if deleted {
-		return s.store.UpsertSymbolRows(ctx, changeID, removedSymbols(stored, via))
+		if stagedProjectionAuthoritative {
+			return stagedProjection, nil
+		}
+		return removedSymbols(stored, via), nil
 	}
 	current, err := s.indexer.ExtractCurrent(ctx, unit, path, []byte(content))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if current == nil {
-		return nil
+		return nil, nil
 	}
 	delta := diffSymbols(stored, current, via)
+	// Staged verification judges HEAD-to-index bytes, independent of whatever
+	// state the shared semantic index currently holds. This also makes retries
+	// safe when a failed earlier attempt indexed one file before publication.
+	if stagedProjectionAuthoritative {
+		delta = stagedProjection
+	}
 	indexed, err := s.indexer.IndexFile(ctx, projectID, unit, path, hints...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Telemetry folds what indexing already measured: parse time and the
 	// write-transaction wait. The results were already computed; observing
@@ -111,9 +200,9 @@ func (s *Service) SyncFileSymbols(ctx context.Context, projectID, repoRoot, chan
 	perf.Observe(ctx, perf.SQLiteWait, indexed.WriteStats.Waited)
 	resolved, err := s.attachUIDs(ctx, unit.ID, path, delta)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.store.UpsertSymbolRows(ctx, changeID, resolved)
+	return resolved, nil
 }
 
 // removedSymbols marks every stored row removed with its last-known hashes.

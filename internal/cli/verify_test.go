@@ -211,6 +211,29 @@ func seedGuardBinding(t *testing.T, repo, test string) {
 	writeGuardInvariant(t, repo)
 }
 
+// seedGuardProductionBinding adds only the production invariant binding.
+// Unlike seedGuardBinding it creates no baseline test symbol or reference;
+// CI must recover those from merge-base bytes.
+func seedGuardProductionBinding(t *testing.T, repo, test string) {
+	t.Helper()
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	abs := filepath.Join(repo, filepath.FromSlash(test))
+	var helperUID string
+	if err := db.DB.QueryRowContext(t.Context(),
+		`SELECT symbol_uid FROM symbols WHERE path = ? AND name = 'helper'`, abs).Scan(&helperUID); err != nil {
+		t.Fatalf("helper not indexed: %v", err)
+	}
+	if _, err := db.DB.ExecContext(t.Context(), `INSERT INTO invariant_symbol_bindings
+		(invariant_id, symbol_uid, status, updated_at)
+		VALUES ('INV-G', ?, 'bound', '2026-09-23T10:00:00Z')`, helperUID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // writeGuardInvariant drops the CRITICAL INV-G record the guard beat
 // binds against. Callers judging a committed range commit it first.
 func writeGuardInvariant(t *testing.T, repo string) {
@@ -232,7 +255,37 @@ func writeGuardInvariant(t *testing.T, repo string) {
 // deny at the gate.
 func TestVerifyStagedAllowWarnOnly(t *testing.T) {
 	repo := newInitializedRepo(t)
-	writeRepoFile(t, repo, "README.md", "# docs\n")
+	readme := writeRepoFile(t, repo, "README.md", "# docs\n")
+	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projectID, workspaceID string
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT project_id FROM projects LIMIT 1`).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.QueryRowContext(t.Context(), `SELECT workspace_id FROM workspaces LIMIT 1`).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "SES-DOCS"
+	if _, err := db.DB.ExecContext(t.Context(), `INSERT INTO sessions
+		(session_id, workspace_id, label, started_at)
+		VALUES (?, ?, 'docs', '2026-09-28T00:00:00Z')`, sessionID, workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.ExecContext(t.Context(), `INSERT INTO tasks
+		(task_id, project_id, title, state, opened_by, created_at, updated_at)
+		VALUES ('TSK-DOCS', ?, 'docs', 'OPEN', ?, '2026-09-28T00:00:00Z', '2026-09-28T00:00:00Z')`,
+		projectID, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.ExecContext(t.Context(), `INSERT INTO change_baselines
+		(task_id, path, content_hash, captured_at) VALUES ('TSK-DOCS', ?, '', '2026-09-28T00:00:00Z')`, readme); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 	gitStageFile(t, repo, "README.md")
 
 	got := run(t, repo, "verify", "--staged", "--json")

@@ -150,6 +150,28 @@ type Service struct {
 	javascript *ecmaAnalyzer
 }
 
+// BaselineTests returns the exact test names recognized in a file's before
+// bytes. Verify uses it to discard non-test referrers before constructing
+// mappings, keeping malformed mappings from reaching Evaluate.
+func (s *Service) BaselineTests(ctx context.Context, file FileDelta) (map[string]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	analyzer, err := s.analyzerFor(file.Language)
+	if err != nil {
+		return nil, err
+	}
+	tests, err := analyzer.tests(file.Before)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(tests))
+	for name := range tests {
+		out[name] = true
+	}
+	return out, nil
+}
+
 // New builds a Service with compiled queries.
 func New() (*Service, error) {
 	python, err := newPythonAnalyzer()

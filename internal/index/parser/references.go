@@ -15,7 +15,9 @@ func (a *adapter) extractReferences(s *SyntaxSnapshot) ([]Reference, error) {
 	if err != nil {
 		return nil, err
 	}
-	blocked := shadowedNames(s, declarations, imports, a.info.Language)
+	redirects := bindingScopeRedirects(s, declarations, a.info.Language)
+	blocked := shadowedNames(s, declarations, imports, redirects, a.info.Language)
+	nonImportBlocked := shadowedNames(s, declarations, nil, redirects, a.info.Language)
 	calls, err := queryNodes(s, a.references)
 	if err != nil {
 		return nil, err
@@ -36,10 +38,170 @@ func (a *adapter) extractReferences(s *SyntaxSnapshot) ([]Reference, error) {
 		function := call.node.ChildByFieldName("function")
 		if function != nil && function.Kind() == "identifier" {
 			ref.TargetLocalKey = resolveLocal(call.name, scope, declarations, blocked, call.node.StartByte(), a.info.Language)
+			if ref.TargetLocalKey == "" {
+				if imported, ok := resolveImport(call.name, scope, declarations, imports, redirects, nonImportBlocked, call.node.StartByte(), a.info.Language); ok {
+					ref.ImportedModule = imported.Module
+					ref.ImportedName = importedName(imported, call.name)
+					ref.ImportedRelative = imported.IsRelative
+				}
+			}
 		}
 		references = append(references, ref)
 	}
 	return references, nil
+}
+
+type bindingRedirect struct {
+	scope    string
+	declared bool
+}
+
+type bindingRedirects map[string]map[string]bindingRedirect
+
+func (r bindingRedirects) target(scope, name string) (string, bool) {
+	redirect, ok := r[scope][name]
+	return redirect.scope, ok && redirect.declared
+}
+
+func bindingScopeRedirects(s *SyntaxSnapshot, declarations []declaration, language string) bindingRedirects {
+	redirects := bindingRedirects{}
+	if language != "python" {
+		return redirects
+	}
+	declarationByKey := map[string]declaration{}
+	for _, d := range declarations {
+		declarationByKey[d.symbol.LocalKey] = d
+	}
+	walkNodes(*s.tree.RootNode(), func(n ts.Node) bool {
+		if n.Kind() != "global_statement" && n.Kind() != "nonlocal_statement" {
+			return true
+		}
+		owner := enclosing(declarations, n.StartByte(), n.EndByte())
+		if owner == nil {
+			return false
+		}
+		target := ""
+		if n.Kind() == "nonlocal_statement" {
+			for key := owner.symbol.ContainerLocalKey; key != ""; {
+				parent, ok := declarationByKey[key]
+				if !ok {
+					break
+				}
+				if parent.symbol.Kind != "class" {
+					target = key
+					break
+				}
+				key = parent.symbol.ContainerLocalKey
+			}
+		}
+		bindingNames(n, func(name string) {
+			if redirects[owner.symbol.LocalKey] == nil {
+				redirects[owner.symbol.LocalKey] = map[string]bindingRedirect{}
+			}
+			redirects[owner.symbol.LocalKey][name] = bindingRedirect{scope: target, declared: true}
+		}, s.source)
+		return false
+	})
+	return redirects
+}
+
+func importedName(imp Import, visible string) string {
+	if imp.Alias == visible && len(imp.Names) == 1 {
+		return imp.Names[0]
+	}
+	for _, name := range imp.Names {
+		if name == visible {
+			return name
+		}
+	}
+	return ""
+}
+
+func importVisibleAs(imp Import, visible, language string) bool {
+	if imp.Alias != "" {
+		return imp.Alias == visible
+	}
+	for _, name := range imp.Names {
+		if name == visible {
+			return true
+		}
+	}
+	if language == "python" && len(imp.Names) == 0 {
+		return strings.Split(imp.Module, ".")[0] == visible
+	}
+	return false
+}
+
+// resolveImport returns only imports that are the unambiguous lexical binding
+// for this call. A declaration, parameter or assignment in a nearer scope
+// suppresses import provenance instead of inventing a cross-file edge.
+func resolveImport(name, scope string, declarations []declaration, imports []Import, redirects bindingRedirects, nonImportBlocked bindings, position uint, language string) (Import, bool) {
+	for {
+		var owner *Symbol
+		for i := range declarations {
+			if declarations[i].symbol.LocalKey == scope {
+				owner = &declarations[i].symbol
+				break
+			}
+		}
+		if owner == nil || owner.Kind != "class" {
+			if bindingsContain(nonImportBlocked[scope][name], position) || bindingsContain(nonImportBlocked[scope]["*"], position) {
+				return Import{}, false
+			}
+			for _, d := range declarations {
+				if d.symbol.ContainerLocalKey != scope || d.symbol.Name != name {
+					continue
+				}
+				if language == "python" || rangeContains(lexicalExtent(d.node, true), position) {
+					return Import{}, false
+				}
+			}
+			var chosen Import
+			found := false
+			declaredImport := false
+			wildcardStart := uint(0)
+			wildcardFound := false
+			for _, imp := range imports {
+				importScope := imp.ImporterLocalKey
+				if redirected, ok := redirects.target(importScope, name); ok {
+					importScope = redirected
+				}
+				if importScope != scope {
+					continue
+				}
+				if language == "python" && imp.Alias == "" && imp.Range.StartByte <= position {
+					for _, importedName := range imp.Names {
+						if importedName == "*" && (!wildcardFound || imp.Range.StartByte > wildcardStart) {
+							wildcardStart, wildcardFound = imp.Range.StartByte, true
+						}
+					}
+				}
+				if !importVisibleAs(imp, name, language) {
+					continue
+				}
+				declaredImport = true
+				if imp.Range.StartByte > position {
+					continue
+				}
+				if !found || imp.Range.StartByte > chosen.Range.StartByte {
+					chosen, found = imp, true
+				}
+			}
+			if found && (!wildcardFound || chosen.Range.StartByte > wildcardStart) && importedName(chosen, name) != "" {
+				return chosen, true
+			}
+			if wildcardFound {
+				return Import{}, false
+			}
+			if language == "python" && declaredImport {
+				return Import{}, false
+			}
+		}
+		if scope == "" || owner == nil {
+			return Import{}, false
+		}
+		scope = owner.ContainerLocalKey
+	}
 }
 
 type bindings map[string]map[string][]Range
@@ -63,7 +225,7 @@ func evaluationScope(declarations []declaration, n ts.Node, language string) str
 	return ""
 }
 
-func shadowedNames(s *SyntaxSnapshot, declarations []declaration, imports []Import, language string) bindings {
+func shadowedNames(s *SyntaxSnapshot, declarations []declaration, imports []Import, redirects bindingRedirects, language string) bindings {
 	blocked := bindings{}
 	add := func(scope, name string, extent Range) {
 		if name == "" {
@@ -82,14 +244,25 @@ func shadowedNames(s *SyntaxSnapshot, declarations []declaration, imports []Impo
 				break
 			}
 		}
+		addImportBinding := func(name string) {
+			scope := imp.ImporterLocalKey
+			bindingExtent := extent
+			if redirected, ok := redirects.target(scope, name); ok {
+				scope = redirected
+				bindingExtent.StartByte = imp.Range.StartByte
+				bindingExtent.StartRow = imp.Range.StartRow
+				bindingExtent.StartColumn = imp.Range.StartColumn
+			}
+			add(scope, name, bindingExtent)
+		}
 		if imp.Alias != "" {
-			add(imp.ImporterLocalKey, imp.Alias, extent)
+			addImportBinding(imp.Alias)
 		} else if len(imp.Names) > 0 {
 			for _, name := range imp.Names {
-				add(imp.ImporterLocalKey, name, extent)
+				addImportBinding(name)
 			}
 		} else if language == "python" {
-			add(imp.ImporterLocalKey, strings.Split(imp.Module, ".")[0], extent)
+			addImportBinding(strings.Split(imp.Module, ".")[0])
 		}
 	}
 	for _, d := range declarations {
@@ -146,6 +319,10 @@ func shadowedNames(s *SyntaxSnapshot, declarations []declaration, imports []Impo
 			if language == "python" {
 				target = &n
 			}
+		case "delete_statement":
+			if language == "python" {
+				target = &n
+			}
 		}
 		if target != nil {
 			scope := ""
@@ -157,7 +334,17 @@ func shadowedNames(s *SyntaxSnapshot, declarations []declaration, imports []Impo
 				patternBindings(*target, func(name string) { add(scope, name, extent) }, s.source)
 				return false // nested patterns were handled above
 			}
-			bindingNames(*target, func(name string) { add(scope, name, extent) }, s.source)
+			bindingNames(*target, func(name string) {
+				bindingScope := scope
+				bindingExtent := extent
+				if redirected, ok := redirects.target(scope, name); ok {
+					bindingScope = redirected
+					bindingExtent.StartByte = n.StartByte()
+					bindingExtent.StartRow = n.StartPosition().Row
+					bindingExtent.StartColumn = n.StartPosition().Column
+				}
+				add(bindingScope, name, bindingExtent)
+			}, s.source)
 		}
 		return true
 	})

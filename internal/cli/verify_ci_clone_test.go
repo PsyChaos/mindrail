@@ -131,9 +131,13 @@ func TestVerifyCIFreshCloneGuardBlocks(t *testing.T) {
 	clone := cloneRepo(t, origin)
 	initClone(t, clone)
 	registerTestUnit(t, clone, "pkg")
+	// Populate only HEAD production facts, as normal inventory would. No
+	// merge-base test symbol/reference is inserted into the runtime DB.
 	run(t, clone, "verify", "--ci", "--base", base, "--json")
-	seedGuardBinding(t, clone, "pkg/test_a.py")
+	seedGuardProductionBinding(t, clone, "pkg/test_a.py")
 
+	// This is the first invocation with a binding to judge. Its mapping must
+	// come from immutable merge-base bytes, not a synthetic persisted referrer.
 	code, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
 	if code != app.ExitFailed {
 		t.Fatalf("code = %d, want guard denial (denials %+v)", code, denials)
@@ -146,6 +150,181 @@ func TestVerifyCIFreshCloneGuardBlocks(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("denials = %+v, want guard denial", denials)
+	}
+}
+
+func TestVerifyCIFirstInvocationResolvesImportedProtectedSymbol(t *testing.T) {
+	origin := newInitializedRepo(t)
+	writeRepoFile(t, origin, "pkg/helper.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, origin, "pkg/test_a.py",
+		"from helper import helper\n\ndef test_helper():\n    assert helper()\n")
+	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
+	writeRepoFile(t, origin, ".mindrail/knowledge/invariants/INV-G.json",
+		`{"schema_version":1,"kind":"invariant","id":"INV-G","status":"active",`+
+			`"created_at":"2026-09-23T10:00:00Z","statement":"Helper holds.",`+
+			`"severity":"CRITICAL","scope":{"level":"SYMBOL","target":"pkg/helper.py:helper"}}`)
+	if out, err := exec.Command("git", "-C", origin, "add", "pkg", ".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
+		t.Fatalf("git add fixture: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", origin, "-c", "user.email=t@t", "-c", "user.name=t",
+		"commit", "--quiet", "--no-verify", "-m", "guard baseline").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v: %s", err, out)
+	}
+	base := gitRev(t, origin, "HEAD")
+	writeRepoFile(t, origin, "pkg/test_a.py", "from helper import helper\n")
+	gitCommitFile(t, origin, "pkg/test_a.py")
+
+	clone := cloneRepo(t, origin)
+	initClone(t, clone)
+	registerTestUnit(t, clone, "pkg")
+	code, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
+	if code != app.ExitFailed {
+		t.Fatalf("first CI code = %d, want guard denial (%+v)", code, denials)
+	}
+	for _, denial := range denials {
+		if denial.Code == string(app.CodeTestGuardWeakened) {
+			return
+		}
+	}
+	t.Fatalf("first CI denials = %+v, want imported-symbol guard denial", denials)
+}
+
+func TestVerifyCIFirstInvocationResolvesParentRelativeImportedSymbol(t *testing.T) {
+	origin := newInitializedRepo(t)
+	writeRepoFile(t, origin, "pkg/shared/helper.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, origin, "pkg/tests/test_a.py",
+		"from ..shared.helper import helper\n\ndef test_helper():\n    assert helper()\n")
+	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
+	writeRepoFile(t, origin, ".mindrail/knowledge/invariants/INV-G.json",
+		`{"schema_version":1,"kind":"invariant","id":"INV-G","status":"active",`+
+			`"created_at":"2026-09-23T10:00:00Z","statement":"Shared helper holds.",`+
+			`"severity":"CRITICAL","scope":{"level":"SYMBOL","target":"pkg/shared/helper.py:helper"}}`)
+	if out, err := exec.Command("git", "-C", origin, "add", "pkg", ".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
+		t.Fatalf("git add fixture: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", origin, "-c", "user.email=t@t", "-c", "user.name=t",
+		"commit", "--quiet", "--no-verify", "-m", "relative guard baseline").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v: %s", err, out)
+	}
+	base := gitRev(t, origin, "HEAD")
+	writeRepoFile(t, origin, "pkg/tests/test_a.py", "from ..shared.helper import helper\n")
+	gitCommitFile(t, origin, "pkg/tests/test_a.py")
+
+	clone := cloneRepo(t, origin)
+	initClone(t, clone)
+	registerTestUnit(t, clone, "pkg")
+	code, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
+	if code != app.ExitFailed {
+		t.Fatalf("first CI code = %d, want relative-import guard denial (%+v)", code, denials)
+	}
+	for _, denial := range denials {
+		if denial.Code == string(app.CodeTestGuardWeakened) {
+			return
+		}
+	}
+	t.Fatalf("first CI denials = %+v, want parent-relative imported-symbol guard denial", denials)
+}
+
+func TestVerifyCIFirstInvocationDoesNotJoinSameNameFromAnotherModule(t *testing.T) {
+	origin := newInitializedRepo(t)
+	writeRepoFile(t, origin, "pkg/a.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, origin, "pkg/b.py", "def helper():\n    return 2\n")
+	writeRepoFile(t, origin, "pkg/test_b.py",
+		"from b import helper\n\ndef test_helper():\n    assert helper() == 2\n")
+	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
+	writeRepoFile(t, origin, ".mindrail/knowledge/invariants/INV-G.json",
+		`{"schema_version":1,"kind":"invariant","id":"INV-G","status":"active",`+
+			`"created_at":"2026-09-23T10:00:00Z","statement":"A helper holds.",`+
+			`"severity":"CRITICAL","scope":{"level":"SYMBOL","target":"pkg/a.py:helper"}}`)
+	if out, err := exec.Command("git", "-C", origin, "add", "pkg", ".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
+		t.Fatalf("git add fixture: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", origin, "-c", "user.email=t@t", "-c", "user.name=t",
+		"commit", "--quiet", "--no-verify", "-m", "same-name baseline").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v: %s", err, out)
+	}
+	base := gitRev(t, origin, "HEAD")
+	writeRepoFile(t, origin, "pkg/test_b.py", "from b import helper\n")
+	gitCommitFile(t, origin, "pkg/test_b.py")
+
+	clone := cloneRepo(t, origin)
+	initClone(t, clone)
+	registerTestUnit(t, clone, "pkg")
+	_, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
+	for _, denial := range denials {
+		if denial.Code == string(app.CodeTestGuardWeakened) {
+			t.Fatalf("denials = %+v, must not bind b.helper's test to protected a.helper", denials)
+		}
+	}
+}
+
+func TestVerifyCIFirstInvocationFailsClosedForOrphanedProtectedSymbol(t *testing.T) {
+	origin := newInitializedRepo(t)
+	writeRepoFile(t, origin, "pkg/helper.py", "def helper():\n    return 1\n")
+	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
+	writeRepoFile(t, origin, ".mindrail/knowledge/invariants/INV-G.json",
+		`{"schema_version":1,"kind":"invariant","id":"INV-G","status":"active",`+
+			`"created_at":"2026-09-23T10:00:00Z","statement":"Helper holds.",`+
+			`"severity":"CRITICAL","scope":{"level":"SYMBOL","target":"pkg/helper.py:helper"}}`)
+	if out, err := exec.Command("git", "-C", origin, "add", "pkg", ".mindrail/knowledge/invariants/INV-G.json").CombinedOutput(); err != nil {
+		t.Fatalf("git add fixture: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", origin, "-c", "user.email=t@t", "-c", "user.name=t",
+		"commit", "--quiet", "--no-verify", "-m", "protected baseline").CombinedOutput(); err != nil {
+		t.Fatalf("git commit fixture: %v: %s", err, out)
+	}
+	base := gitRev(t, origin, "HEAD")
+	writeRepoFile(t, origin, "pkg/helper.py", "def replacement():\n    return 1\n")
+	gitCommitFile(t, origin, "pkg/helper.py")
+
+	clone := cloneRepo(t, origin)
+	initClone(t, clone)
+	got := run(t, clone, "verify", "--ci", "--base", base, "--json")
+	if got.code != app.ExitFailed {
+		t.Fatalf("code = %d, want fail-closed orphan denial (%v)", got.code, got.err)
+	}
+	if payload := got.errorPayload(t); payload.Code != app.CodeOrphanedProtectedSymbol {
+		t.Fatalf("error code = %q, want %q", payload.Code, app.CodeOrphanedProtectedSymbol)
+	}
+}
+
+func TestVerifyCIRenamedTestUsesMergeBasePath(t *testing.T) {
+	origin := newInitializedRepo(t)
+	writeRepoFile(t, origin, "pkg/old_test.py",
+		"def helper():\n    return 1\n\ndef keep_one():\n    return 1\n\ndef keep_two():\n    return 2\n\ndef test_helper():\n    assert helper()\n")
+	writeRepoFile(t, origin, "pkg/pyproject.toml", "[project]\n")
+	gitCommitFile(t, origin, "pkg/pyproject.toml")
+	gitCommitFile(t, origin, "pkg/old_test.py")
+	writeGuardInvariant(t, origin)
+	gitCommitFile(t, origin, ".mindrail/knowledge/invariants/INV-G.json")
+	base := gitRev(t, origin, "HEAD")
+	if out, err := exec.Command("git", "-C", origin, "mv", "pkg/old_test.py", "pkg/new_test.py").CombinedOutput(); err != nil {
+		t.Fatalf("git mv: %v: %s", err, out)
+	}
+	writeRepoFile(t, origin, "pkg/new_test.py",
+		"def helper():\n    return 1\n\ndef keep_one():\n    return 1\n\ndef keep_two():\n    return 2\n")
+	if out, err := exec.Command("git", "-C", origin, "add", "-A").CombinedOutput(); err != nil {
+		t.Fatalf("git add rename: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", origin, "commit", "--quiet", "--no-verify", "-m", "rename weakened test").CombinedOutput(); err != nil {
+		t.Fatalf("git commit rename: %v: %s", err, out)
+	}
+
+	clone := cloneRepo(t, origin)
+	initClone(t, clone)
+	registerTestUnit(t, clone, "pkg")
+	run(t, clone, "verify", "--ci", "--base", base, "--json")
+	seedGuardProductionBinding(t, clone, "pkg/new_test.py")
+	code, denials := ciDenials(t, clone, "verify", "--ci", "--base", base, "--json")
+	if code != app.ExitFailed {
+		t.Fatalf("code = %d, want renamed-test guard denial (%+v)", code, denials)
+	}
+	found := false
+	for _, denial := range denials {
+		found = found || denial.Code == string(app.CodeTestGuardWeakened)
+	}
+	if !found {
+		t.Fatalf("denials = %+v, want renamed-test guard denial", denials)
 	}
 }
 

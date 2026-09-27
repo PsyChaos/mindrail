@@ -50,6 +50,213 @@ func sourceFile(t *testing.T, root, name, content string) string {
 	return path
 }
 
+func TestExtractGuardReferencesKeepsFunctionLocalImportScopesSeparate(t *testing.T) {
+	idx, unit, root, _ := indexerFixture(t)
+	path := sourceFile(t, root, "test_helpers.py", `def test_a():
+    from a import helper
+    return helper()
+
+def test_b():
+    from b import helper
+    return helper()
+`)
+	refs, err := idx.ExtractGuardReferences(t.Context(), unit, path, []byte(`def test_a():
+    from a import helper
+    return helper()
+
+def test_b():
+    from b import helper
+    return helper()
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	modules := map[string]string{}
+	for _, ref := range refs {
+		if ref.TargetText == "helper" {
+			modules[ref.Test] = ref.TargetModule
+		}
+	}
+	if modules["test_a"] != "a" || modules["test_b"] != "b" {
+		t.Fatalf("scoped modules = %+v, want test_a→a and test_b→b", modules)
+	}
+}
+
+func TestExtractGuardReferencesDoesNotClaimShadowedImports(t *testing.T) {
+	tests := []struct {
+		name, source string
+	}{
+		{
+			name: "local declaration",
+			source: `from a import helper
+
+def helper():
+    return 2
+
+def test_helper():
+    return helper()
+`,
+		},
+		{
+			name: "parameter",
+			source: `from a import helper
+
+def test_helper(helper):
+    return helper()
+`,
+		},
+		{
+			name: "local assignment",
+			source: `from a import helper
+
+def test_helper():
+    helper = lambda: 2
+    return helper()
+`,
+		},
+		{
+			name: "later local import",
+			source: `from a import helper
+
+def test_helper():
+    helper()
+    from b import helper
+`,
+		},
+		{
+			name: "later delete binding",
+			source: `from a import helper
+
+def test_helper():
+    helper()
+    del helper
+`,
+		},
+		{
+			name: "plain local import before call",
+			source: `from a import helper
+
+def test_helper():
+    import helper
+    helper()
+`,
+		},
+		{
+			name: "plain local import after call",
+			source: `from a import helper
+
+def test_helper():
+    helper()
+    import helper
+`,
+		},
+		{
+			name: "later wildcard import",
+			source: `from a import helper
+from b import *
+
+def test_helper():
+    helper()
+`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, unit, root, _ := indexerFixture(t)
+			path := sourceFile(t, root, "test_helper.py", tc.source)
+			refs, err := idx.ExtractGuardReferences(t.Context(), unit, path, []byte(tc.source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ref := range refs {
+				if ref.Test == "test_helper" && ref.TargetModule != "" {
+					t.Fatalf("shadowed call claimed import module %q: %+v", ref.TargetModule, ref)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractGuardReferencesHonorsGlobalAndNonlocalBindings(t *testing.T) {
+	tests := []struct {
+		name, source, wantModule string
+	}{
+		{
+			name: "global",
+			source: `from a import helper
+
+def replacement():
+    return 2
+
+def test_helper():
+    global helper
+    helper()
+    helper = replacement
+`,
+			wantModule: "a",
+		},
+		{
+			name: "nonlocal",
+			source: `def replacement():
+    return 2
+
+def outer():
+    from b import helper
+    def test_helper():
+        nonlocal helper
+        helper()
+        helper = replacement
+`,
+			wantModule: "b",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, unit, root, _ := indexerFixture(t)
+			path := sourceFile(t, root, "test_helper.py", tc.source)
+			refs, err := idx.ExtractGuardReferences(t.Context(), unit, path, []byte(tc.source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ref := range refs {
+				if ref.Test == "test_helper" && ref.TargetText == "helper" {
+					if ref.TargetModule != tc.wantModule {
+						t.Fatalf("module = %q, want %q: %+v", ref.TargetModule, tc.wantModule, ref)
+					}
+					return
+				}
+			}
+			t.Fatalf("no helper reference in %+v", refs)
+		})
+	}
+}
+
+func TestExtractGuardReferencesKeepsLocalTargetBeforeRedirectedPlainImport(t *testing.T) {
+	idx, unit, root, _ := indexerFixture(t)
+	source := `def helper():
+    return 1
+
+def test_helper():
+    global helper
+    helper()
+    import helper
+`
+	path := sourceFile(t, root, "test_helper.py", source)
+	refs, err := idx.ExtractGuardReferences(t.Context(), unit, path, []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range refs {
+		if ref.Test == "test_helper" && ref.TargetText == "helper" {
+			if ref.TargetKey == "" || ref.TargetModule != "" {
+				t.Fatalf("reference = %+v, want same-file helper target", ref)
+			}
+			return
+		}
+	}
+	t.Fatalf("no helper reference in %+v", refs)
+}
+
 func TestIndexFileUnchangedIndexedSkipsParseAndAllSQLWrites(t *testing.T) {
 	idx, unit, root, db := indexerFixture(t)
 	path := sourceFile(t, root, "a.py", "def f():\n    return 1\n")
