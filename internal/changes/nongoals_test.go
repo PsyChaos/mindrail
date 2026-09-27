@@ -27,10 +27,12 @@ func moduleRoot(t *testing.T) string {
 
 // TestNoLaterMilestoneMachinery scans import paths the way the task list
 // asks: impact traversal, evidence binding, coverage mapping, semantic
-// resolvers and HTTP remoting must not exist as code — comments may name
-// them, imports may not. Test files are excluded: fixtures may reference
-// anything, production may not. MCP transport was on this list until
-// MR-014 built it deliberately; it is covered by contract tests now.
+// resolvers must not exist as code — comments may name them, imports may not.
+// Test files are excluded: fixtures may reference anything, production may
+// not. MCP transport was on this list until MR-014 built it deliberately.
+// net/http left the list with the loopback-only read dashboard; its dependency
+// is isolated from bootstrap/internal/cli and covered by dashboard security
+// and CLI architecture tests.
 func TestNoLaterMilestoneMachinery(t *testing.T) {
 	root := moduleRoot(t)
 	// knowledge/cli deliberately absent: bootstrap, doctor and the root
@@ -40,7 +42,6 @@ func TestNoLaterMilestoneMachinery(t *testing.T) {
 	// command surface is pinned separately.
 	banned := []string{
 		"impact", "evidence", "coverage", "semantic",
-		"net/http",
 	}
 	var violations []string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {

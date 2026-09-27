@@ -18,7 +18,8 @@ func main() {
 	defer stop()
 
 	err := cli.ExecuteWith(ctx, os.Args[1:], cli.Options{
-		RunMCP: mindrailMCP.RunStdio,
+		RunMCP:       mindrailMCP.RunStdio,
+		RunDashboard: mindrailMCP.RunDashboard,
 	})
 
 	// The command has drained its own application by the time Execute returns:

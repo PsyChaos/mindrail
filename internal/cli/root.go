@@ -44,6 +44,11 @@ type Options struct {
 	// It is injected by cmd/mindrail so ordinary CLI commands remain isolated
 	// from the SDK's network-capable optional transports.
 	RunMCP func(context.Context, string) error
+
+	// RunDashboard starts the loopback-only dashboard after CLI bootstrap has
+	// resolved and validated its read-only inputs. Injection keeps net/http out
+	// of the init/CLI dependency graph, preserving AC-01's no-network boundary.
+	RunDashboard func(context.Context, DashboardStart) error
 }
 
 const rootLong = `Mindrail is a local engineering gate for AI coding agents.
@@ -118,6 +123,7 @@ func NewRootWith(o Options) *Root {
 
 	cmd.AddCommand(
 		newAgentCommand(),
+		newDashboardCommand(o),
 		newInitCommand(o),
 		newUpdateCommand(o),
 		newStatusCommand(o),
