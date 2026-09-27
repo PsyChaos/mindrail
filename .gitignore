@@ -204,3 +204,6 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 !/.wrongstack/
 /.wrongstack/*
 !/.wrongstack/project.json
+
+# Machine-local skill links contain checkout-specific absolute targets.
+/.zcode/
