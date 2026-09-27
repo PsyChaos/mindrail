@@ -1,56 +1,34 @@
 <!-- BEGIN MINDRAIL MANAGED SECTION -->
 ## MINDRAIL PROTOCOL
 
-> **Status: not yet active.** Mindrail 0.1 is not implemented, so the `mindrail_*` MCP
-> tools below do not exist yet and calling them will fail. This block is the managed
-> section defined by Technical Specification 1.0 §117; `mindrail init` will own and
-> rewrite it once the binary ships. Do not hand-edit the content between the markers.
+Mindrail is the repository's local engineering gate. The MCP server command is
+`mindrail mcp`, started in this repository. Use the existing 13 MCP tools.
 
-```text
-MINDRAIL PROTOCOL
+At the start of a task, call mindrail_bootstrap with goal, an agent-generated
+stable run_key, and paths when known. Keep the same run_key when retrying or
+reconnecting. To continue an existing handoff, also pass resume_task_id explicitly.
+Do not choose another agent's active task. Sessions, task revisions, operation
+identities and leases are managed automatically; do not ask a person to copy them.
 
-Session start:
-mindrail_bootstrap
+Read context through mindrail_status, mindrail_search and mindrail_context.
+If bootstrap omitted paths, call mindrail_before_change with paths before the first edit.
+Call it again before editing any file outside the declared scope. It may be skipped
+only when bootstrap paths already cover every file being edited. Relative
+repository file paths are accepted in automatic mode. The task and session may
+be omitted when this connection has bootstrapped automatic work. Use
+mindrail_after_change or mindrail_reconcile to inspect changes when useful.
+Record durable choices through mindrail_decide and mindrail_invariant.
 
-Orientation:
-mindrail_status
-mindrail_search
+To finish, call mindrail_complete with finalize: true. It reconciles changes,
+runs configured validation profiles, applies the shared completion gate, and
+completes the task only when allowed. A denial is work to resolve, never success.
+No configured profiles means no test profiles ran; do not claim tests passed.
+For handoff, call mindrail_checkpoint with a note and handoff: true. The next
+run uses a fresh run_key and explicitly resumes that task.
 
-Before task work:
-mindrail_claim
-mindrail_context
-
-Before source mutation:
-mindrail_before_change
-
-After mutation:
-mindrail_after_change
-
-If a change was made without before_change,
-or the actual diff must be re-derived:
-mindrail_reconcile
-
-When a durable design choice is made:
-mindrail_decide
-
-When a protected contract is discovered:
-mindrail_invariant
-
-Validation:
-mindrail_validate
-
-Completion:
-mindrail_complete
-
-Handoff:
-mindrail_checkpoint
-```
-
-Enforcement model (Technical Specification 1.0 §118): this section is **soft**
-enforcement. Skipping a protocol call does not bypass the gate — `reconcile`
-discovers the actual diff from Git regardless, and leases, the completion gate,
-pre-commit and `mindrail verify --ci` are the hard gates.
-
+People normally run mindrail init once, and mindrail status, mindrail doctor or
+mindrail verify when needed. CI runs mindrail verify --ci. Advanced commands and
+explicit-ID MCP payloads remain available for diagnostics and legacy clients.
 <!-- END MINDRAIL MANAGED SECTION -->
 
 ## graphify
