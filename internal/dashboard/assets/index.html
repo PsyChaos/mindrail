@@ -37,7 +37,16 @@
       </div>
     </section>
 
-    <section id="summary" class="summary-grid" aria-label="Operations summary"></section>
+    <section id="summary" class="summary-grid" tabindex="0" aria-label="Operations summary">
+      <article class="metric"><span class="metric-label">OPEN</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">IN PROGRESS</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">BLOCKED</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">READY</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">ACTIVE LEASES</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">AGENTS ENGAGED</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">EVIDENCE PASS</span><strong>—</strong></article>
+      <article class="metric"><span class="metric-label">EVIDENCE FAIL</span><strong>—</strong></article>
+    </section>
 
     <section id="factory" class="view active" aria-label="Factory view">
       <div class="rail-layout">
@@ -45,14 +54,14 @@
           <section class="panel readiness-panel">
             <header><span>REPOSITORY READINESS</span><b id="readiness-badge">—</b></header>
             <p class="freshness-note">STARTUP SNAPSHOT · RESTART DASHBOARD TO REFRESH</p>
-            <div id="readiness-components" class="component-list"></div>
+            <div id="readiness-components" class="component-list" tabindex="0" aria-label="Repository readiness details"></div>
           </section>
           <section class="panel telemetry-panel">
             <header><span>SYSTEM TELEMETRY</span></header>
-            <div id="telemetry"></div>
+            <div id="telemetry" tabindex="0" aria-label="System telemetry details"></div>
           </section>
         </aside>
-        <div class="board-wrap">
+        <div class="board-wrap" tabindex="0" aria-label="Task board">
           <div id="task-board" class="task-board"></div>
         </div>
       </div>
@@ -62,12 +71,12 @@
       <div class="split-grid">
         <section class="panel stretch">
           <header><span>AGENT SESSIONS</span><b id="session-count">0</b></header>
-          <p class="scope-note">Durable coordination signals only. Dashboard SSE health does not prove agent liveness. Exact client, model, and process liveness are not recorded.</p>
-          <div id="agent-grid" class="agent-grid"></div>
+          <p class="scope-note">Connection history, not model telemetry. Heartbeat shows when MCP presence was last recorded; activity shows Mindrail tool calls.</p>
+          <div id="agent-grid" class="agent-grid" tabindex="0" aria-label="Agent sessions"></div>
         </section>
         <section class="panel stretch">
           <header><span>LEASE TENURES</span><b id="lease-count">0</b></header>
-          <div id="lease-list" class="data-list"></div>
+          <div id="lease-list" class="data-list" tabindex="0" aria-label="Lease tenures"></div>
         </section>
       </div>
     </section>
@@ -76,13 +85,13 @@
       <div class="split-grid events-grid">
         <section class="panel stretch">
           <header><span>LIVE EVENT STREAM</span><b id="event-count">0</b></header>
-          <div id="event-list" class="timeline"></div>
+          <div id="event-list" class="timeline" tabindex="0" aria-label="Live event stream"></div>
         </section>
         <section class="panel stretch">
           <header><span>VALIDATION EVIDENCE</span><b id="evidence-count">0</b></header>
-          <div id="evidence-list" class="data-list"></div>
+          <div id="evidence-list" class="data-list" tabindex="0" aria-label="Validation evidence"></div>
           <div class="subheader"><span>CONFIGURED PROFILES</span><b id="profile-count">0</b></div>
-          <div id="profile-list" class="data-list"></div>
+          <div id="profile-list" class="data-list" tabindex="0" aria-label="Configured validation profiles"></div>
         </section>
       </div>
     </section>

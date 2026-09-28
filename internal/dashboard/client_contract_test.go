@@ -29,8 +29,8 @@ func TestEmbeddedClientExplainsLiveDashboardSignalsConservatively(t *testing.T) 
 		"DASHBOARD START",
 		"UPTIME",
 		"LAST SNAPSHOT",
-		"Dashboard SSE health does not prove agent liveness",
-		"Exact client, model, and process liveness are not recorded",
+		"Connection history, not model telemetry",
+		"Heartbeat shows when MCP presence was last recorded",
 		"STARTUP SNAPSHOT · RESTART DASHBOARD TO REFRESH",
 	} {
 		if !strings.Contains(html, want) {
@@ -41,6 +41,9 @@ func TestEmbeddedClientExplainsLiveDashboardSignalsConservatively(t *testing.T) 
 	appScript := strings.Index(html, `src="assets/app.js"`)
 	if viewScript < 0 || appScript < 0 || viewScript >= appScript {
 		t.Error("pure view helpers must load before the DOM client")
+	}
+	if got := strings.Count(html, `class="metric"`); got != 8 {
+		t.Errorf("loading shell metrics = %d, want 8 to prevent layout shift", got)
 	}
 
 	for _, want := range []string{
@@ -59,7 +62,6 @@ func TestEmbeddedClientExplainsLiveDashboardSignalsConservatively(t *testing.T) 
 		"JEV CONFIGURED",
 		"JEV ACTUAL USE",
 		"CANONICAL CLIENT FAMILY",
-		"SOURCE: SELF-REPORTED CLIENTINFO NAME",
 		"CONNECTED FOR",
 		"LAST HEARTBEAT",
 		"LAST MCP ACTIVITY",
@@ -69,6 +71,29 @@ func TestEmbeddedClientExplainsLiveDashboardSignalsConservatively(t *testing.T) 
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("embedded JavaScript is missing %q", want)
+		}
+	}
+}
+
+func TestEmbeddedDashboardPinsTheAppShellAndScrollsPanels(t *testing.T) {
+	cssBytes, err := assets.ReadFile("assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBytes)
+	for _, want := range []string{
+		"html, body { margin: 0; height: 100%; overflow: hidden",
+		"grid-template-rows: auto auto minmax(0,1fr)",
+		".board-wrap { height: 100%; min-height: 0; overflow: auto",
+		".agent-grid { min-height:0; flex:1 1 auto",
+		".data-list { min-height:0; flex:1 1 0; overflow-y:auto",
+		".timeline { min-height:0; flex:1 1 auto; overflow-y:auto",
+		"overscroll-behavior:contain",
+		"@media (max-height: 700px)",
+		"@media (min-width: 681px) and (max-width: 1100px) and (max-height: 700px)",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("embedded CSS is missing viewport/panel contract %q", want)
 		}
 	}
 }

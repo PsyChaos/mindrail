@@ -180,10 +180,13 @@
     const header=node("div","agent-card-head");
     const status=node("span","agent-status",presentation.status); status.dataset.role="presence-status";
     header.append(node("div","agent-label",presentation.clientFamily),status);
-    card.append(header,node("div","projection-note","CANONICAL CLIENT FAMILY · SOURCE: SELF-REPORTED CLIENTINFO NAME"),node("div","agent-name",presentation.id));
+    card.append(node("div","agent-kicker",`CANONICAL CLIENT FAMILY · ${presentation.identitySource.toUpperCase()}`),header,node("div","agent-name",`RUNTIME ${presentation.id}`));
+    const context=node("div","runtime-context");
+    const taskID=node("b","",presentation.taskID||"NO TASK ATTACHED"); taskID.title=presentation.taskID||"No task attached";
+    context.append(node("span","","CURRENT TASK"),taskID); card.append(context);
     const stats=node("div","agent-stats");
     const connected=node("b","",presentation.connectedFor); connected.dataset.role="connected-for";
-    [[presentation.taskID||"—","TASK"],[presentation.sequence,"SIGNAL SEQUENCE"]].forEach(([value,label])=>{const box=node("div");box.append(node("b","",String(value)),node("span","",label));stats.append(box);});
+    [[presentation.sequence,"SIGNAL SEQUENCE"]].forEach(([value,label])=>{const box=node("div");box.append(node("b","",String(value)),node("span","",label));stats.append(box);});
     const ageBox=node("div");ageBox.append(connected,node("span","","CONNECTED FOR"));stats.append(ageBox);card.append(stats);
     const activity=node("dl","agent-activity");
     const heartbeat=node("span","",presentation.lastHeartbeatAge);heartbeat.dataset.role="heartbeat-age";
@@ -192,7 +195,7 @@
     const activityValue=node("dd","");activityValue.append(lastActivity);
     activity.append(node("dt","","SESSION"),node("dd","",presentation.sessionID||"—"),node("dt","","LAST HEARTBEAT"),heartbeatValue,node("dt","","LAST MCP ACTIVITY"),activityValue);
     if(presentation.endedAt)activity.append(node("dt","","ENDED"),node("dd","",`${instant(presentation.endedAt)} · ${presentation.endReason||"ended"}`));
-    card.append(activity,node("div","projection-note","Heartbeat proves only that the Mindrail MCP connection updated its presence record. Activity means a Mindrail tool was called; model, process, thought and token liveness are not observed."));
+    card.append(activity,node("div","projection-note","Heartbeat shows when this presence record was last updated; it does not prove current model or process liveness. Activity records Mindrail tool calls only."));
     return card;
   }
 
