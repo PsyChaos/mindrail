@@ -61,7 +61,7 @@ func (s *Service) refreshAutomaticFile(ctx context.Context, projectID, path stri
 		return err
 	}
 	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) || (err == nil && !info.Mode().IsRegular()) {
 		if !observed.Exists {
 			return nil
 		}
@@ -76,9 +76,6 @@ func (s *Service) refreshAutomaticFile(ctx context.Context, projectID, path stri
 	}
 	if err != nil {
 		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("restored source %s is not a regular file", path)
 	}
 	result, err := s.indexer.IndexFile(ctx, projectID, unit, path)
 	if payload, ok := app.PayloadOf(err); ok && payload.Code == app.CodeSyntaxLanguageUnsupported {
