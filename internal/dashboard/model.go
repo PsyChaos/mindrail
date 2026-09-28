@@ -208,6 +208,10 @@ type AgentRuntime struct {
 	TaskID          string            `json:"task_id"`
 	SessionID       string            `json:"session_id"`
 	ClientFamily    string            `json:"client_name"`
+	Host            string            `json:"host,omitempty"`
+	AgentKind       string            `json:"agent_kind,omitempty"`
+	AgentType       string            `json:"agent_type,omitempty"`
+	ParentRuntimeID string            `json:"parent_runtime_id,omitempty"`
 	StartedAt       time.Time         `json:"started_at"`
 	LastHeartbeatAt time.Time         `json:"last_heartbeat_at"`
 	LastActivityAt  time.Time         `json:"last_activity_at"`

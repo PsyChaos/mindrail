@@ -194,7 +194,7 @@ func runReadyBand(t *testing.T, mount string) {
 	ran := 0
 	t.Cleanup(func() { reportHostileRowsRan(t, &ran) })
 
-	for _, headroom := range []int64{8, 24, 44, 48, 80, 112, 120, 124, 128, 132, 140, 148, 224, 240, 272, 288, 512, 1024} {
+	for _, headroom := range []int64{8, 24, 44, 48, 80, 112, 120, 124, 128, 132, 140, 148, 224, 240, 272, 288, 512, 1024, 2048} {
 		t.Run(fmt.Sprintf("%d KiB free", headroom), func(t *testing.T) {
 			repo := hostileRepo(t, mount, hostileCondition{}, fmt.Sprintf("ready-band-%d", headroom))
 			leaveHostileHeadroom(t, mount, headroom<<10)
@@ -226,11 +226,11 @@ func runReadyBand(t *testing.T, mount string) {
 				assertTheLoopTerminates(t, headroom, repo, initAnswer)
 			}
 
-			// The wide end is the over-fire guard: a megabyte is room
-			// enough for everything six migrations write, measured above,
+			// The wide end is the over-fire guard: two megabytes are room
+			// enough for the current migrations and host adapter files,
 			// and a change that made init pessimistic would show up here
 			// rather than in production.
-			if headroom == 1024 && initAnswer.exit != app.ExitSuccess {
+			if headroom == 2048 && initAnswer.exit != app.ExitSuccess {
 				t.Fatalf("with %d KiB free, `init` exited %d (%s); there is room for everything it writes\n%s",
 					headroom, initAnswer.exit, initAnswer.code, gotInit.stdout)
 			}

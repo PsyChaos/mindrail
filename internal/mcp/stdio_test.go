@@ -10,12 +10,12 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestStdioDiscoversFourteenTools is TASK-02 AC-02.4: one client session
-// discovers all fourteen tools over the JSON-framed byte-stream transports
+// TestStdioDiscoversFifteenTools is TASK-02 AC-02.4: one client session
+// discovers all fifteen tools over the JSON-framed byte-stream transports
 // (net.Pipe pairs through the SDK's own framing — the wire encoding stdio
 // serving uses, without a subprocess per decision D-209) and smoke-calls
 // every one with valid arguments.
-func TestStdioDiscoversFourteenTools(t *testing.T) {
+func TestStdioDiscoversFifteenTools(t *testing.T) {
 	root := newProfileRepo(t)
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
@@ -49,7 +49,7 @@ func TestStdioDiscoversFourteenTools(t *testing.T) {
 	sort.Strings(names)
 	want := []string{"mindrail_after_change", "mindrail_before_change", "mindrail_bootstrap",
 		"mindrail_checkpoint", "mindrail_claim", "mindrail_complete", "mindrail_context",
-		"mindrail_decide", "mindrail_invariant", "mindrail_reconcile", "mindrail_route",
+		"mindrail_decide", "mindrail_host_event", "mindrail_invariant", "mindrail_reconcile", "mindrail_route",
 		"mindrail_search", "mindrail_status", "mindrail_validate"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("tools = %+v", names)
@@ -75,6 +75,7 @@ func TestStdioDiscoversFourteenTools(t *testing.T) {
 		"mindrail_invariant":     {"mode": "active", "statement": "Smoke holds.", "severity": "LOW", "scope_level": "PROJECT"},
 		"mindrail_complete":      {"task_id": taskID},
 		"mindrail_route":         {"goal": "no candidates exercises bounded fallback"},
+		"mindrail_host_event":    {"host": "codex", "host_session_id": "stdio-session", "event": "start"},
 	}
 	for tool, args := range smokes {
 		result, err := clientSession.CallTool(t.Context(), &sdk.CallToolParams{Name: tool, Arguments: args})

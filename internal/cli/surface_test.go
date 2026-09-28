@@ -13,7 +13,7 @@ import (
 // hook; the 0.2 line adds update and client-neutral JEV setup. The list below
 // is the deliberation record, not an accident.
 func TestCommandSurface(t *testing.T) {
-	want := []string{"agent", "checkpoint", "dashboard", "doctor", "hook", "init", "jev", "knowledge", "lease", "mcp", "session", "status", "task", "update", "verify", "version"}
+	want := []string{"agent", "checkpoint", "dashboard", "doctor", "hook", "host", "init", "jev", "knowledge", "lease", "mcp", "session", "status", "task", "update", "verify", "version"}
 	var got []string
 	for _, cmd := range cli.NewRoot().Commands() {
 		got = append(got, cmd.Name())

@@ -55,6 +55,11 @@ type Options struct {
 	// executable so package cli—and therefore repository initialization—keeps
 	// its compile-time no-network boundary.
 	RunJEVConnect func(context.Context, credential.Store) error
+
+	// IngestHostEvent receives bounded JSON emitted by an official Claude or
+	// Codex lifecycle surface. The executable injects the repository-aware
+	// adapter; nil keeps host integration optional and non-blocking.
+	IngestHostEvent func(context.Context, HostEventRequest) error
 }
 
 const rootLong = `Mindrail is a local engineering gate for AI coding agents.
@@ -129,6 +134,7 @@ func NewRootWith(o Options) *Root {
 
 	cmd.AddCommand(
 		newAgentCommand(),
+		newHostCommand(o),
 		newDashboardCommand(o),
 		newInitCommand(o),
 		newJEVCommand(o),

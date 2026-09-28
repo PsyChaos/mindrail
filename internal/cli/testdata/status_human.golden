@@ -12,7 +12,7 @@ Repository
 Runtime
   DB path:        <REPO>/.git/mindrail/mindrail.db
   Cache dir:      <REPO>/.git/mindrail/cache
-  Schema version: 13
+  Schema version: 14
   Journal mode:   wal
   Initialized:    true
 

@@ -143,6 +143,8 @@ func TestCollectorProjectsRuntimeTelemetryAndContinuityTruthfully(t *testing.T) 
 		'2026-09-28T11:00:00Z','2026-09-28T11:00:20Z','2026-09-28T11:00:20Z',2,NULL,NULL)`)
 	mustExec(t, db, `INSERT INTO agent_runtime_observations VALUES
 		('RUN-1','gpt-6-astra','high',600000,1000000,'host_adapter','structured_host','2026-09-28T11:00:21Z',3,3)`)
+	mustExec(t, db, `INSERT INTO host_runtime_bindings VALUES
+		('RUN-1','codex',zeroblob(32),zeroblob(32),1,NULL,zeroblob(32),NULL,'ACTIVE','telemetry',3,'2026-09-28T11:00:21Z')`)
 	mustExec(t, db, `INSERT INTO continuity_intents VALUES
 		('CTI-1','PRJ-1','WS-1','TSK-1','SES-1',zeroblob(32),'SAME_TASK',NULL,'SPAWN_READY',4,3,6000,2,
 		'CHK-1','HOST-1',zeroblob(32),NULL,NULL,NULL,'2026-09-28T11:00:00Z','2026-09-28T11:00:21Z','2026-09-28T12:00:00Z',NULL)`)
@@ -157,6 +159,9 @@ func TestCollectorProjectsRuntimeTelemetryAndContinuityTruthfully(t *testing.T) 
 	runtime := snapshot.AgentRuntimes[0]
 	if runtime.Telemetry.State != "REPORTED" || runtime.Telemetry.Model != "gpt-6-astra" || runtime.Telemetry.UsedPercent == nil || *runtime.Telemetry.UsedPercent != 60 {
 		t.Fatalf("telemetry = %#v", runtime.Telemetry)
+	}
+	if runtime.Host != "codex" || runtime.AgentKind != "MAIN" || runtime.ParentRuntimeID != "" {
+		t.Fatalf("host binding = %#v", runtime)
 	}
 	if runtime.Continuity.State != "SPAWN_READY" || runtime.Continuity.IntentID != "CTI-1" || runtime.Continuity.CheckpointID != "CHK-1" {
 		t.Fatalf("continuity = %#v", runtime.Continuity)
@@ -527,6 +532,7 @@ func dashboardDB(t *testing.T) *sql.DB {
 		`CREATE TABLE jev_route_events(route_id TEXT, project_id TEXT, workspace_id TEXT, task_id TEXT, session_id TEXT, provider TEXT, model TEXT, version INTEGER, status TEXT, reason TEXT, credential_source TEXT, started_at TEXT, ended_at TEXT, duration_ms INTEGER, tool_candidate_count INTEGER, tool_selected_ordinal INTEGER, tool_confidence_milli INTEGER, agent_candidate_count INTEGER, agent_selected_ordinal INTEGER, agent_confidence_milli INTEGER, model_candidate_count INTEGER, model_selected_ordinal INTEGER, model_confidence_milli INTEGER, effort_candidate_count INTEGER, effort_selected_ordinal INTEGER, effort_confidence_milli INTEGER)`,
 		`CREATE TABLE agent_runtimes(runtime_id TEXT, project_id TEXT, workspace_id TEXT, task_id TEXT, session_id TEXT, client_name TEXT, client_title TEXT, client_version TEXT, started_at TEXT, last_heartbeat_at TEXT, last_activity_at TEXT, sequence INTEGER, ended_at TEXT, end_reason TEXT)`,
 		`CREATE TABLE agent_runtime_observations(runtime_id TEXT, model_key TEXT, effort TEXT, context_used INTEGER, context_limit INTEGER, source TEXT, confidence TEXT, observed_at TEXT, revision INTEGER, producer_sequence INTEGER)`,
+		`CREATE TABLE host_runtime_bindings(runtime_id TEXT, host TEXT, host_session_hash BLOB, host_agent_hash BLOB, is_main INTEGER, parent_runtime_id TEXT, generation_hash BLOB, agent_type TEXT, lifecycle_state TEXT, last_event TEXT, producer_sequence INTEGER, observed_at TEXT)`,
 		`CREATE TABLE continuity_intents(intent_id TEXT, project_id TEXT, workspace_id TEXT, task_id TEXT, predecessor_session_id TEXT, predecessor_run_hash BLOB, kind TEXT, target_task_id TEXT, state TEXT, revision INTEGER, last_observation_sequence INTEGER, last_used_basis_points INTEGER, consecutive_handoff_observations INTEGER, checkpoint_id TEXT, host_operation_id TEXT, takeover_token_hash BLOB, successor_run_hash BLOB, successor_session_id TEXT, failure_code TEXT, created_at TEXT, updated_at TEXT, expires_at TEXT, activated_at TEXT)`,
 		`INSERT INTO workspaces VALUES ('WS-1','PRJ-1')`,
 	} {

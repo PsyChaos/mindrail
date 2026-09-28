@@ -184,9 +184,26 @@ func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, i
 	}
 	if accepted && !terminalRun(published.run) {
 		s.ensurePresence(ctx, req, published.run)
+		if s.hostRuntimes != nil {
+			attr := agent.HostRuntimeAttribution{ProjectID: s.projectIDValue, WorkspaceID: s.workspaceIDValue,
+				TaskID: published.run.TaskID, SessionID: published.run.SessionID}
+			_, _ = s.hostRuntimes.ClaimPendingRun(ctx, attr, published.run.RunKey, s.automaticPresenceID(req.Session))
+		}
 	}
 	out.Started = true
 	return out, nil
+}
+
+func (s *Server) automaticPresenceID(session *sdk.ServerSession) string {
+	if session == nil {
+		return ""
+	}
+	s.autoMu.RLock()
+	defer s.autoMu.RUnlock()
+	if current := s.automatic[session]; current != nil && current.presence != nil {
+		return current.presence.id
+	}
+	return ""
 }
 
 func (s *Server) automaticSnapshot(session *sdk.ServerSession) (automaticContext, bool) {

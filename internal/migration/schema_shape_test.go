@@ -79,6 +79,15 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"checkpoint_id", "host_operation_id", "takeover_token_hash", "successor_run_hash",
 			"successor_session_id", "failure_code", "created_at", "updated_at", "expires_at",
 		},
+		"host_runtime_bindings": {
+			"runtime_id", "host", "host_session_hash", "host_agent_hash", "is_main", "parent_runtime_id",
+			"generation_hash", "agent_type", "lifecycle_state", "last_event", "producer_sequence", "observed_at",
+		},
+		"pending_host_runtime_events": {
+			"host", "host_session_hash", "host_agent_hash", "generation_hash", "agent_type", "lifecycle_state",
+			"last_event", "producer_sequence", "model_key", "effort", "context_used", "context_limit",
+			"started_at", "last_activity_at", "observed_at", "ended_at", "run_key_hash",
+		},
 	}
 
 	got := map[string][]string{}

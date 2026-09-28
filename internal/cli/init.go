@@ -156,6 +156,19 @@ func installAgentSetup(ctx context.Context, a *bootstrap.App, inv invocation) (s
 		runner = git.NewExecRunner()
 	}
 	root := a.Paths().WorktreeRoot
+	tracked, _, err := runner.Run(ctx, root, "ls-files", "--", ".claude/settings.local.json", ".codex/hooks.json")
+	if err != nil {
+		return setup.Result{}, err
+	}
+	if trackedPath := strings.TrimSpace(string(tracked)); trackedPath != "" {
+		return setup.Result{}, app.NewError(
+			app.CodeConfigInvalid,
+			app.KindUsage,
+			"an agent adapter configuration is tracked by Git",
+			"Mindrail will not rewrite an executable adapter configuration shared through the repository.",
+			fmt.Sprintf("Move `%s` to local-only configuration or untrack it, then run `mindrail init` again.", strings.Split(trackedPath, "\n")[0]),
+		)
+	}
 	output, _, err := runner.Run(ctx, root, "rev-parse", "--git-path", "hooks/pre-commit")
 	if err != nil {
 		return setup.Result{}, err

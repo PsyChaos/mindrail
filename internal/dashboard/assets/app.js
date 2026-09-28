@@ -194,6 +194,8 @@
     const heartbeatValue=node("dd","");heartbeatValue.append(heartbeat);
     const activityValue=node("dd","");activityValue.append(lastActivity);
     activity.append(node("dt","","SESSION"),node("dd","",presentation.sessionID||"—"),node("dt","","LAST HEARTBEAT"),heartbeatValue,node("dt","","LAST MCP ACTIVITY"),activityValue);
+    activity.append(node("dt","","HOST"),node("dd","",presentation.host),node("dt","","AGENT KIND"),node("dd","",presentation.agentKind),
+      node("dt","","AGENT TYPE"),node("dd","",presentation.agentType),node("dt","","PARENT RUNTIME"),node("dd","",presentation.parentRuntimeID));
     activity.append(node("dt","","MODEL"),node("dd","",presentation.model),node("dt","","EFFORT"),node("dd","",presentation.effort),
       node("dt","","CONTEXT"),node("dd","",presentation.contextPressure),node("dt","","TELEMETRY"),node("dd","",`${presentation.telemetryState} · ${presentation.telemetryAge}`),
       node("dt","","CONTINUITY"),node("dd","",`${presentation.continuityState}${presentation.continuityHardProtection?" · HARD PROTECTION":""}${presentation.continuityStalled?" · STALLED":""}${presentation.continuityFailure?" · "+presentation.continuityFailure:""}`),

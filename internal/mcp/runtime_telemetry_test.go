@@ -3,6 +3,7 @@ package mcp
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDecodeRuntimeTelemetryAcceptsBoundedStrictShape(t *testing.T) {
@@ -15,6 +16,21 @@ func TestDecodeRuntimeTelemetryAcceptsBoundedStrictShape(t *testing.T) {
 		input.ContextUsed == nil || *input.ContextUsed != 600_000 || *input.ContextLimit != 1_000_000 ||
 		input.ProducerSequence != 9 || input.ObservedAt.IsZero() {
 		t.Fatalf("input=%#v ok=%v", input, ok)
+	}
+}
+
+func TestRuntimeObservationFreshRejectsOldAndFutureTelemetry(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		at   time.Time
+		want bool
+	}{
+		{now.Add(-29 * time.Second), true}, {now.Add(4 * time.Second), true},
+		{now.Add(-31 * time.Second), false}, {now.Add(6 * time.Second), false}, {time.Time{}, false},
+	} {
+		if got := runtimeObservationFresh(now, tc.at); got != tc.want {
+			t.Fatalf("fresh(%s)=%v want %v", tc.at, got, tc.want)
+		}
 	}
 }
 

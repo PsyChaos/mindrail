@@ -244,11 +244,14 @@ func (c *Collector) jevRouteEvents(ctx context.Context, db queryer) ([]JEVRouteE
 func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time) ([]AgentRuntime, bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT substr(r.runtime_id,1,?), substr(r.workspace_id,1,?), substr(r.task_id,1,?), substr(r.session_id,1,?),
 		r.client_name, COALESCE(r.client_title,''), COALESCE(r.client_version,''),
+		COALESCE(h.host,''), CASE WHEN h.runtime_id IS NULL THEN '' WHEN h.is_main = 1 THEN 'MAIN' ELSE 'SUBAGENT' END,
+		COALESCE(h.agent_type,''), COALESCE(substr(h.parent_runtime_id,1,?),''),
 		r.started_at, r.last_heartbeat_at, r.last_activity_at, r.sequence, r.ended_at, COALESCE(r.end_reason,''),
 		o.model_key, o.effort, o.context_used, o.context_limit, o.source, o.confidence, o.observed_at, o.revision,
 		i.intent_id, i.state, i.failure_code, i.checkpoint_id, i.host_operation_id,
 		i.successor_session_id, i.updated_at, i.last_used_basis_points
 		FROM agent_runtimes r
+		LEFT JOIN host_runtime_bindings h ON h.runtime_id = r.runtime_id
 		LEFT JOIN agent_runtime_observations o ON o.runtime_id = r.runtime_id
 		LEFT JOIN continuity_intents i ON i.intent_id = (
 			SELECT ci.intent_id FROM continuity_intents ci
@@ -256,7 +259,7 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 			ORDER BY ci.intent_id DESC LIMIT 1
 		)
 		WHERE r.project_id = ? ORDER BY (r.ended_at IS NULL) DESC, r.runtime_id DESC LIMIT ?`,
-		maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, maxIDRunes+1,
+		maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, maxIDRunes+1,
 		c.opts.ProjectID, maxAgentRuntimes+1)
 	if err != nil {
 		return nil, false, err
@@ -273,6 +276,7 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		var intentID, continuityState, failureCode, checkpointID, hostOperationID, successorSessionID, continuityUpdated sql.NullString
 		var continuityUsed sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.TaskID, &item.SessionID, &rawName, &rawTitle, &rawVersion,
+			&item.Host, &item.AgentKind, &item.AgentType, &item.ParentRuntimeID,
 			&started, &heartbeat, &activity, &item.Sequence, &ended, &item.EndReason,
 			&model, &effort, &contextUsed, &contextLimit, &source, &confidence, &observed, &observationRevision,
 			&intentID, &continuityState, &failureCode, &checkpointID, &hostOperationID, &successorSessionID, &continuityUpdated, &continuityUsed); err != nil {
@@ -296,6 +300,8 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		}
 		item.ID, item.WorkspaceID = boundedText(item.ID, maxIDRunes), boundedText(item.WorkspaceID, maxIDRunes)
 		item.TaskID, item.SessionID = boundedText(item.TaskID, maxIDRunes), boundedText(item.SessionID, maxIDRunes)
+		item.Host, item.AgentKind = boundedText(item.Host, 32), boundedText(item.AgentKind, 16)
+		item.AgentType, item.ParentRuntimeID = boundedText(item.AgentType, 64), boundedText(item.ParentRuntimeID, maxIDRunes)
 		item.ClientFamily = agent.CanonicalClientInfo(agent.ClientInfo{Name: rawName, Title: rawTitle, Version: rawVersion}).Name
 		item.Status = runtimeStatus(item, now)
 		item.Telemetry = runtimeTelemetry(model, effort, contextUsed, contextLimit, source, confidence, observed, observationRevision, item.LastActivityAt, now)

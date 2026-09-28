@@ -91,6 +91,21 @@ olarak saklar ve yeni wrapper önce bu foreign hook'u, sonra
 dosya üreten eski hook'un çıktısı Mindrail tarafından görülür. Tekrar
 `mindrail init` çalıştırmak idempotenttir.
 
+Aynı kurulum `.claude/settings.local.json` ve `.codex/hooks.json` içine Mindrail'in
+yaşam döngüsü adaptörlerini, mevcut kullanıcı hook'larını koruyarak ekler. Claude'un
+`settings.local.json` dosyasında mevcut status line varsa aynı stdin ile zincirlenir.
+Yalnız ortak veya global Claude ayarından miras alınan status line otomatik
+zincirlenemez; korunması gerekiyorsa `mindrail init/update` öncesinde aynı komutu
+yerel ayara taşıyın. Codex proje hook'larını ilk kez
+gördüğünde `/hooks` arayüzünde bir defalık güven onayı ister; Mindrail bu güvenlik
+kontrolünü atlamaz. Claude ana oturumunda model/effort/context, Claude child'larında
+kimlik/tür/aktivite; Codex'te model ve lifecycle görünür. Host'un resmî olarak
+vermediği alanlar `UNKNOWN` kalır ve parent değerleri child'a kopyalanmaz.
+Bu lifecycle sinyalleri doğrulanmamış, host tarafından raporlanan dashboard gözlemidir; doğrulanmış request-scoped
+telemetri yerine geçmez ve tek başına otomatik handoff başlatmaz. Codex hook
+dosyası Git tarafından takip ediliyorsa Mindrail onu sessizce değiştirmez;
+kurulumu açık bir hatayla durdurur.
+
 Binary'yi yeni bir kaynak sürümünden değiştirdikten sonra daha önce initialize
 edilmiş worktree'de `mindrail update` çalıştırın. Bu komut aynı güvenli managed
 setup/migration hattını kullanır; user-owned AGENTS metnini ve foreign hook'u
@@ -163,14 +178,19 @@ devam eder. Raw title/version hiçbir zaman kalıcı yazılmaz veya gösterilmez
 Bu tercih, credential biçimli caller input'un durable telemetry'ye girmesini
 engellemek için arbitrary client adlarını bilinçli olarak korumaz.
 
-Context sürekliliği opt-in'dir ve host kabiliyetini olduğundan fazla göstermez.
-İstemci bounded `io.mindrail/runtime-telemetry` MCP metadata'sı ile model, effort,
-kullanılan token ve context limitini verirse dashboard bunları kaynak ve freshness
-bilgisiyle gösterir. Bu metadata yoksa değerler `unknown` kalır ve yüzdeye bağlı
+Context sürekliliği host kabiliyetini olduğundan fazla göstermez. İstemci, çağrıyı
+yapan MCP runtime'ına bağlı bounded `io.mindrail/runtime-telemetry` metadata'sı
+sağlayabilir. Process-global Claude/Codex environment kimlikleri agente atanmaz;
+paralel subagent'lar ve session rotation sahipliği belirsiz hale getirir. Doğrulanmış
+request-scoped telemetri yoksa değerler `unknown` kalır ve yüzdeye bağlı
 otomatik handoff tetiklenmez. Varsayılan repository politikası %55'te uyarır,
 art arda iki ölçüm %60'a ulaştığında handoff ister ve %75'te hard-protection'a
 geçer. Host adapter yoksa Mindrail durable checkpoint bırakır ve yeni konuşma
 oluşturulmuş gibi davranmak yerine `MANUAL_REQUIRED` gösterir.
+Subagent'ların Mindrail tarafından spawn edilmesi gerekmez. Kendi Mindrail MCP
+oturumunu açan subagent ayrı runtime olarak görünür; parent ile aynı MCP sürecini
+paylaşan child ise parent'ın context değerlerini yanlış devralmak yerine bilinmiyor
+olarak kalır.
 
 Otomatik successor oluşturma, repository dışında bulunan host-local bir executable
 gerektirir. `mindrail mcp` sürecini başlatan ortamda
@@ -394,9 +414,10 @@ ekleyin ve CI işlerini ayrıca çalıştırın. Agent, otomatik complete isteğ
 `required`, `task_id`, revision veya operation ID ekleyerek kanıt politikasını
 zayıflatamaz.
 
-### Aynı yaşam döngüsü, 14 tool
+### Aynı yaşam döngüsü, 15 tool
 
-Server yaşam döngüsünü korur ve görünür JEV yönlendirmesiyle şu 14 tool'u yayımlar:
+Server yaşam döngüsünü korur, görünür JEV yönlendirmesi ve host adapter köprüsüyle
+şu 15 tool'u yayımlar:
 
 1. `mindrail_bootstrap`
 2. `mindrail_status`
@@ -412,6 +433,12 @@ Server yaşam döngüsünü korur ve görünür JEV yönlendirmesiyle şu 14 too
 12. `mindrail_validate`
 13. `mindrail_complete`
 14. `mindrail_route`
+15. `mindrail_host_event`
+
+`mindrail_host_event` insanın veya modelin elle çağıracağı bir günlük-iş tool'u
+değildir. Kurulan Claude/Codex hook'ları bunu host session ve subagent yaşam döngüsünü
+çağrının gerçek MCP bağlantısına bağlamak için kullanır; ham host kimlikleri kalıcı
+tutulmaz.
 
 Agent gerektiğinde `mindrail_status`, `mindrail_search` ve `mindrail_context`
 ile okuma yapabilir; durable seçimleri `mindrail_decide` ve
@@ -548,6 +575,10 @@ Bounded payload zorunlu string `goal`, opsiyonel JSON `context` ve en az bir
 `mindrail_route` üzerinden sunar; Python 3 yalnız bu opsiyon etkinse gerekir. Agent yalnız
 top-level durum `ok` ve bütün seçimler accepted olduğunda tavsiyeyi kullanır;
 disabled, fallback, error veya reddedilmiş sonuçta normal akışa devam eder.
+Bundled bir istek `atomic_fallback` döndürürse, adayı ve confidence değeri kullanılabilir
+olan bir boyut yalnız bir kez tek-boyutlu istek olarak yeniden denenebilir. Reddedilen
+bundle'ın kendisi bağlayıcı hale gelmez; bağımsız yüksek güvenli agent veya tool seçimi
+gereksiz yere kaybedilmez.
 TypeSafe'e yalnız gerekli en küçük hassas-olmayan goal/context özetini ve kapalı
 candidate açıklamalarını gönderin; ham prompt, secret, log, kaynak kod, diff,
 path veya environment değeri göndermeyin. JEV hiçbir zaman işi bloke etmez,

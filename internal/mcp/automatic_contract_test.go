@@ -18,7 +18,7 @@ import (
 
 // TestBootstrapSchemaAddsAutomaticModeWithoutAddingATool pins the additive
 // contract: automatic work remains selected by optional bootstrap arguments;
-// the fourteenth tool is advisory routing, not a second task lifecycle.
+// routing and host telemetry remain separate from task lifecycle.
 func TestBootstrapSchemaAndVisibleRouteToolRemainSeparate(t *testing.T) {
 	server := newTestServer(t, newTestRepo(t))
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
@@ -38,8 +38,8 @@ func TestBootstrapSchemaAndVisibleRouteToolRemainSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 14 {
-		t.Fatalf("tool count = %d, want 14", len(listed.Tools))
+	if len(listed.Tools) != 15 {
+		t.Fatalf("tool count = %d, want 15", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
 		if tool.Name != mcp.ToolBootstrap {
@@ -89,6 +89,50 @@ func TestLegacyBootstrapRemainsReadOnly(t *testing.T) {
 	}
 	if countRows(t, db, "sessions") != beforeSessions || countRows(t, db, "tasks") != beforeTasks {
 		t.Fatal("invalid automatic bootstrap wrote coordination rows")
+	}
+}
+
+func TestHostClaimCanPrecedeBootstrapOnTheSameConnection(t *testing.T) {
+	root := newTestRepo(t)
+	server := newTestServer(t, root)
+	clientTransport, serverTransport := sdk.NewInMemoryTransports()
+	serverSession, err := server.SDK().Connect(t.Context(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := sdk.NewClient(&sdk.Implementation{Name: "codex", Version: "v0"}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	runKey := "host-claim-before-bootstrap"
+	claim, err := clientSession.CallTool(t.Context(), &sdk.CallToolParams{Name: mcp.ToolHostEvent, Arguments: map[string]any{
+		"host": "codex", "host_session_id": "thread-1", "event": "activity", "claim_pending": true, "run_key": runKey,
+	}})
+	if err != nil || claim.IsError {
+		t.Fatalf("pending claim: result=%+v err=%v", claim, err)
+	}
+	bootstrap, err := clientSession.CallTool(t.Context(), &sdk.CallToolParams{Name: mcp.ToolBootstrap, Arguments: map[string]any{
+		"goal": "bind official hook", "run_key": runKey,
+	}})
+	if err != nil || bootstrap.IsError {
+		t.Fatalf("bootstrap: result=%+v err=%v", bootstrap, err)
+	}
+	_, db := coordinationStore(t, root)
+	var bound, pending, runtimes int
+	if err := db.QueryRow(`SELECT count(*) FROM host_runtime_bindings`).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM pending_host_runtime_events`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM agent_runtimes`).Scan(&runtimes); err != nil {
+		t.Fatal(err)
+	}
+	if bound != 1 || pending != 0 || runtimes != 1 {
+		t.Fatalf("bound=%d pending=%d runtimes=%d, want 1/0/1", bound, pending, runtimes)
 	}
 }
 

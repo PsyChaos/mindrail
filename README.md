@@ -71,13 +71,27 @@ Raw title/version values never persist or display. This deliberately gives up
 arbitrary client naming so credential-shaped caller input cannot enter durable
 telemetry.
 
-Context continuity is opt-in and remains truthful about host capability. A client
-that supplies the bounded `io.mindrail/runtime-telemetry` MCP metadata can expose
-model, effort, token usage and limit; otherwise those values stay unknown and no
-percentage-based handoff is attempted. The repository policy defaults to warning
+Context continuity remains truthful about host capability. `mindrail init` and
+`mindrail update` install repository-local Claude Code and Codex lifecycle adapters
+without replacing existing hooks. Claude's documented status-line payload supplies
+main-session model, effort and context usage; its subagent hooks supply child identity,
+type and lifecycle only. Codex hooks supply session, model and subagent lifecycle;
+effort and context remain unknown because they are not documented hook fields.
+Parent telemetry is never copied to a child. Codex reviews project hooks once in its
+`/hooks` UI; Mindrail reports that requirement and does not bypass it.
+
+Clients may also supply bounded `io.mindrail/runtime-telemetry` MCP metadata tied to
+the calling MCP runtime. Process-global environment identifiers are deliberately not
+attributed to an agent: parallel subagents and session rotation make that ownership
+ambiguous. Without verified request-scoped telemetry values stay unknown and no
+percentage-based handoff is attempted. Host lifecycle events are unverified, host-reported
+observability, not authority for automatic continuation. The repository policy defaults to warning
 at 55%, requesting handoff at 60% after two consecutive observations, and hard
-protection at 75%. Without a host adapter, Mindrail creates a durable checkpoint
+protection at 75%. When automatic continuation is unavailable, Mindrail creates a durable checkpoint
 and reports `MANUAL_REQUIRED` rather than claiming that a new conversation exists.
+Subagents do not need to be spawned by Mindrail. Documented Claude/Codex lifecycle
+hooks create separate child runtime cards even when a child shares its parent's MCP
+process. Unsupported child model, effort or context fields remain `UNKNOWN`.
 
 Automatic successor creation requires a host-local executable outside the
 repository. Set `MINDRAIL_CONTINUITY_HOST` to its absolute path and
@@ -104,7 +118,7 @@ low-level commands remain callable for compatibility and diagnostics; see the
 ## Automatic agent flow
 
 Configure the coding agent to launch `mindrail mcp` in the target repository.
-The server exposes 14 MCP tools. The minimal lifecycle is:
+The server exposes 15 MCP tools. The minimal lifecycle is:
 
 ```text
 mindrail_bootstrap {"goal":"Implement the requested change","run_key":"<opaque-stable-agent-key>","paths":["planned/file.go"]}
@@ -201,6 +215,9 @@ accepted. Missing credentials and all disabled/fallback/error results continue
 through normal reasoning; JEV never blocks work or grants permission. The hidden
 `mindrail agent route` stdin bridge remains only for compatibility with clients
 that cannot discover `mindrail_route`.
+For `atomic_fallback` from a bundled request, an otherwise usable dimension may be
+retried once as a single-dimension request. The rejected bundle itself never becomes
+binding, but an independent high-confidence agent or tool choice is not discarded.
 
 Recorded route metadata is deliberately ordinal and bounded: attribution,
 status/reason, candidate counts, selected ordinal, quantized confidence,

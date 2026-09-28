@@ -28,6 +28,7 @@ func TestServerRegistersFourReadTools(t *testing.T) {
 		mcp.ToolAfterChange: false, mcp.ToolReconcile: false,
 		mcp.ToolCheckpoint: false, mcp.ToolValidate: false,
 		mcp.ToolComplete: false, mcp.ToolRoute: false,
+		mcp.ToolHostEvent: false,
 	}
 	for _, name := range names {
 		if _, ok := want[name]; !ok {

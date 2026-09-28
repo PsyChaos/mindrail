@@ -37,9 +37,10 @@ const (
 	ToolAfterChange  = "mindrail_after_change"
 	ToolReconcile    = "mindrail_reconcile"
 	ToolCheckpoint   = "mindrail_checkpoint"
+	ToolHostEvent    = "mindrail_host_event"
 )
 
-// Server binds the fourteen tools to one read-write application over a
+// Server binds the fifteen tools to one read-write application over a
 // repository root. The application starts once at construction in ModeWrite
 // (existing database, no creation or migration) — the same startup the CLI
 // runs — and every handler reads from it, so behavior cannot fork
@@ -64,6 +65,7 @@ type Server struct {
 	routes                           routeRecorder
 	presence                         presenceRecorder
 	observations                     observationRecorder
+	hostRuntimes                     hostRuntimeRecorder
 	continuityStore                  *continuity.SQLStore
 	continuityService                *continuity.Service
 	continuityMu                     sync.Mutex
@@ -150,6 +152,12 @@ func New(ctx context.Context, root string) (*Server, error) {
 		registry.Close()
 		return nil, err
 	}
+	hostRuntimeStore, err := agent.NewHostRuntimeStore(application.DB(), app.SystemClock{})
+	if err != nil {
+		guard.Close()
+		registry.Close()
+		return nil, err
+	}
 	continuityStore, err := continuity.NewSQLStore(application.DB(), app.SystemClock{})
 	if err != nil {
 		guard.Close()
@@ -202,6 +210,7 @@ func New(ctx context.Context, root string) (*Server, error) {
 		automatic: make(map[*sdk.ServerSession]*automaticContext),
 		router:    agent.NewRouter(credential.NewOSStore()), routes: routeStore, presence: presenceStore,
 		observations:    observationStore,
+		hostRuntimes:    hostRuntimeStore,
 		continuityStore: continuityStore,
 		clock:           app.SystemClock{}, projectIDValue: space.ProjectID, workspaceIDValue: space.ID,
 		routeSessions: make(map[string]*routeSessionState),
@@ -246,6 +255,7 @@ func New(ctx context.Context, root string) (*Server, error) {
 	server.registerDiscovery()
 	server.registerProving()
 	server.registerRoute()
+	server.registerHostEvent()
 	return server, nil
 }
 

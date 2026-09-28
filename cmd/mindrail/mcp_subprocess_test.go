@@ -16,10 +16,10 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestMCPSubprocessServesFourteenTools is REQ-005's public boundary: it uses
+// TestMCPSubprocessServesFifteenTools is REQ-005's public boundary: it uses
 // the SDK's command transport against a built binary, not an in-process
 // server. Any diagnostic written to stdout corrupts this client session.
-func TestMCPSubprocessServesFourteenTools(t *testing.T) {
+func TestMCPSubprocessServesFifteenTools(t *testing.T) {
 	binary := buildMCPBinary(t)
 	repo := newMCPRepo(t)
 	init := exec.Command(binary, "init")
@@ -51,7 +51,7 @@ func TestMCPSubprocessServesFourteenTools(t *testing.T) {
 	want := []string{
 		"mindrail_after_change", "mindrail_before_change", "mindrail_bootstrap",
 		"mindrail_checkpoint", "mindrail_claim", "mindrail_complete", "mindrail_context",
-		"mindrail_decide", "mindrail_invariant", "mindrail_reconcile", "mindrail_route",
+		"mindrail_decide", "mindrail_host_event", "mindrail_invariant", "mindrail_reconcile", "mindrail_route",
 		"mindrail_search", "mindrail_status", "mindrail_validate",
 	}
 	if !reflect.DeepEqual(names, want) {

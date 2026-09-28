@@ -135,6 +135,13 @@ func (s *RuntimeObservationStore) Get(ctx context.Context, runtimeID string) (Ru
 
 func canonicalModelKey(raw string) string {
 	key := strings.ToLower(strings.TrimSpace(raw))
+	for prefix, family := range map[string]string{
+		"claude-opus-": "claude-opus", "claude-sonnet-": "claude-sonnet", "claude-haiku-": "claude-haiku",
+	} {
+		if strings.HasPrefix(key, prefix) {
+			return family
+		}
+	}
 	aliases := map[string]string{
 		"claude-opus": "claude-opus", "claude-sonnet": "claude-sonnet", "claude-haiku": "claude-haiku",
 		"gpt-5": "gpt-5", "gpt-5-codex": "gpt-5-codex", "gpt-5.6-sol": "gpt-5.6-sol",

@@ -5,6 +5,9 @@ package setup
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,11 +23,18 @@ const hookBegin = "# mindrail:begin verify-staged"
 const hookEnd = "# mindrail:end verify-staged"
 const chainMarker = "# mindrail:chain v1"
 const backupSuffix = ".mindrail-original"
+const claudeHookCommand = "mindrail host claude hook"
+const claudeStatusCommand = "mindrail host claude statusline"
+const codexEndCommand = "mindrail host codex hook"
+const codexMCPServer = "mindrail"
+const codexMCPTool = "mindrail_host_event"
+const excludeBegin = "# mindrail:begin local-host-adapters"
+const excludeEnd = "# mindrail:end local-host-adapters"
 
 const instructions = `## MINDRAIL PROTOCOL
 
 Mindrail is the repository's local engineering gate. The MCP server command is
-` + "`mindrail mcp`" + `, started in this repository. Use the existing 14 MCP tools.
+` + "`mindrail mcp`" + `, started in this repository. Use the existing 15 MCP tools.
 
 At the start of a task, call mindrail_bootstrap with goal, an agent-generated
 stable run_key, and paths when known. Keep the same run_key when retrying or
@@ -63,6 +73,9 @@ safety policy, and availability constraints.
 Supply only the smallest non-sensitive summary needed for the judgment—never raw
 prompts, secrets, logs, source code, diffs, paths, or environment values. Consume
 advice only when the top-level status is ` + "`ok`" + ` and every selection is accepted.
+If a multi-dimension call returns ` + "`atomic_fallback`" + `, a dimension whose candidate
+and confidence are otherwise usable may be retried once in its own single-dimension
+call; never treat the rejected bundled result itself as accepted advice.
 Missing credentials, disabled/fallback/error/rejected results, telemetry failure, or
 an unavailable route tool mean normal reasoning must continue; JEV never blocks
 engineering work or grants permission. ` + "`mindrail agent route`" + ` accepts the same
@@ -82,8 +95,9 @@ native Keychain backend is available; use the optional environment override.
 `
 
 type Result struct {
-	AgentsPath, HookPath       string
-	AgentsChanged, HookChanged bool
+	AgentsPath, HookPath, ClaudePath, CodexPath, ExcludePath                string
+	AgentsChanged, HookChanged, ClaudeChanged, CodexChanged, ExcludeChanged bool
+	CodexTrustRequired                                                      bool
 }
 
 type target struct {
@@ -97,7 +111,12 @@ type target struct {
 // Install preflights both managed targets before changing either one. HookPath
 // must be Git's effective pre-commit path, confined to the worktree/common dir.
 func Install(worktree, commonDir, hookPath string) (Result, error) {
-	result := Result{AgentsPath: filepath.Join(worktree, "AGENTS.md"), HookPath: hookPath}
+	result := Result{
+		AgentsPath: filepath.Join(worktree, "AGENTS.md"), HookPath: hookPath,
+		ClaudePath:  filepath.Join(worktree, ".claude", "settings.local.json"),
+		CodexPath:   filepath.Join(worktree, ".codex", "hooks.json"),
+		ExcludePath: filepath.Join(commonDir, "info", "exclude"),
+	}
 	work, err := os.OpenRoot(worktree)
 	if err != nil {
 		return result, refuse(worktree, err)
@@ -129,6 +148,37 @@ func Install(worktree, commonDir, hookPath string) (Result, error) {
 		return result, err
 	}
 	wrapper := hookWrapper()
+	claude, err := readTarget(work, filepath.Join(".claude", "settings.local.json"), result.ClaudePath)
+	if err != nil {
+		return result, err
+	}
+	worktreeKey := fmt.Sprintf("%x", sha256.Sum256([]byte(filepath.Clean(worktree))))
+	statusBackupRel := filepath.Join("mindrail", "host-adapters", worktreeKey, "claude-statusline.json")
+	statusBackupPath := filepath.Join(commonDir, statusBackupRel)
+	statusBackup, err := readTarget(common, statusBackupRel, statusBackupPath)
+	if err != nil {
+		return result, err
+	}
+	claudeBody, backupBody, err := mergeClaudeSettings(claude.before, statusBackup.before)
+	if err != nil {
+		return result, refuse(result.ClaudePath, err)
+	}
+	codex, err := readTarget(work, filepath.Join(".codex", "hooks.json"), result.CodexPath)
+	if err != nil {
+		return result, err
+	}
+	codexBody, err := mergeCodexHooks(codex.before)
+	if err != nil {
+		return result, refuse(result.CodexPath, err)
+	}
+	exclude, err := readTarget(common, filepath.Join("info", "exclude"), result.ExcludePath)
+	if err != nil {
+		return result, err
+	}
+	excludeBody, err := mergeLocalExcludes(exclude.before)
+	if err != nil {
+		return result, refuse(result.ExcludePath, err)
+	}
 	var foreign []byte
 	if !bytes.Equal(hook.before, wrapper) {
 		if bytes.Contains(hook.before, []byte(chainMarker)) {
@@ -150,6 +200,15 @@ func Install(worktree, commonDir, hookPath string) (Result, error) {
 			return result, err
 		}
 	}
+	if len(backupBody) > 0 && !bytes.Equal(statusBackup.before, backupBody) {
+		if statusBackup.exists {
+			if err := replace(statusBackup, backupBody, 0o600); err != nil {
+				return result, err
+			}
+		} else if err := writeNew(statusBackup, backupBody, 0o600); err != nil {
+			return result, err
+		}
+	}
 	if !bytes.Equal(hook.before, wrapper) || hook.mode.Perm()&0o111 == 0 {
 		if err := replace(hook, wrapper, 0o755); err != nil {
 			return result, err
@@ -166,7 +225,281 @@ func Install(worktree, commonDir, hookPath string) (Result, error) {
 		}
 		result.AgentsChanged = true
 	}
+	if !bytes.Equal(claude.before, claudeBody) {
+		mode := claude.mode
+		if !claude.exists {
+			mode = 0o644
+		}
+		if err := replace(claude, claudeBody, mode); err != nil {
+			return result, err
+		}
+		result.ClaudeChanged = true
+	}
+	if !bytes.Equal(codex.before, codexBody) {
+		mode := codex.mode
+		if !codex.exists {
+			mode = 0o644
+		}
+		if err := replace(codex, codexBody, mode); err != nil {
+			return result, err
+		}
+		result.CodexChanged = true
+		result.CodexTrustRequired = true
+	}
+	if !bytes.Equal(exclude.before, excludeBody) {
+		mode := exclude.mode
+		if !exclude.exists {
+			mode = 0o644
+		}
+		if err := replace(exclude, excludeBody, mode); err != nil {
+			return result, err
+		}
+		result.ExcludeChanged = true
+	}
 	return result, nil
+}
+
+func mergeLocalExcludes(content []byte) ([]byte, error) {
+	text := string(content)
+	if strings.Count(text, excludeBegin) != strings.Count(text, excludeEnd) || strings.Count(text, excludeBegin) > 1 {
+		return nil, errors.New("Git exclude needs at most one matching pair of Mindrail markers")
+	}
+	block := excludeBegin + "\n/.claude/settings.local.json\n/.codex/hooks.json\n" + excludeEnd
+	if strings.Contains(text, excludeBegin) {
+		start, end := strings.Index(text, excludeBegin), strings.Index(text, excludeEnd)
+		if end < start {
+			return nil, errors.New("Git exclude Mindrail markers are out of order")
+		}
+		return []byte(text[:start] + block + text[end+len(excludeEnd):]), nil
+	}
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return []byte(text + block + "\n"), nil
+}
+
+func decodeJSONObject(content []byte) (map[string]any, error) {
+	if len(bytes.TrimSpace(content)) == 0 {
+		return map[string]any{}, nil
+	}
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	if err := decoder.Decode(&object); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if object == nil {
+		return nil, fmt.Errorf("JSON root must be an object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("JSON contains trailing values")
+		}
+		return nil, fmt.Errorf("invalid trailing JSON: %w", err)
+	}
+	return object, nil
+}
+
+func encodeJSONObject(object map[string]any) ([]byte, error) {
+	body, err := json.MarshalIndent(object, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
+
+func mergeClaudeSettings(content, savedStatus []byte) ([]byte, []byte, error) {
+	root, err := decodeJSONObject(content)
+	if err != nil {
+		return nil, nil, err
+	}
+	var backup []byte
+	managedStatus := map[string]any{"type": "command", "command": claudeStatusCommand}
+	current, hasStatus := root["statusLine"]
+	currentObject, objectStatus := current.(map[string]any)
+	isManaged := objectStatus && currentObject["type"] == "command" && currentObject["command"] == claudeStatusCommand
+	if hasStatus && !isManaged {
+		backup, err = json.Marshal(current)
+		if err != nil {
+			return nil, nil, err
+		}
+		backup = append(backup, '\n')
+	} else if len(savedStatus) > 0 {
+		backup = append([]byte(nil), savedStatus...)
+	}
+	if objectStatus {
+		managedStatus = make(map[string]any, len(currentObject)+2)
+		for key, value := range currentObject {
+			managedStatus[key] = value
+		}
+		managedStatus["type"] = "command"
+		managedStatus["command"] = claudeStatusCommand
+	}
+	root["statusLine"] = managedStatus
+	hooks, err := objectField(root, "hooks")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, event := range []string{"SessionStart", "SessionEnd", "PreToolUse", "SubagentStart", "SubagentStop"} {
+		matcher := ""
+		if event == "SessionStart" {
+			matcher = "startup|resume|clear|compact"
+		}
+		group := commandHookGroup(matcher, claudeHookCommand)
+		hooks[event], err = appendManagedGroup(hooks[event], group, func(handler map[string]any) bool {
+			return handler["type"] == "command" && handler["command"] == claudeHookCommand
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("hooks.%s: %w", event, err)
+		}
+	}
+	root["hooks"] = hooks
+	body, err := encodeJSONObject(root)
+	return body, backup, err
+}
+
+func mergeCodexHooks(content []byte) ([]byte, error) {
+	root, err := decodeJSONObject(content)
+	if err != nil {
+		return nil, err
+	}
+	hooks, err := objectField(root, "hooks")
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range []string{"SessionStart", "SubagentStart", "SubagentStop", "Stop"} {
+		matcher := ""
+		if event == "SessionStart" {
+			matcher = "startup|resume|clear|compact"
+		}
+		kind := "activity"
+		if event == "SessionStart" || event == "SubagentStart" {
+			kind = "start"
+		}
+		if event == "SubagentStop" {
+			kind = "stop"
+		}
+		input := map[string]any{
+			"host": "codex", "host_session_id": "${session_id}", "event": kind,
+			"model": "${model}",
+		}
+		if event == "SessionStart" {
+			input["source"] = "${source}"
+		}
+		if strings.HasPrefix(event, "Subagent") {
+			input["agent_id"] = "${agent_id}"
+			input["agent_type"] = "${agent_type}"
+		}
+		group := mcpHookGroup(matcher, input)
+		hooks[event], err = appendManagedGroup(hooks[event], group, func(handler map[string]any) bool {
+			return handler["type"] == "mcp_tool" && handler["server"] == codexMCPServer && handler["tool"] == codexMCPTool
+		})
+		if err != nil {
+			return nil, fmt.Errorf("hooks.%s: %w", event, err)
+		}
+	}
+	claim := mcpHookGroup("^mcp__mindrail__mindrail_bootstrap$", map[string]any{
+		"host": "codex", "host_session_id": "${session_id}", "event": "activity",
+		"model": "${model}", "claim_pending": true, "run_key": "${tool_input.run_key}",
+	})
+	hooks["PreToolUse"], err = appendManagedGroup(hooks["PreToolUse"], claim, func(handler map[string]any) bool {
+		return handler["type"] == "mcp_tool" && handler["server"] == codexMCPServer && handler["tool"] == codexMCPTool && hasClaimPending(handler)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hooks.PreToolUse: %w", err)
+	}
+	end := commandHookGroup("", codexEndCommand)
+	hooks["SessionEnd"], err = appendManagedGroup(hooks["SessionEnd"], end, func(handler map[string]any) bool {
+		return handler["type"] == "command" && handler["command"] == codexEndCommand
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hooks.SessionEnd: %w", err)
+	}
+	root["hooks"] = hooks
+	if _, ok := root["description"]; !ok {
+		root["description"] = "Project hooks including Mindrail runtime telemetry."
+	}
+	return encodeJSONObject(root)
+}
+
+func hasClaimPending(handler map[string]any) bool {
+	input, ok := handler["input"].(map[string]any)
+	return ok && input["claim_pending"] == true
+}
+
+func objectField(root map[string]any, name string) (map[string]any, error) {
+	value, ok := root[name]
+	if !ok {
+		return map[string]any{}, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object", name)
+	}
+	return object, nil
+}
+
+func commandHookGroup(matcher, command string) map[string]any {
+	group := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": json.Number("3")}}}
+	if matcher != "" {
+		group["matcher"] = matcher
+	}
+	return group
+}
+
+func mcpHookGroup(matcher string, input map[string]any) map[string]any {
+	group := map[string]any{"hooks": []any{map[string]any{"type": "mcp_tool", "server": codexMCPServer, "tool": codexMCPTool, "input": input, "timeout": json.Number("3")}}}
+	if matcher != "" {
+		group["matcher"] = matcher
+	}
+	return group
+}
+
+func appendManagedGroup(current any, managed map[string]any, identifies func(map[string]any) bool) ([]any, error) {
+	var groups []any
+	if current != nil {
+		var ok bool
+		groups, ok = current.([]any)
+		if !ok {
+			return nil, fmt.Errorf("must be an array")
+		}
+	}
+	filtered := make([]any, 0, len(groups)+1)
+	for _, raw := range groups {
+		group, ok := raw.(map[string]any)
+		if !ok {
+			filtered = append(filtered, raw)
+			continue
+		}
+		handlers, ok := group["hooks"].([]any)
+		if !ok {
+			filtered = append(filtered, raw)
+			continue
+		}
+		remaining := make([]any, 0, len(handlers))
+		for _, rawHandler := range handlers {
+			if handler, ok := rawHandler.(map[string]any); ok && identifies(handler) {
+				continue
+			}
+			remaining = append(remaining, rawHandler)
+		}
+		if len(remaining) > 0 {
+			kept := make(map[string]any, len(group))
+			for key, value := range group {
+				kept[key] = value
+			}
+			kept["hooks"] = remaining
+			filtered = append(filtered, kept)
+		}
+	}
+	return append(filtered, managed), nil
+}
+
+func sameJSONObject(left any, right map[string]any) bool {
+	a, errA := json.Marshal(left)
+	b, errB := json.Marshal(right)
+	return errA == nil && errB == nil && bytes.Equal(a, b)
 }
 
 func hookBoundary(work, common *os.Root, worktree, commonDir, path string) (*os.Root, string, error) {
@@ -327,6 +660,9 @@ func refuse(path string, cause error) error {
 }
 
 func (r Result) RenderHuman(w io.Writer) error {
-	_, err := fmt.Fprintf(w, "Agent instructions: %s\nPre-commit guard: %s\n", r.AgentsPath, r.HookPath)
+	_, err := fmt.Fprintf(w, "Agent instructions: %s\nPre-commit guard: %s\nClaude adapter: %s\nCodex adapter: %s\nLocal adapter excludes: %s\n", r.AgentsPath, r.HookPath, r.ClaudePath, r.CodexPath, r.ExcludePath)
+	if err == nil && r.CodexTrustRequired {
+		_, err = fmt.Fprintln(w, "Codex hook review: required once; open /hooks in Codex and trust the Mindrail project hooks.")
+	}
 	return err
 }

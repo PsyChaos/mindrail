@@ -17,6 +17,8 @@ import (
 
 const runtimeTelemetryMetaKey = "io.mindrail/runtime-telemetry"
 const runtimeTelemetryMaxBytes = 1024
+const runtimeTelemetryFreshness = 30 * time.Second
+const runtimeTelemetryFutureSkew = 5 * time.Second
 
 type observationRecorder interface {
 	Observe(context.Context, string, agent.RuntimeObservationInput) (agent.RuntimeObservation, error)
@@ -98,8 +100,15 @@ func (s *Server) recordRuntimeTelemetry(ctx context.Context, session *sdk.Server
 	if runtimeID == "" {
 		return
 	}
+	s.recordObservation(ctx, session, runtimeID, input)
+}
+
+func (s *Server) recordObservation(ctx context.Context, session *sdk.ServerSession, runtimeID string, input agent.RuntimeObservationInput) {
 	observed, err := s.observations.Observe(ctx, runtimeID, input)
 	if err != nil || !observed.Accepted || observed.ProducerSequence <= 0 || observed.ContextUsed == nil || observed.ContextLimit == nil || s.continuityService == nil {
+		return
+	}
+	if !runtimeObservationFresh(s.clock.Now(), observed.ObservedAt) {
 		return
 	}
 	intentID, err := s.ensureContinuityIntent(ctx, session)
@@ -111,6 +120,14 @@ func (s *Server) recordRuntimeTelemetry(ctx context.Context, session *sdk.Server
 		ContextUsed: *observed.ContextUsed, ContextLimit: *observed.ContextLimit, ObservedAt: observed.ObservedAt,
 		Source: observed.Source, Confidence: continuity.ConfidenceReported,
 	})
+}
+
+func runtimeObservationFresh(now, observed time.Time) bool {
+	if observed.IsZero() {
+		return false
+	}
+	age := now.UTC().Sub(observed.UTC())
+	return age >= -runtimeTelemetryFutureSkew && age <= runtimeTelemetryFreshness
 }
 
 func (s *Server) ensureContinuityIntent(ctx context.Context, session *sdk.ServerSession) (string, error) {

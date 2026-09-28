@@ -84,7 +84,7 @@ func TestTwoClientsAgree(t *testing.T) {
 	if !reflect.DeepEqual(views["client-alpha"].calls, views["client-beta"].calls) {
 		t.Fatal("call results differ across clients")
 	}
-	if len(views["client-alpha"].tools) != 14 {
-		t.Fatalf("tools = %d, want 14", len(views["client-alpha"].tools))
+	if len(views["client-alpha"].tools) != 15 {
+		t.Fatalf("tools = %d, want 15", len(views["client-alpha"].tools))
 	}
 }

@@ -144,14 +144,14 @@ func TestSchemaTwelveUpgradesContinuityHardeningInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(full) != 13 || full[11].Version != 12 || full[12].Version != 13 {
-		t.Fatalf("embedded migrations=%d; want schema 12 followed by 13", len(full))
+	if len(full) != 14 || full[11].Version != 12 || full[12].Version != 13 || full[13].Version != 14 {
+		t.Fatalf("embedded migrations=%d; want schema 12 followed by 13 and 14", len(full))
 	}
 	db := newDB(t)
 	if _, err := migration.New(db.DB, full[:12], fixedClock()).Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	result, err := migration.New(db.DB, full[:13], fixedClock()).Up(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

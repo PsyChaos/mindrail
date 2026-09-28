@@ -92,6 +92,10 @@ assert.deepEqual(view.runtimeCard(connectedRuntime, now), {
   taskID: "TSK-1",
   sessionID: "SES-1",
   clientFamily: "claude-code",
+  host: "UNKNOWN",
+  agentKind: "UNBOUND",
+  agentType: "UNKNOWN",
+  parentRuntimeID: "NONE",
   identitySource: "self-reported ClientInfo name, server-canonicalized",
   status: "CONNECTED",
   tone: "mint",
@@ -143,6 +147,8 @@ assert.equal(measuredRuntime.model, "gpt-6-astra");
 assert.equal(measuredRuntime.effort, "high");
 assert.equal(measuredRuntime.telemetryAge, "5s ago");
 assert.equal(measuredRuntime.continuityState, "SPAWN_READY");
+assert.equal(view.runtimeCard({ ...connectedRuntime, host: "claude-code" }, now).identitySource,
+  "unverified host-reported lifecycle binding");
 
 // The public freshness contract is inclusive at 15s/30s. One millisecond
 // beyond either boundary must change the browser presentation without waiting
