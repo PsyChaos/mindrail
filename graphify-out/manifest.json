@@ -931,7 +931,7 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1790548556.1215293,
+    "seen": 1790573301.5228214,
     "ast_hash": "4a2c9badbdc3871cb223878711a614db",
     "semantic_hash": ""
   },
@@ -1651,7 +1651,7 @@
   },
   "migrations/000002_coordination.sql": {
     "mtime": 1789379955.1471324,
-    "seen": 1790548556.1215324,
+    "seen": 1790573301.522824,
     "ast_hash": "fa66d745092e8384e004eecdcb1efc9b",
     "semantic_hash": ""
   },
@@ -1867,7 +1867,7 @@
   },
   "migrations/000003_lease_idempotency.sql": {
     "mtime": 1789412848.636025,
-    "seen": 1790548556.1215334,
+    "seen": 1790573301.5228255,
     "ast_hash": "b1f9c5d02d097b3d7a96d6476ac8865b",
     "semantic_hash": ""
   },
@@ -2017,7 +2017,7 @@
   },
   "migrations/000004_index.sql": {
     "mtime": 1789730820.9643753,
-    "seen": 1790548556.1215348,
+    "seen": 1790573301.522827,
     "ast_hash": "5ccc6b47a97aae590ed92a569f1a9f38",
     "semantic_hash": ""
   },
@@ -2203,7 +2203,7 @@
   },
   "migrations/000005_symbol_identity.sql": {
     "mtime": 1790071147.0840511,
-    "seen": 1790548556.1215365,
+    "seen": 1790573301.5228283,
     "ast_hash": "3440b3f15afffbefb31b02847483be31",
     "semantic_hash": ""
   },
@@ -2323,7 +2323,7 @@
   },
   "migrations/000006_changes.sql": {
     "mtime": 1790097209.7048697,
-    "seen": 1790548556.1215382,
+    "seen": 1790573301.5228293,
     "ast_hash": "893f3a56e862341cf4c87feabcd64f36",
     "semantic_hash": ""
   },
@@ -2431,7 +2431,7 @@
   },
   "migrations/000007_scope_attribution.sql": {
     "mtime": 1790105470.7596946,
-    "seen": 1790548556.1215394,
+    "seen": 1790573301.5228305,
     "ast_hash": "6852065118b87e2bbc3753a5fcc9d247",
     "semantic_hash": ""
   },
@@ -2623,7 +2623,7 @@
   },
   "migrations/000008_evidence.sql": {
     "mtime": 1790146723.0340698,
-    "seen": 1790548556.1215408,
+    "seen": 1790573301.5228317,
     "ast_hash": "3f384fc5579b162388f58f139b8553bd",
     "semantic_hash": ""
   },
@@ -3396,9 +3396,9 @@
     "semantic_hash": ""
   },
   "internal/changes/automatic_restore.go": {
-    "mtime": 1790431566.9791873,
-    "seen": 1790541261.9980223,
-    "ast_hash": "dc9d38ba10bf3c0e073f63070a51063e",
+    "mtime": 1790573043.3483858,
+    "seen": 1790573124.0917838,
+    "ast_hash": "3673f740d9d413b050e30fa8edff8c2c",
     "semantic_hash": ""
   },
   "internal/index/store_remove_cas_test.go": {
@@ -3457,13 +3457,13 @@
   },
   "migrations/000009_guard_baselines.sql": {
     "mtime": 1790415904.022028,
-    "seen": 1790548556.1215422,
+    "seen": 1790573301.5228329,
     "ast_hash": "009aff220d3759eca0307063f118b6c3",
     "semantic_hash": ""
   },
   "migrations/000010_file_index_generations.sql": {
     "mtime": 1790431874.2686872,
-    "seen": 1790548556.121543,
+    "seen": 1790573301.5228336,
     "ast_hash": "011432b36b4788475ed86feedcac8731",
     "semantic_hash": ""
   },
@@ -3849,6 +3849,12 @@
     "mtime": 1790548402.3694675,
     "seen": 1790548556.1216433,
     "ast_hash": "b4790f08fc760a8a9e692f2f661439a2",
+    "semantic_hash": ""
+  },
+  "internal/changes/automatic_restore_test.go": {
+    "mtime": 1790573016.0757797,
+    "seen": 1790573124.0917864,
+    "ast_hash": "dc2f0e1f4b70fdd29df133115d354f2e",
     "semantic_hash": ""
   }
 }
