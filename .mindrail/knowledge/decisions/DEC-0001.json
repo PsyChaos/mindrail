@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "kind": "decision",
+  "id": "DEC-0001",
+  "status": "active",
+  "created_at": "2026-09-28T07:57:02.487338888Z",
+  "title": "Separate optional JEV advice from truthful agent presence",
+  "context": "The user wants JEV in real decisions and real-time agent duration/activity across coding clients.",
+  "decision": "Expose JEV as a visible advisory MCP tool with secretsafe usage metadata, and add a dedicated five-second MCP connection presence signal rather than treating twenty-minute work leases as process liveness.",
+  "consequences": "JEV remains fail-open and cannot grant permission; dashboard reports CONNECTED, IDLE, STALE or ENDED and labels MCP client identity as self-reported. Raw prompts, code, candidate descriptions and credentials are never persisted."
+}

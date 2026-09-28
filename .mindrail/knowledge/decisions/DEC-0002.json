@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "kind": "decision",
+  "id": "DEC-0002",
+  "status": "active",
+  "created_at": "2026-09-28T10:02:53.189236227Z",
+  "title": "Canonicalize untrusted MCP client identity at write and read boundaries",
+  "context": "Independent audit proved arbitrary ClientInfo can carry the real JEV credential and that legacy rows from a vulnerable build can leak through dashboard transports. Arbitrary identity text cannot be both preserved and guaranteed credential-free.",
+  "decision": "Persist and expose only a finite server-owned canonical client family derived from MCP ClientInfo, plus the runtime ID. Unknown or custom clients remain observable as unknown-client. Never persist or expose caller-controlled title/version or raw legacy client fields; apply the same projection on Start, Get/List, dashboard collection, SSE and REST.",
+  "consequences": "Known clients remain distinguishable by canonical family, every connection remains distinguishable by runtime ID, custom product names and versions are intentionally not retained, and old database rows do not need destructive rewriting."
+}

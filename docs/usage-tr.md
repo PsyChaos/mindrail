@@ -131,9 +131,9 @@ mindrail dashboard
 
 Komut yalnız `127.0.0.1` üzerinde rastgele bir porta bağlanır ve terminale
 token içeren yerel URL'yi yazar. Factory görünümü yedi gerçek task state'ini,
-revision ve `claimed_by` sahipliğini; Agents görünümü session ile aktif,
-expired ve released lease geçmişini; Events görünümü checkpoint/handoff ve
-validation evidence metadata'sını canlı SSE akışında gösterir.
+revision ve `claimed_by` sahipliğini; Agents görünümü MCP connection presence ile
+aktif, expired ve released lease geçmişini; Events görünümü checkpoint/handoff,
+JEV route-event ve validation evidence metadata'sını canlı SSE akışında gösterir.
 Frontend dosyaları binary içine gömülüdür; ayrı Node kurulumu gerekmez.
 
 Dashboard read-only'dir. Evidence output/argv/provenance alanlarını, API key veya
@@ -145,16 +145,29 @@ kullanılabilir. `Ctrl-C` sunucuyu güvenli biçimde kapatır.
 
 Üst bölümdeki SSE durumu, son snapshot yaşı/sequence değeri ile dashboard başlama
 zamanı ve uptime yalnız dashboard sunucusunun ve tarayıcı akışının durumunu
-gösterir; bir agent prosesinin çalıştığını kanıtlamaz. Agents kartları mevcut
-kalıcı kayıtlardan session label/ID'sini, session yaşını, o session'ın claim ettiği
-terminal olmayan task'ları, aktif lease'leri ve yenileme/sona erme zamanlarını,
-ayrıca son coordination etkinliğini gösterir. Mindrail şu anda tam agent istemcisi
-ve model kimliğini ya da güvenilir proses liveness heartbeat'ini kaydetmez; bu
-nedenle arayüz bunları tahmin etmez. `active signal` yalnız hem güncel task claim'i
-hem de geçerli lease bulunduğunu söyler.
+gösterir; bir agent prosesinin çalıştığını kanıtlamaz. Agents kartları, MCP
+istemcisinin kendi bildirdiği `ClientInfo.name` değerinden server'ın ürettiği
+canonical client family bilgisini, bağlantı süresini, son presence
+heartbeat'ini, son Mindrail MCP tool etkinliğini ve `CONNECTED`, `IDLE`, `STALE`
+veya `ENDED` durumunu gösterir. Heartbeat yalnız MCP bağlantısının presence
+kaydını yenilediğini; activity yalnız bir Mindrail tool'unun çağrıldığını kanıtlar.
+Bunların hiçbiri model/proses/token çalışmasını veya private reasoning etkinliğini
+kanıtlamaz. Model ve reasoning-effort kimliği istemci açıkça sunmadıkça bilinmez.
+`CONNECTED`, heartbeat yaşı en fazla 15 saniye ve MCP tool activity yaşı en fazla
+30 saniyeyken; `IDLE`, heartbeat güncel ama activity penceresi aşılmışken;
+`STALE`, heartbeat 15 saniyeyi aşmışken gösterilir. `ENDED` bağlantı süresini
+kayıtlı bitiş anında dondurur.
+Bilinen alias'lar sabit bir canonical client family değerine dönüşür; arbitrary
+veya custom adlar `unknown-client` olur, runtime ID ise bağlantıları ayırt etmeye
+devam eder. Raw title/version hiçbir zaman kalıcı yazılmaz veya gösterilmez.
+Bu tercih, credential biçimli caller input'un durable telemetry'ye girmesini
+engellemek için arbitrary client adlarını bilinçli olarak korumaz.
 
-Repository readiness ve JEV bilgisi dashboard başlatılırken alınan snapshot'tır;
-SSE üzerinden yenileniyormuş gibi yorumlanmamalıdır. `mindrail jev connect` veya
+Repository readiness ve JEV credential yapılandırması dashboard başlatılırken
+alınan snapshot'tır; gerçek route denemeleri ve kabul edilmiş JEV tavsiyesi ise
+ayrı, canlı metadata olarak gösterilir. Yapılandırılmış olmak kullanılmış olmak
+değildir. Bu sinyallerde prompt, candidate açıklaması/kimliği veya credential yoktur.
+`mindrail jev connect` veya
 `mindrail jev disconnect` sonrasında ya da readiness'i yeniden hesaplatmak için
 dashboard'u durdurup yeniden başlatın. JEV keyring okunamıyorsa `unavailable`, hiç
 credential yoksa `not configured` görünür; key değeri dashboard'a aktarılmaz.
@@ -360,9 +373,9 @@ ekleyin ve CI işlerini ayrıca çalıştırın. Agent, otomatik complete isteğ
 `required`, `task_id`, revision veya operation ID ekleyerek kanıt politikasını
 zayıflatamaz.
 
-### Aynı 13 tool
+### Aynı yaşam döngüsü, 14 tool
 
-Otomatik mod yeni tool adı eklemez. Server tam olarak şu 13 tool'u yayımlar:
+Server yaşam döngüsünü korur ve görünür JEV yönlendirmesiyle şu 14 tool'u yayımlar:
 
 1. `mindrail_bootstrap`
 2. `mindrail_status`
@@ -377,6 +390,7 @@ Otomatik mod yeni tool adı eklemez. Server tam olarak şu 13 tool'u yayımlar:
 11. `mindrail_checkpoint`
 12. `mindrail_validate`
 13. `mindrail_complete`
+14. `mindrail_route`
 
 Agent gerektiğinde `mindrail_status`, `mindrail_search` ve `mindrail_context`
 ile okuma yapabilir; durable seçimleri `mindrail_decide` ve
@@ -496,22 +510,42 @@ Manager üzerinden desteklenir. Mindrail, uygulamaya bağlı native Keychain bac
 hazır olana kadar macOS'ta kalıcı saklamayı bilinçli olarak reddeder; macOS'ta
 opsiyonel environment override kullanılabilir.
 
-Belirsiz bir tool, agent, model veya reasoning-effort seçimi için güvenli ve bounded
-istek örneği şöyledir; anahtar JSON'a veya komut satırına eklenmez:
+Initialize/update ile kurulan managed talimatlar, belirsiz ve kapalı bir tool,
+agent, model, reasoning-effort veya tool şemasının desteklediği başka bir kapalı
+seçim öncesinde agent'ın görünür
+`mindrail_route` MCP tool'unu bir kez çağırmasını ister. Kullanıcının görev
+prompt'unda Mindrail veya JEV demesi gerekmez. Güvenli bounded istek örneği
+şöyledir; anahtar payload'a eklenmez:
 
-```bash
-printf '%s\n' '{"goal":"arama aracı seç","tools":[{"id":"rg","description":"repository metninde ara"}]}' |
-  mindrail agent route
+```text
+mindrail_route {"goal":"arama aracı seç","tools":[{"id":"rg","description":"repository metninde ara"}]}
 ```
 
-Bounded stdin JSON'u zorunlu string `goal`, opsiyonel JSON `context` ve en az bir
+Bounded payload zorunlu string `goal`, opsiyonel JSON `context` ve en az bir
 `tools`, `agents`, `models` veya `efforts` array'i içerir. Her candidate tam olarak
-`id` ve `description` alanlarını taşır. Kurulu binary canonical adapter'ı gizli
-`mindrail agent route` köprüsünden sunar; Python 3 yalnız bu opsiyon etkinse gerekir. Agent yalnız
+`id` ve `description` alanlarını taşır. Kurulu binary canonical adapter'ı
+`mindrail_route` üzerinden sunar; Python 3 yalnız bu opsiyon etkinse gerekir. Agent yalnız
 top-level durum `ok` ve bütün seçimler accepted olduğunda tavsiyeyi kullanır;
 disabled, fallback, error veya reddedilmiş sonuçta normal akışa devam eder.
 TypeSafe'e yalnız gerekli en küçük hassas-olmayan goal/context özetini ve kapalı
-candidate açıklamalarını gönderin; ham secret, log veya kaynak kod göndermeyin.
+candidate açıklamalarını gönderin; ham prompt, secret, log, kaynak kod, diff,
+path veya environment değeri göndermeyin. JEV hiçbir zaman işi bloke etmez,
+izin vermez veya Mindrail gate'ini zayıflatmaz. Gizli `mindrail agent route` stdin
+köprüsü yalnız `mindrail_route` tool'unu keşfedemeyen eski istemciler için uyumluluk
+fallback'idir.
+
+Kalıcı route metadata'sı bilinçli olarak bounded ve ordinal'dır: attribution,
+status/reason, candidate sayıları, seçilen ordinal, quantized confidence,
+credential source ve süre. Goal/context, candidate ID/açıklamaları, provider
+body'si, kaynak kod, diff, path, log, environment değeri ve credential kalıcı
+yazılmaz ve dashboard'a gönderilmez.
+
+MCP agent'ın private chain-of-thought akışını göremez ve bir seçimin gerçekten
+belirsiz olduğunu kendisi algılayamaz; “otomatik” kullanım managed talimatı
+uygulayan istemciye bağlıdır. Mindrail, istemci açıkça sunup uygulamadıkça zaten
+çalışan host modelini veya reasoning effort'u bilemez/değiştiremez. Binary veya
+managed yapılandırma güncellemesinden sonra yeni tool/talimatların keşfi için MCP
+istemcisini yeniden başlatın ya da reconnect edin.
 `mindrail jev status` yalnız bağlantı durumunu ve aktif kaynağın adını gösterir;
 anahtarı göstermez. `mindrail jev disconnect` keyring'deki credential'ı kaldırır.
 
@@ -692,7 +726,7 @@ hatasıdır. `BLOCKED` geçişi `--reason` ister.
 
 ### Legacy MCP semantiği
 
-Otomatik alanlar additive'dir; eski 13-tool client'ları kırılmaz:
+Otomatik alanlar additive'dir; yeni route tool'unu kullanmayan eski client'lar kırılmaz:
 
 - `mindrail_bootstrap {}` read-only'dir; session, task veya lease oluşturmaz.
 - `mindrail_complete {"task_id":"TSK-…","required":["test"]}`

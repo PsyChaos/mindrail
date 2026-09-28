@@ -42,8 +42,8 @@ mindrail dashboard
 
 It binds only to `127.0.0.1`, embeds all frontend assets in the binary and
 streams bounded snapshots over SSE. Factory, Agents and Events views show task
-states and revisions, lease history, agent sessions, checkpoint/handoff
-metadata, validation evidence metadata and repository readiness. Checkpoint text, evidence
+states and revisions, lease history, MCP connection presence, checkpoint/handoff
+metadata, JEV route-event metadata, validation evidence metadata and repository readiness. Checkpoint text, evidence
 output, command arguments, provenance, credentials and unbounded checkpoint
 text are never published. CI, completion/testguard and merge state are labelled
 unavailable or on-demand when the runtime schema has no persisted provider
@@ -51,13 +51,25 @@ result; the dashboard does not invent GitHub or merge facts.
 
 The dashboard header reports its own start time and uptime, SSE state, snapshot
 age and sequence. Those are dashboard-health signals, not an agent heartbeat.
-Agent cards report only durable coordination facts: the recorded session label
-and ID, claimed non-terminal tasks, active leases and their renewal/expiry, and
-the latest recorded activity. Mindrail does not currently record the exact
-client/model identity or authoritative process liveness, so the dashboard does
-not claim either. Repository readiness and JEV configuration are startup
-snapshots; restart `mindrail dashboard` after `mindrail jev connect` or
-`mindrail jev disconnect`, or when you need readiness to be rebuilt.
+Agent cards show a server-owned canonical client family derived from the
+self-reported MCP `ClientInfo.name`, connection duration, last presence heartbeat,
+last Mindrail tool activity and `CONNECTED`, `IDLE`,
+`STALE` or `ENDED`. A heartbeat proves only that the MCP connection updated its
+presence row; activity proves only that a Mindrail tool was called. Neither is
+proof of model, process, token or private reasoning activity. The JEV panel
+separates credential configuration from recorded attempts and accepted advice;
+it never exposes prompts, candidates or credentials. Repository readiness and
+JEV configuration are startup snapshots; restart `mindrail dashboard` after
+`mindrail jev connect` or `mindrail jev disconnect`, or when readiness must be rebuilt.
+`CONNECTED` means heartbeat age is at most 15 seconds and tool-activity age is
+at most 30 seconds; `IDLE` keeps the fresh heartbeat but exceeds the activity
+window; `STALE` exceeds the heartbeat window. `ENDED` freezes the displayed
+connection duration at its recorded end time.
+Known aliases map to a fixed canonical client family; arbitrary or custom names
+become `unknown-client`, while the runtime ID still distinguishes connections.
+Raw title/version values never persist or display. This deliberately gives up
+arbitrary client naming so credential-shaped caller input cannot enter durable
+telemetry.
 
 CI uses the committed-range gate:
 
@@ -73,7 +85,7 @@ low-level commands remain callable for compatibility and diagnostics; see the
 ## Automatic agent flow
 
 Configure the coding agent to launch `mindrail mcp` in the target repository.
-The server keeps the original 13-tool MCP surface. The minimal lifecycle is:
+The server exposes 14 MCP tools. The minimal lifecycle is:
 
 ```text
 mindrail_bootstrap {"goal":"Implement the requested change","run_key":"<opaque-stable-agent-key>","paths":["planned/file.go"]}
@@ -150,12 +162,14 @@ optional environment override there.
 container automation. With neither source configured, the normal routing flow is
 unchanged.
 
-For an ambiguous tool, agent, model, or reasoning-effort choice, the agent can send
-the bounded routing request without including the key:
+Managed repository instructions require an agent to call the visible
+`mindrail_route` MCP tool once before an ambiguous closed tool, agent, model,
+reasoning-effort or another choice supported by the tool schema. The user does
+not need to mention Mindrail or JEV in the task prompt. The request does not
+include the key:
 
-```bash
-printf '%s\n' '{"goal":"select a search tool","tools":[{"id":"rg","description":"search repository text"}]}' |
-  mindrail agent route
+```text
+mindrail_route {"goal":"select a search tool","tools":[{"id":"rg","description":"search repository text"}]}
 ```
 
 The JSON requires a `goal` string, accepts optional `context` JSON, and requires one
@@ -163,10 +177,24 @@ or more `tools`, `agents`, `models`, or `efforts` arrays. Each candidate contain
 exactly `id` and `description`. Send TypeSafe only minimal non-sensitive summaries
 and closed candidate descriptions—never raw secrets, logs, or source code.
 
-The installed binary carries the canonical adapter behind `mindrail agent route`;
-agents consume advice only when the top-level result is `ok` and every selection is
+Agents consume advice only when the top-level result is `ok` and every selection is
 accepted. Missing credentials and all disabled/fallback/error results continue
-normally. `mindrail jev status` reports only whether JEV is connected and which
+through normal reasoning; JEV never blocks work or grants permission. The hidden
+`mindrail agent route` stdin bridge remains only for compatibility with clients
+that cannot discover `mindrail_route`.
+
+Recorded route metadata is deliberately ordinal and bounded: attribution,
+status/reason, candidate counts, selected ordinal, quantized confidence,
+credential source and duration. Goals, context, candidate IDs/descriptions,
+provider bodies, source, diffs, paths, logs, environment values and credentials
+are not persisted or sent to the dashboard.
+
+Mindrail cannot inspect an agent's private chain-of-thought or know that a choice
+was ambiguous; automatic use is an instruction the MCP client must follow. It
+also cannot identify or change the already-running host model/reasoning effort
+unless that client explicitly exposes and obeys such a choice. Restart or reconnect
+the MCP client after updating the Mindrail binary or managed configuration so it
+discovers the new tool and instructions. `mindrail jev status` reports only whether JEV is connected and which
 non-secret source is active; `mindrail jev disconnect` removes the stored keyring
 credential. Python 3 is needed only when this optional route is enabled.
 
