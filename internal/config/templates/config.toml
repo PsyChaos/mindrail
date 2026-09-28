@@ -22,3 +22,12 @@
 # "auto" emits colour only when stdout is a terminal. NO_COLOR is always
 # respected, and --json output never contains colour.
 # color = "auto"
+
+[continuity]
+# Context-pressure policy. These values do not authorize Mindrail to create a
+# host conversation; that one-time permission remains in the local host adapter.
+# enabled = true
+# warn_used_percent = 55
+# handoff_used_percent = 60
+# hard_used_percent = 75
+# consecutive_observations = 2

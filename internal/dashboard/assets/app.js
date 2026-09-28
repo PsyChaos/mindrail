@@ -194,8 +194,11 @@
     const heartbeatValue=node("dd","");heartbeatValue.append(heartbeat);
     const activityValue=node("dd","");activityValue.append(lastActivity);
     activity.append(node("dt","","SESSION"),node("dd","",presentation.sessionID||"—"),node("dt","","LAST HEARTBEAT"),heartbeatValue,node("dt","","LAST MCP ACTIVITY"),activityValue);
+    activity.append(node("dt","","MODEL"),node("dd","",presentation.model),node("dt","","EFFORT"),node("dd","",presentation.effort),
+      node("dt","","CONTEXT"),node("dd","",presentation.contextPressure),node("dt","","TELEMETRY"),node("dd","",`${presentation.telemetryState} · ${presentation.telemetryAge}`),
+      node("dt","","CONTINUITY"),node("dd","",`${presentation.continuityState}${presentation.continuityFailure?" · "+presentation.continuityFailure:""}`));
     if(presentation.endedAt)activity.append(node("dt","","ENDED"),node("dd","",`${instant(presentation.endedAt)} · ${presentation.endReason||"ended"}`));
-    card.append(activity,node("div","projection-note","Heartbeat shows when this presence record was last updated; it does not prove current model or process liveness. Activity records Mindrail tool calls only."));
+    card.append(activity,node("div","projection-note",`Runtime telemetry is ${presentation.telemetrySource} / ${presentation.telemetryConfidence}; stale or missing values remain explicit. Heartbeat shows only the Mindrail connection and does not prove current model or process liveness.`));
     return card;
   }
 

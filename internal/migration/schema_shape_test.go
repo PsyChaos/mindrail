@@ -68,6 +68,17 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"client_name", "client_title", "client_version", "started_at",
 			"last_heartbeat_at", "last_activity_at", "sequence", "ended_at", "end_reason",
 		},
+		"agent_runtime_observations": {
+			"runtime_id", "model_key", "effort", "context_used", "context_limit",
+			"source", "confidence", "observed_at", "revision",
+		},
+		"continuity_intents": {
+			"intent_id", "project_id", "workspace_id", "task_id", "predecessor_session_id",
+			"predecessor_run_hash", "kind", "target_task_id", "state", "revision",
+			"last_observation_sequence", "last_used_basis_points", "consecutive_handoff_observations",
+			"checkpoint_id", "host_operation_id", "takeover_token_hash", "successor_run_hash",
+			"successor_session_id", "failure_code", "created_at", "updated_at", "expires_at",
+		},
 	}
 
 	got := map[string][]string{}

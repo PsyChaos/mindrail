@@ -219,8 +219,8 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 11 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000011, want 11", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 12 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000012, want 12", data.Runtime.SchemaVersion)
 	}
 
 	listed := run(t, repo, "task", "list", "--json")
@@ -264,8 +264,8 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 11 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000011, want 11", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 12 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000012, want 12", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -350,8 +350,8 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 11 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000011, want 11", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 12 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000012, want 12", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -421,8 +421,8 @@ func TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 11 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000007 through 000011, want 11", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 12 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000007 through 000012, want 12", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -460,8 +460,8 @@ func TestAnUpgradedDatabaseGainsEvidenceWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 11 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000008 through 000011, want 11", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 12 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000008 through 000012, want 12", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -550,6 +550,14 @@ func downgradeToSchemaThree(t *testing.T, repo string) {
 func dropGuardBaselines(t *testing.T, repo string) {
 	t.Helper()
 	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_continuity_successor`,
+		`DROP INDEX IF EXISTS idx_continuity_project_state`,
+		`DROP INDEX IF EXISTS idx_continuity_takeover_token`,
+		`DROP INDEX IF EXISTS idx_continuity_active_predecessor`,
+		`DROP TABLE IF EXISTS continuity_intents`,
+		`DROP INDEX IF EXISTS idx_agent_runtime_observations_time`,
+		`DROP TABLE IF EXISTS agent_runtime_observations`,
+		`DELETE FROM schema_migrations WHERE version = 12`,
 		`DROP INDEX IF EXISTS idx_agent_runtimes_session`,
 		`DROP INDEX IF EXISTS idx_agent_runtimes_task`,
 		`DROP INDEX IF EXISTS idx_agent_runtimes_project`,

@@ -67,6 +67,7 @@ type automaticContext struct {
 	presenceStarting   bool
 	presenceGeneration uint64
 	watched            bool
+	continuityIntentID string
 }
 
 const (
@@ -221,6 +222,7 @@ func (s *Server) rememberAutomatic(session *sdk.ServerSession, next automaticCon
 			next.presence = current.presence
 			next.presenceStarting = current.presenceStarting
 			next.presenceGeneration = current.presenceGeneration
+			next.continuityIntentID = current.continuityIntentID
 		} else {
 			replacedPresence = current.presence
 		}
@@ -478,6 +480,9 @@ func (s *Server) presenceActivityMiddleware(next sdk.MethodHandler) sdk.MethodHa
 		result, err := next(ctx, method, request)
 		if method == "tools/call" && !touched {
 			s.touchPresence(ctx, session)
+		}
+		if method == "tools/call" {
+			s.recordRuntimeTelemetry(ctx, session, request)
 		}
 		return result, err
 	}

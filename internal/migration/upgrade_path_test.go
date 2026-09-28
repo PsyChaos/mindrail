@@ -101,8 +101,8 @@ func TestSchemaTenUpgradesAddAgentTelemetryWithoutTouchingExistingRows(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(full) != 11 || full[10].Version != 11 {
-		t.Fatalf("embedded migrations = %d ending at %d, want 11 ending at 11", len(full), full[len(full)-1].Version)
+	if len(full) < 11 || full[10].Version != 11 {
+		t.Fatalf("embedded migrations = %d; migration 11 is not in its pinned position", len(full))
 	}
 	db := newDB(t)
 	if _, err := migration.New(db.DB, full[:10], fixedClock()).Up(t.Context()); err != nil {
@@ -120,7 +120,7 @@ func TestSchemaTenUpgradesAddAgentTelemetryWithoutTouchingExistingRows(t *testin
 			t.Fatal(err)
 		}
 	}
-	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	result, err := migration.New(db.DB, full[:11], fixedClock()).Up(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

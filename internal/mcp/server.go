@@ -11,6 +11,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/changes"
+	"github.com/PsyChaos/mindrail/internal/continuity"
 	"github.com/PsyChaos/mindrail/internal/credential"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/index"
@@ -61,6 +62,10 @@ type Server struct {
 	router                           routeRunner
 	routes                           routeRecorder
 	presence                         presenceRecorder
+	observations                     observationRecorder
+	continuityStore                  *continuity.SQLStore
+	continuityService                *continuity.Service
+	continuityMu                     sync.Mutex
 	clock                            app.Clock
 	projectIDValue, workspaceIDValue string
 	routeMu                          sync.Mutex
@@ -138,6 +143,18 @@ func New(ctx context.Context, root string) (*Server, error) {
 		registry.Close()
 		return nil, err
 	}
+	observationStore, err := agent.NewRuntimeObservationStore(application.DB(), app.SystemClock{})
+	if err != nil {
+		guard.Close()
+		registry.Close()
+		return nil, err
+	}
+	continuityStore, err := continuity.NewSQLStore(application.DB(), app.SystemClock{})
+	if err != nil {
+		guard.Close()
+		registry.Close()
+		return nil, err
+	}
 	space := application.Subject().Workspace
 	flow, err := workflow.New(workflow.Options{
 		DB:           application.DB(),
@@ -182,8 +199,25 @@ func New(ctx context.Context, root string) (*Server, error) {
 		workflow:  workflowAdapter{flow},
 		automatic: make(map[*sdk.ServerSession]*automaticContext),
 		router:    agent.NewRouter(credential.NewOSStore()), routes: routeStore, presence: presenceStore,
-		clock: app.SystemClock{}, projectIDValue: space.ProjectID, workspaceIDValue: space.ID,
+		observations:    observationStore,
+		continuityStore: continuityStore,
+		clock:           app.SystemClock{}, projectIDValue: space.ProjectID, workspaceIDValue: space.ID,
 		routeSessions: make(map[string]*routeSessionState),
+	}
+	continuityConfig := application.Config().Config.Continuity
+	policy := continuity.Policy{
+		WarnUsedBasisPoints:    continuityConfig.WarnUsedPercent * 100,
+		HandoffUsedBasisPoints: continuityConfig.HandoffUsedPercent * 100,
+		HardUsedBasisPoints:    continuityConfig.HardUsedPercent * 100,
+		ConsecutiveReports:     continuityConfig.ConsecutiveObservations,
+	}
+	if continuityConfig.Enabled {
+		server.continuityService, err = continuity.NewService(continuityStore, policy, mcpManualHost{}, server)
+		if err != nil {
+			guard.Close()
+			registry.Close()
+			return nil, err
+		}
 	}
 	server.impl.AddReceivingMiddleware(server.presenceActivityMiddleware)
 	server.registerReads()

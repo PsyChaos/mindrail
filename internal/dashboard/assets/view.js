@@ -75,6 +75,15 @@
     const started = milliseconds(runtime.started_at);
     const ended = milliseconds(end);
     const connectedFor = started === null || ended === null ? "—" : duration((ended - started) / 1000);
+    const telemetry = runtime.telemetry || {};
+    const continuity = runtime.continuity || {};
+    const used = Number(telemetry.context_used);
+    const limit = Number(telemetry.context_limit);
+    const percentage = Number(telemetry.used_percent);
+    const contextPressure = Number.isFinite(used) && Number.isFinite(limit) && limit > 0
+      ? `${Number.isFinite(percentage) ? percentage.toFixed(1) : ((used / limit) * 100).toFixed(1)}% · ${used.toLocaleString()} / ${limit.toLocaleString()} TOKENS`
+      : "UNKNOWN";
+    const observedAge = ageSeconds(telemetry.observed_at, now);
     return Object.freeze({
       id: runtime.id || "—",
       taskID: runtime.task_id || "",
@@ -88,7 +97,17 @@
       lastActivityAge: activityAge === null ? "not recorded" : `${duration(activityAge)} ago`,
       sequence: Number.isFinite(runtime.sequence) ? runtime.sequence : 0,
       endedAt: runtime.ended_at || null,
-      endReason: runtime.end_reason || ""
+      endReason: runtime.end_reason || "",
+      telemetryState: telemetry.state || "NOT_REPORTED",
+      model: telemetry.model || "UNKNOWN",
+      effort: telemetry.effort || "UNKNOWN",
+      contextPressure,
+      telemetrySource: telemetry.source || "not reported",
+      telemetryConfidence: telemetry.confidence || "unknown",
+      telemetryAge: observedAge === null ? "not reported" : `${duration(observedAge)} ago`,
+      continuityState: continuity.state || "NONE",
+      continuityFailure: continuity.failure_code || "",
+      continuityIntent: continuity.intent_id || ""
     });
   }
 

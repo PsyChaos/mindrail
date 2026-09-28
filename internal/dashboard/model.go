@@ -203,18 +203,40 @@ type JEVRouteEvent struct {
 // ClientFamily is a server-owned canonical projection derived from self-reported
 // MCP ClientInfo. Raw client title and version never cross this public boundary.
 type AgentRuntime struct {
-	ID              string     `json:"id"`
-	WorkspaceID     string     `json:"workspace_id"`
-	TaskID          string     `json:"task_id"`
-	SessionID       string     `json:"session_id"`
-	ClientFamily    string     `json:"client_name"`
-	StartedAt       time.Time  `json:"started_at"`
-	LastHeartbeatAt time.Time  `json:"last_heartbeat_at"`
-	LastActivityAt  time.Time  `json:"last_activity_at"`
-	Sequence        int64      `json:"sequence"`
-	EndedAt         *time.Time `json:"ended_at,omitempty"`
-	EndReason       string     `json:"end_reason,omitempty"`
-	Status          string     `json:"status"`
+	ID              string            `json:"id"`
+	WorkspaceID     string            `json:"workspace_id"`
+	TaskID          string            `json:"task_id"`
+	SessionID       string            `json:"session_id"`
+	ClientFamily    string            `json:"client_name"`
+	StartedAt       time.Time         `json:"started_at"`
+	LastHeartbeatAt time.Time         `json:"last_heartbeat_at"`
+	LastActivityAt  time.Time         `json:"last_activity_at"`
+	Sequence        int64             `json:"sequence"`
+	EndedAt         *time.Time        `json:"ended_at,omitempty"`
+	EndReason       string            `json:"end_reason,omitempty"`
+	Status          string            `json:"status"`
+	Telemetry       RuntimeTelemetry  `json:"telemetry"`
+	Continuity      RuntimeContinuity `json:"continuity"`
+}
+
+type RuntimeTelemetry struct {
+	State        string     `json:"state"`
+	Model        string     `json:"model,omitempty"`
+	Effort       string     `json:"effort,omitempty"`
+	ContextUsed  *int64     `json:"context_used,omitempty"`
+	ContextLimit *int64     `json:"context_limit,omitempty"`
+	UsedPercent  *float64   `json:"used_percent,omitempty"`
+	Source       string     `json:"source,omitempty"`
+	Confidence   string     `json:"confidence,omitempty"`
+	ObservedAt   *time.Time `json:"observed_at,omitempty"`
+	Revision     int64      `json:"revision,omitempty"`
+}
+
+type RuntimeContinuity struct {
+	IntentID     string `json:"intent_id,omitempty"`
+	State        string `json:"state"`
+	FailureCode  string `json:"failure_code,omitempty"`
+	CheckpointID string `json:"checkpoint_id,omitempty"`
 }
 
 type CompletionState struct {
