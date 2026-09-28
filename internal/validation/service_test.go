@@ -9,7 +9,10 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/config"
+	"github.com/PsyChaos/mindrail/internal/migration"
+	"github.com/PsyChaos/mindrail/internal/storage"
 	"github.com/PsyChaos/mindrail/internal/validation"
+	"github.com/PsyChaos/mindrail/migrations"
 )
 
 // TestRunProfileFlowEndToEnd is TASK-02 AC-02.5: profile → run → redact →
@@ -83,6 +86,58 @@ func TestRunProfileFlowEndToEnd(t *testing.T) {
 	}
 	if _, err := service.RunProfile(t.Context(), "", profile, root, nil, ""); err == nil {
 		t.Fatal("nameless profile accepted")
+	}
+}
+
+func TestRunProfileEvidenceWriteInsideGitMetadataStaysCurrent(t *testing.T) {
+	root := t.TempDir()
+	initSnapshotGitRepository(t, root)
+	writeScopeFile(t, root, "source.go", "package source\n")
+	addSnapshotGitPaths(t, root, "source.go")
+
+	databasePath := filepath.Join(root, ".git", "mindrail", "mindrail.db")
+	if err := os.MkdirAll(filepath.Dir(databasePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(t.Context(), storage.Options{Path: databasePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	set, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := app.FixedClock{Instant: time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)}
+	if _, err := migration.New(db.DB, set, clock).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store, err := validation.NewStore(db.DB, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := validation.NewRunner(root, 10*time.Second, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := validation.NewService(runner, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := config.ValidationProfile{
+		Type: "AUTOMATED_TEST", Paths: []string{"."}, Commands: [][]string{{"true"}},
+	}
+
+	rows, err := service.RunProfile(t.Context(), "check", profile, root, nil, "OP-GIT-METADATA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdicts, coverage, err := validation.Check(root, rows, []string{"check"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verdicts) != 1 || verdicts[0].Status != validation.FreshCurrent || !coverage.Satisfied["check"] {
+		t.Fatalf("evidence write made its own snapshot stale: verdicts=%+v coverage=%+v", verdicts, coverage)
 	}
 }
 

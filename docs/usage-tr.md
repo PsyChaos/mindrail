@@ -730,6 +730,14 @@ indekslerinin var, `PASS` ve exit code 0 olmasını; kapsam yeniden enumerate
 edildiğinde aynı kalmasını ister. Kapsama dosya ekleme/silme/değiştirme önceki
 evidence'i stale yapar; malformed/legacy metadata fail-closed reddedilir.
 
+Validation snapshot'ı Git çalışma ağacında Git-duyarlıdır: profile `paths`
+seçiminin içindeki tracked dosyalar ile ignore edilmeyen untracked dosyalar
+hash'e girer. `.git` metadata'sı ve `.gitignore` ile dışlanan `.next`, geçici
+hook çıktıları veya `*.tsbuildinfo` gibi runtime/build çıktıları kanıtı kendi
+başına stale yapmaz. Profile'da literal olarak açıkça adlandırılan ignored bir
+dosya yine kapsamdadır. Seçilen bir submodule içeriği güvenli biçimde
+bağlanamadığı için sessizce atlanmaz; snapshot fail-closed reddedilir.
+
 Canonical reconcile gerçek Git diff'ini bulur ancak aynı fiziksel worktree'de
 birden çok agent'ın bıraktığı kirli editin sahibini güvenilir biçimde çıkaramaz.
 Ayrı worktree kullanın veya scope/lease koordinasyonunu sıkı tutun. İlgisiz

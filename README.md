@@ -95,6 +95,12 @@ If no validation profiles are configured, the result explicitly reports
 reported as “tests passed.” Project tests, lint, and build checks must be
 configured as validation profiles and/or run separately in CI.
 
+Validation snapshots are Git-aware. Profile `paths` select tracked files and
+non-ignored untracked files; Git metadata and ignored runtime/build outputs do
+not invalidate otherwise current evidence. A literal file named directly in a
+profile remains in scope even when ignored. Selected submodules are refused
+until their contents can be bound safely instead of being silently omitted.
+
 ## Build from source
 
 Requirements: Go 1.27.x, Git, and a C toolchain.
