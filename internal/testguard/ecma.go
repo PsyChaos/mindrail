@@ -30,6 +30,10 @@ func newTypescriptAnalyzer() (*ecmaAnalyzer, error) {
 	return newEcmaAnalyzer(ts.NewLanguage(typescript.LanguageTypescript()), typescriptQuerySource)
 }
 
+func newTSXAnalyzer() (*ecmaAnalyzer, error) {
+	return newEcmaAnalyzer(ts.NewLanguage(typescript.LanguageTSX()), typescriptQuerySource)
+}
+
 func newJavascriptAnalyzer() (*ecmaAnalyzer, error) {
 	return newEcmaAnalyzer(ts.NewLanguage(javascript.Language()), javascriptQuerySource)
 }

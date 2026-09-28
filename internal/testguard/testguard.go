@@ -8,6 +8,7 @@ package testguard
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,6 +148,7 @@ type analyzer interface {
 type Service struct {
 	python     *pythonAnalyzer
 	typescript *ecmaAnalyzer
+	tsx        *ecmaAnalyzer
 	javascript *ecmaAnalyzer
 }
 
@@ -163,7 +165,7 @@ func (s *Service) BaselineTests(ctx context.Context, file FileDelta) (map[string
 	}
 	tests, err := analyzer.tests(file.Before)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: parse baseline: %w", file.Path, err)
 	}
 	out := make(map[string]bool, len(tests))
 	for name := range tests {
@@ -183,13 +185,20 @@ func New() (*Service, error) {
 		python.close()
 		return nil, err
 	}
-	javascript, err := newJavascriptAnalyzer()
+	tsx, err := newTSXAnalyzer()
 	if err != nil {
 		python.close()
 		typescript.close()
 		return nil, err
 	}
-	return &Service{python: python, typescript: typescript, javascript: javascript}, nil
+	javascript, err := newJavascriptAnalyzer()
+	if err != nil {
+		python.close()
+		typescript.close()
+		tsx.close()
+		return nil, err
+	}
+	return &Service{python: python, typescript: typescript, tsx: tsx, javascript: javascript}, nil
 }
 
 // Close releases compiled queries and parsers.
@@ -199,6 +208,9 @@ func (s *Service) Close() {
 	}
 	if s.typescript != nil {
 		s.typescript.close()
+	}
+	if s.tsx != nil {
+		s.tsx.close()
 	}
 	if s.javascript != nil {
 		s.javascript.close()
@@ -251,11 +263,11 @@ func (s *Service) evaluateFile(ctx context.Context, file FileDelta, mappings []T
 	}
 	before, err := analyzer.tests(file.Before)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%s: parse before: %w", file.Path, err)
 	}
 	after, err := analyzer.tests(file.After)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%s: parse after: %w", file.Path, err)
 	}
 	for _, mapping := range mappings {
 		if mapping.Path != file.Path {
@@ -359,8 +371,10 @@ func (s *Service) analyzerFor(language string) (analyzer, error) {
 	switch language {
 	case LanguagePython:
 		return s.python, nil
-	case LanguageTypeScript, LanguageTSX:
+	case LanguageTypeScript:
 		return s.typescript, nil
+	case LanguageTSX:
+		return s.tsx, nil
 	case LanguageJavaScript:
 		return s.javascript, nil
 	default:

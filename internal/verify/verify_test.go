@@ -44,7 +44,7 @@ type failNthStagedShow struct {
 }
 
 func (r *failNthStagedShow) Run(ctx context.Context, dir string, args ...string) ([]byte, []byte, error) {
-	if len(args) == 2 && args[0] == "show" && len(args[1]) > 0 && args[1][0] == ':' {
+	if len(args) == 3 && args[0] == "cat-file" && args[1] == "blob" && len(args[2]) > 0 && args[2][0] == ':' {
 		r.seen++
 		if r.seen == r.want {
 			return nil, []byte("injected staged read failure"), errors.New("injected failure")

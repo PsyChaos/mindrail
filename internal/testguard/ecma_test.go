@@ -11,6 +11,22 @@ func ecmaDelta(path, before, after string) testguard.FileDelta {
 		Before: []byte(before), After: []byte(after)}
 }
 
+func TestTSXUsesTSXGrammarAndReportsFailingPath(t *testing.T) {
+	service := newGuardService(t)
+	path := "apps/web/app/(auth)/[org]/page.test.tsx"
+	before := `test("renders", () => { render(<Panel title="ok" />); expect(screen.getByText("ok")).toBeVisible(); });`
+	after := `test("renders", () => { render(<Panel title="ok" />); });`
+	result, err := service.Evaluate(t.Context(), testguard.Request{Files: []testguard.FileDelta{{
+		Path: path, Language: testguard.LanguageTSX, Before: []byte(before), After: []byte(after),
+	}}, Trigger: testguard.TriggerStaged})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Signal != testguard.SignalExpectationRemoved {
+		t.Fatalf("findings = %+v", result.Findings)
+	}
+}
+
 // TestEcmaExpectDecrease is TASK-02 AC-02.1: fewer expects after than
 // before yields a count finding speaking expects on both sides.
 func TestEcmaExpectDecrease(t *testing.T) {

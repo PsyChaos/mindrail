@@ -88,7 +88,7 @@ func ShowStaged(ctx context.Context, runner CommandRunner, dir, rel string) ([]b
 	if runner == nil || dir == "" || rel == "" {
 		return nil, false, fmt.Errorf("git: staged read needs a runner, a directory and a path")
 	}
-	stdout, stderr, err := runner.Run(ctx, dir, "show", ":"+rel)
+	stdout, stderr, err := runner.Run(ctx, dir, "cat-file", "blob", ":./"+rel)
 	if err != nil {
 		if bytes.Contains(stderr, []byte("does not exist")) || bytes.Contains(stderr, []byte("exists on disk, but not in")) ||
 			bytes.Contains(stderr, []byte("invalid object name")) || bytes.Contains(stderr, []byte("unknown revision or path not in the working tree")) {
@@ -106,7 +106,7 @@ func ShowHEAD(ctx context.Context, runner CommandRunner, dir, rel string) ([]byt
 	if runner == nil || dir == "" || rel == "" {
 		return nil, false, fmt.Errorf("git: HEAD read needs a runner, a directory and a path")
 	}
-	stdout, stderr, err := runner.Run(ctx, dir, "show", "HEAD:"+rel)
+	stdout, stderr, err := runner.Run(ctx, dir, "cat-file", "blob", "HEAD:./"+rel)
 	if err != nil {
 		if bytes.Contains(stderr, []byte("does not exist")) || bytes.Contains(stderr, []byte("exists on disk, but not in")) ||
 			bytes.Contains(stderr, []byte("invalid object name")) {

@@ -522,7 +522,7 @@ func isTestFile(path string) bool {
 	}
 	base := parts[len(parts)-1]
 	return strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") ||
-		strings.HasSuffix(base, ".test.ts") || strings.HasSuffix(base, ".test.js")
+		strings.HasSuffix(base, ".test.ts") || strings.HasSuffix(base, ".test.tsx") || strings.HasSuffix(base, ".test.js")
 }
 
 func errNeedsServices() error {

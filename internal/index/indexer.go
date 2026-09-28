@@ -268,7 +268,7 @@ func (i *Indexer) ExtractCurrent(ctx context.Context, unit ProjectUnit, path str
 	}
 	facts, err := i.extract(ctx, adapter, parser.SourceFile{Content: content})
 	if err != nil {
-		return nil, err
+		return nil, ParseFailed(path, err)
 	}
 	symbols := make([]Symbol, 0, len(facts.Symbols))
 	for _, sym := range facts.Symbols {
