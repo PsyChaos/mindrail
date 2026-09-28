@@ -17,8 +17,8 @@ func reconcileRunner(t *testing.T, stdout string) *git.FakeRunner {
 	t.Helper()
 	return &git.FakeRunner{
 		Responses: map[string]git.FakeResponse{
-			"status --porcelain=v1 -z --untracked-files=normal -- .": {Stdout: stdout},
-			"diff --no-color --name-status -z -M HEAD -- .":          {Stdout: ""},
+			"status --porcelain=v1 -z --untracked-files=all -- .": {Stdout: stdout},
+			"diff --no-color --name-status -z -M HEAD -- .":       {Stdout: ""},
 		},
 	}
 }

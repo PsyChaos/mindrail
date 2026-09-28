@@ -86,8 +86,12 @@ definition (D-122).
 ### D-117 — Git discovery is one porcelain call with explicit exclusions
 
 Changed files come from `git status --porcelain=v1 -z
---untracked-files=normal -- <root>`: one call covers unstaged, staged and
-untracked. Kind mapping: `M→modified`, `A→added`, `D→deleted`, `R→renamed`
+--untracked-files=all -- <root>`: one call covers unstaged, staged and
+untracked, with every untracked file reported individually. Git's `normal`
+mode is forbidden here because it collapses a wholly new directory into a
+synthetic directory row while Mindrail scope and attribution are file-based;
+staging must not change the semantic changed-path set. Kind mapping:
+`M→modified`, `A→added`, `D→deleted`, `R→renamed`
 (with old path), `C→added` (copied content is new content),
 `T→modified`, `U→modified` (conflict is still a change),
 `?→added` (untracked work is work). Excluded: `.git/` and `.mindrail/`
@@ -247,6 +251,9 @@ Owns REQ-04 and REQ-05.
 - **AC-03.1** porcelain fixtures parse: unstaged `M`, staged `M`, untracked
   `??`, staged rename `R`, deleted `D`, each to the D-117 kind with the
   right paths (rename carries both).
+- **AC-03.1a** files below a wholly new untracked directory are reported as
+  individual `??` paths, never as a directory row; staging those files keeps
+  the same path set and changes only their porcelain status.
 - **AC-03.2** `.git/` and `.mindrail/` entries never become Change rows;
   non-regular paths become file rows with empty hashes and no symbols.
 - **AC-03.3** file delta against a baseline: changed hashes (or missing

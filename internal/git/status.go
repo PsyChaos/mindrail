@@ -19,14 +19,17 @@ type StatusEntry struct {
 // StatusEntries reads the worktree's change set through git status porcelain.
 // Unlike DiffRenames corroboration, discovery is load-bearing: a git that
 // cannot answer is an error, never an empty diff — an empty diff would
-// certify a dirty tree clean. Unparseable rows fail the same way: porcelain
-// has a fixed grammar, and guessing at it would invent or lose changes.
+// certify a dirty tree clean. Untracked entries are requested file-by-file;
+// Git's normal mode collapses a new directory into an unusable synthetic
+// path even though Mindrail scope and attribution are file-based. Unparseable
+// rows fail the same way: porcelain has a fixed grammar, and guessing at it
+// would invent or lose changes.
 func StatusEntries(ctx context.Context, runner CommandRunner, dir string) ([]StatusEntry, error) {
 	if runner == nil || dir == "" {
 		return nil, fmt.Errorf("git: status discovery needs a runner and a directory")
 	}
 	stdout, stderr, err := runner.Run(ctx, dir,
-		"status", "--porcelain=v1", "-z", "--untracked-files=normal", "--", ".")
+		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".")
 	if err != nil {
 		return nil, fmt.Errorf("git: status discovery failed: %w: %s", err, dish(stderr))
 	}

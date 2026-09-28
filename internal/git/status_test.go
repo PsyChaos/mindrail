@@ -15,7 +15,7 @@ func statusRunner(t *testing.T, stdout string, err error) *git.FakeRunner {
 	t.Helper()
 	return &git.FakeRunner{
 		Responses: map[string]git.FakeResponse{
-			"status --porcelain=v1 -z --untracked-files=normal -- .": {Stdout: stdout, Err: err},
+			"status --porcelain=v1 -z --untracked-files=all -- .": {Stdout: stdout, Err: err},
 		},
 	}
 }
@@ -65,7 +65,8 @@ func TestStatusEntriesRefusesMalformedRows(t *testing.T) {
 }
 
 // TestStatusEntriesReadsARealWorktree proves the spelling against real git:
-// unstaged edits, staged renames and untracked files surface together.
+// unstaged edits and untracked files surface together, including every file
+// below a wholly new directory rather than Git's synthetic directory row.
 func TestStatusEntriesReadsARealWorktree(t *testing.T) {
 	repo := t.TempDir()
 	run := func(args ...string) {
@@ -90,6 +91,14 @@ func TestStatusEntriesReadsARealWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "new.py"), []byte("y = 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(repo, "pkg", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"pkg/a.py", "pkg/nested/b.py"} {
+		if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(rel)), []byte("z = 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	entries, err := git.StatusEntries(context.Background(), &git.ExecRunner{}, repo)
 	if err != nil {
 		t.Fatal(err)
@@ -103,5 +112,30 @@ func TestStatusEntriesReadsARealWorktree(t *testing.T) {
 	}
 	if got := byPath["new.py"]; got.X != '?' || got.Y != '?' {
 		t.Fatalf("new.py = %+v, want untracked", got)
+	}
+	for _, rel := range []string{"pkg/a.py", "pkg/nested/b.py"} {
+		if got := byPath[rel]; got.X != '?' || got.Y != '?' {
+			t.Fatalf("%s = %+v, want file-granular untracked entry", rel, got)
+		}
+	}
+	if _, exists := byPath["pkg/"]; exists {
+		t.Fatal("untracked directory was reported instead of its files")
+	}
+	run("add", "pkg")
+	staged, err := git.StatusEntries(context.Background(), &git.ExecRunner{}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagedByPath := map[string]git.StatusEntry{}
+	for _, entry := range staged {
+		stagedByPath[entry.Path] = entry
+	}
+	for _, rel := range []string{"pkg/a.py", "pkg/nested/b.py"} {
+		if got := stagedByPath[rel]; got.X != 'A' || got.Y != ' ' {
+			t.Fatalf("staged %s = %+v, want the same file as an index add", rel, got)
+		}
+	}
+	if _, exists := stagedByPath["pkg/"]; exists {
+		t.Fatal("staging changed file-granular discovery back into a directory row")
 	}
 }
