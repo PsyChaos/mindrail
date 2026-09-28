@@ -13,6 +13,13 @@
     history: Object.freeze({ label: "HISTORY", tone: "cyan" })
   });
 
+  const PRESENCE = Object.freeze({
+    CONNECTED: Object.freeze({ tone: "mint" }),
+    IDLE: Object.freeze({ tone: "amber" }),
+    STALE: Object.freeze({ tone: "red" }),
+    ENDED: Object.freeze({ tone: "violet" })
+  });
+
   function milliseconds(value) {
     const result = value instanceof Date ? value.getTime() : new Date(value).getTime();
     return Number.isFinite(result) ? result : null;
@@ -42,6 +49,47 @@
     if (start === null || end === null) return "—";
     if (end <= start) return "expired";
     return `${duration((end - start) / 1000)} remaining`;
+  }
+
+  function ageSeconds(value, now) {
+    const observed = milliseconds(value);
+    const current = milliseconds(now);
+    if (observed === null || current === null) return null;
+    return Math.max(0, (current - observed) / 1000);
+  }
+
+  function clientFamily(runtime) {
+    return String(runtime.client_name || "").trim() || "unknown-client";
+  }
+
+  function runtimeCard(runtime, now) {
+    runtime = runtime || {};
+    const heartbeatAge = ageSeconds(runtime.last_heartbeat_at, now);
+    const activityAge = ageSeconds(runtime.last_activity_at, now);
+    let status;
+    if (runtime.ended_at) status = "ENDED";
+    else if (heartbeatAge === null || heartbeatAge > 15) status = "STALE";
+    else if (activityAge !== null && activityAge <= 30) status = "CONNECTED";
+    else status = "IDLE";
+    const end = runtime.ended_at || now;
+    const started = milliseconds(runtime.started_at);
+    const ended = milliseconds(end);
+    const connectedFor = started === null || ended === null ? "—" : duration((ended - started) / 1000);
+    return Object.freeze({
+      id: runtime.id || "—",
+      taskID: runtime.task_id || "",
+      sessionID: runtime.session_id || "",
+      clientFamily: clientFamily(runtime),
+      identitySource: "self-reported ClientInfo name, server-canonicalized",
+      status,
+      tone: PRESENCE[status].tone,
+      connectedFor,
+      lastHeartbeatAge: heartbeatAge === null ? "not recorded" : `${duration(heartbeatAge)} ago`,
+      lastActivityAge: activityAge === null ? "not recorded" : `${duration(activityAge)} ago`,
+      sequence: Number.isFinite(runtime.sequence) ? runtime.sequence : 0,
+      endedAt: runtime.ended_at || null,
+      endReason: runtime.end_reason || ""
+    });
   }
 
   function runtime(snapshot, receivedAt, now) {
@@ -90,5 +138,5 @@
     });
   }
 
-  return Object.freeze({ duration, elapsed, remaining, runtime, connection, sessionCard });
+  return Object.freeze({ duration, elapsed, remaining, runtime, connection, sessionCard, runtimeCard });
 });

@@ -27,6 +27,8 @@ func TestCollectorBuildsBoundedSanitizedOperationsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustExec(t, db, `INSERT INTO evidence VALUES ('EVD-1','ci','CI_VERIFICATION','pass',0,'0123456789abcdef','2026-09-27T11:45:00Z')`)
+	mustExec(t, db, `INSERT INTO jev_route_events VALUES ('RTE-1','PRJ-1','WS-1','TSK-1','SES-1','typesafe','jev-latest',1,'ok','advice_available','keyring','2026-09-27T11:40:00Z','2026-09-27T11:40:00.120Z',120,2,1,875,0,NULL,NULL,0,NULL,NULL,0,NULL,NULL)`)
+	mustExec(t, db, `INSERT INTO agent_runtimes VALUES ('RUN-1','PRJ-1','WS-1','TSK-1','SES-1','claude-code','Claude Code','1.2.3','2026-09-27T11:00:00Z','2026-09-27T11:59:50Z','2026-09-27T11:59:45Z',7,NULL,NULL)`)
 
 	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1", IsLinkedWorktree: true},
 		ProjectName: "Mindrail", WorktreeRoot: "/repo", Profiles: map[string]config.ValidationProfile{"ci": {Type: "CI_VERIFICATION", Paths: []string{"."}, Commands: [][]string{{"make", "gate"}}}},
@@ -56,6 +58,16 @@ func TestCollectorBuildsBoundedSanitizedOperationsSnapshot(t *testing.T) {
 	}
 	if !snapshot.JEV.Configured || snapshot.JEV.Source != "environment" {
 		t.Fatalf("JEV metadata = %#v", snapshot.JEV)
+	}
+	if !snapshot.JEV.Used || snapshot.JEV.RouteCount != 1 || snapshot.JEV.AcceptedRouteCount != 1 || snapshot.JEV.LatestRouteAt == nil || len(snapshot.JEVRouteEvents) != 1 {
+		t.Fatalf("JEV actual-use projection = %#v events=%#v", snapshot.JEV, snapshot.JEVRouteEvents)
+	}
+	route := snapshot.JEVRouteEvents[0]
+	if route.Status != "ok" || route.Tools.CandidateCount != 2 || route.Tools.SelectedOrdinal == nil || *route.Tools.SelectedOrdinal != 1 || route.Tools.ConfidenceMilli == nil || *route.Tools.ConfidenceMilli != 875 {
+		t.Fatalf("route event = %#v", route)
+	}
+	if len(snapshot.AgentRuntimes) != 1 || snapshot.AgentRuntimes[0].Status != "CONNECTED" || snapshot.AgentRuntimes[0].ClientFamily != "claude-code" {
+		t.Fatalf("agent runtimes = %#v", snapshot.AgentRuntimes)
 	}
 	if snapshot.Dashboard.StartedAt != time.Date(2026, 9, 27, 9, 30, 0, 0, time.UTC) || snapshot.Dashboard.UptimeSeconds != 9_000 {
 		t.Fatalf("dashboard runtime = %#v", snapshot.Dashboard)
@@ -87,6 +99,110 @@ func TestCollectorBuildsBoundedSanitizedOperationsSnapshot(t *testing.T) {
 	}
 }
 
+func TestCollectorProjectsLegacyClientMetadataBeforePublicJSON(t *testing.T) {
+	db := dashboardDB(t)
+	markers := []string{"legacy-name-keyring-marker", "legacy-title-typesafe-marker", "legacy-version-secret-marker"}
+	t.Setenv("TYPESAFE_API_KEY", markers[0])
+	mustExec(t, db, `INSERT INTO agent_runtimes VALUES ('RUN-LEGACY','PRJ-1','WS-1','TSK-1','SES-1',?,?,?,
+		'2026-09-28T11:00:00Z','2026-09-28T11:00:00Z','2026-09-28T11:00:00Z',1,NULL,NULL)`, markers[0], markers[1], markers[2])
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits := markerCount(string(payload), markers); hits != 0 {
+		t.Fatalf("public snapshot contains %d/3 legacy markers: %s", hits, payload)
+	}
+	if strings.Contains(string(payload), `"client_title"`) || strings.Contains(string(payload), `"client_version"`) {
+		t.Fatalf("retired raw client keys remain in public JSON: %s", payload)
+	}
+	if len(snapshot.AgentRuntimes) != 1 || snapshot.AgentRuntimes[0].ID != "RUN-LEGACY" || snapshot.AgentRuntimes[0].ClientFamily != "unknown-client" {
+		t.Fatalf("projected runtime = %#v", snapshot.AgentRuntimes)
+	}
+	var persisted string
+	if err := db.QueryRow(`SELECT client_name || '|' || client_title || '|' || client_version FROM agent_runtimes WHERE runtime_id='RUN-LEGACY'`).Scan(&persisted); err != nil {
+		t.Fatal(err)
+	}
+	if hits := markerCount(persisted, markers); hits != 3 {
+		t.Fatalf("legacy row was rewritten: %d/3 markers", hits)
+	}
+}
+
+func markerCount(value string, markers []string) int {
+	hits := 0
+	for _, marker := range markers {
+		if strings.Contains(value, marker) {
+			hits++
+		}
+	}
+	return hits
+}
+
+func TestCollectorDerivesTruthfulRuntimePresenceAtExactBoundaries(t *testing.T) {
+	db := dashboardDB(t)
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-1','WS-1','worker','2026-09-28T10:00:00Z')`)
+	for _, row := range []string{
+		`('RUN-CONNECTED','PRJ-1','WS-1','TSK-1','SES-1','claude-code',NULL,NULL,'2026-09-28T11:00:00Z','2026-09-28T11:59:45Z','2026-09-28T11:59:30Z',1,NULL,NULL)`,
+		`('RUN-IDLE','PRJ-1','WS-1','TSK-1','SES-1','codex',NULL,NULL,'2026-09-28T11:00:00Z','2026-09-28T11:59:45Z','2026-09-28T11:59:29.999Z',2,NULL,NULL)`,
+		`('RUN-STALE','PRJ-1','WS-1','TSK-1','SES-1','other',NULL,NULL,'2026-09-28T11:00:00Z','2026-09-28T11:59:44.999Z','2026-09-28T11:59:59Z',3,NULL,NULL)`,
+		`('RUN-ENDED','PRJ-1','WS-1','TSK-1','SES-1','other',NULL,NULL,'2026-09-28T11:00:00Z','2026-09-28T11:59:59Z','2026-09-28T11:59:59Z',4,'2026-09-28T11:20:00Z','disconnected')`,
+	} {
+		mustExec(t, db, `INSERT INTO agent_runtimes VALUES `+row)
+	}
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo", Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]AgentRuntime{}
+	for _, runtime := range snapshot.AgentRuntimes {
+		got[runtime.ID] = runtime
+	}
+	for id, want := range map[string]string{"RUN-CONNECTED": "CONNECTED", "RUN-IDLE": "IDLE", "RUN-STALE": "STALE", "RUN-ENDED": "ENDED"} {
+		if got[id].Status != want {
+			t.Errorf("%s status = %q, want %q", id, got[id].Status, want)
+		}
+	}
+}
+
+func TestCollectorBoundsRouteAndRuntimeTelemetry(t *testing.T) {
+	db := dashboardDB(t)
+	for i := 0; i < maxJEVRoutes+3; i++ {
+		mustExec(t, db, `INSERT INTO jev_route_events VALUES (?, 'PRJ-1','WS-1','TSK-1','SES-1','typesafe','jev-latest',1,'fallback','no_match','none','2026-09-28T11:00:00Z','2026-09-28T11:00:00.001Z',1,1,NULL,NULL,0,NULL,NULL,0,NULL,NULL,0,NULL,NULL)`, fmt.Sprintf("RTE-%03d", i))
+	}
+	for i := 0; i < maxAgentRuntimes+3; i++ {
+		mustExec(t, db, `INSERT INTO agent_runtimes VALUES (?, 'PRJ-1','WS-1','TSK-1','SES-1','client',NULL,NULL,'2026-09-28T11:00:00Z','2026-09-28T11:00:00Z','2026-09-28T11:00:00Z',1,'2026-09-28T11:01:00Z','shutdown')`, fmt.Sprintf("RUN-%03d", i))
+	}
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := collector.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.JEVRouteEvents) != maxJEVRoutes || snapshot.JEV.RouteCount != maxJEVRoutes+3 || !snapshot.Truncated["jev_route_events"] {
+		t.Fatalf("route bound: details=%d state=%#v truncated=%v", len(snapshot.JEVRouteEvents), snapshot.JEV, snapshot.Truncated)
+	}
+	if snapshot.JEV.Used || snapshot.JEV.AcceptedRouteCount != 0 || snapshot.JEV.LatestRouteAt != nil {
+		t.Fatalf("fallback-only routes were presented as accepted advice: %#v", snapshot.JEV)
+	}
+	if len(snapshot.AgentRuntimes) != maxAgentRuntimes || !snapshot.Truncated["agent_runtimes"] {
+		t.Fatalf("runtime bound: details=%d truncated=%v", len(snapshot.AgentRuntimes), snapshot.Truncated)
+	}
+}
+
 func TestCollectorBoundsFreeTextWithoutLeakingSecretPrefixes(t *testing.T) {
 	db := dashboardDB(t)
 	secret := strings.Repeat("s", 80)
@@ -94,6 +210,7 @@ func TestCollectorBoundsFreeTextWithoutLeakingSecretPrefixes(t *testing.T) {
 	mustExec(t, db, `INSERT INTO sessions VALUES ('SES-LONG','WS-1',?, '2026-09-27T10:00:00Z')`, prefix+secret)
 	mustExec(t, db, `INSERT INTO tasks VALUES ('TSK-LONG','PRJ-1',?,'OPEN',?,'SES-LONG',NULL,'2026-09-27T10:00:00Z','2026-09-27T11:00:00Z',1)`, prefix+secret, prefix+secret)
 	mustExec(t, db, `INSERT INTO leases VALUES ('LSE-LONG','PRJ-1','task','TSK-LONG','SES-LONG','2026-09-27T10:00:00Z','2026-09-27T10:00:00Z','2026-09-27T12:20:00Z','2026-09-27T12:00:00Z',?)`, prefix+secret)
+	mustExec(t, db, `INSERT INTO agent_runtimes VALUES ('RUN-LONG','PRJ-1','WS-1','TSK-LONG','SES-LONG',?,NULL,NULL,'2026-09-27T10:00:00Z','2026-09-27T10:00:00Z','2026-09-27T10:00:00Z',1,NULL,NULL)`, strings.Repeat("x", maxIDRunes)+secret)
 	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo",
 		Redact: func(value string) string { return strings.ReplaceAll(value, secret, "[REDACTED]") }})
 	if err != nil {
@@ -360,6 +477,8 @@ func dashboardDB(t *testing.T) *sql.DB {
 		`CREATE TABLE leases(lease_id TEXT, project_id TEXT, target_kind TEXT, target_key TEXT, holder TEXT, acquired_at TEXT, renewed_at TEXT, expires_at TEXT, released_at TEXT, release_reason TEXT)`,
 		`CREATE TABLE checkpoints(checkpoint_id TEXT, task_id TEXT, session_id TEXT, workspace_id TEXT, note TEXT, handoff INTEGER, created_at TEXT)`,
 		`CREATE TABLE evidence(evidence_id TEXT, profile TEXT, type TEXT, status TEXT, exit_code INTEGER, snapshot_hash TEXT, created_at TEXT)`,
+		`CREATE TABLE jev_route_events(route_id TEXT, project_id TEXT, workspace_id TEXT, task_id TEXT, session_id TEXT, provider TEXT, model TEXT, version INTEGER, status TEXT, reason TEXT, credential_source TEXT, started_at TEXT, ended_at TEXT, duration_ms INTEGER, tool_candidate_count INTEGER, tool_selected_ordinal INTEGER, tool_confidence_milli INTEGER, agent_candidate_count INTEGER, agent_selected_ordinal INTEGER, agent_confidence_milli INTEGER, model_candidate_count INTEGER, model_selected_ordinal INTEGER, model_confidence_milli INTEGER, effort_candidate_count INTEGER, effort_selected_ordinal INTEGER, effort_confidence_milli INTEGER)`,
+		`CREATE TABLE agent_runtimes(runtime_id TEXT, project_id TEXT, workspace_id TEXT, task_id TEXT, session_id TEXT, client_name TEXT, client_title TEXT, client_version TEXT, started_at TEXT, last_heartbeat_at TEXT, last_activity_at TEXT, sequence INTEGER, ended_at TEXT, end_reason TEXT)`,
 		`INSERT INTO workspaces VALUES ('WS-1','PRJ-1')`,
 	} {
 		mustExec(t, db, schema)

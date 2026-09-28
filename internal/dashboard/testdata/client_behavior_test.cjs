@@ -74,4 +74,72 @@ assert.equal(unknown.activeLeaseCount, 0);
 assert.equal(view.sessionCard({ activity_status: "claim_only" }, now).statusLabel, "CLAIM RECORDED");
 assert.equal(view.sessionCard({ activity_status: "lease_only" }, now).statusLabel, "LEASE ONLY");
 
+const connectedRuntime = {
+  id: "RUN-1",
+  task_id: "TSK-1",
+  session_id: "SES-1",
+  client_name: "claude-code",
+  client_title: "Claude Code",
+  client_version: "1.2.3",
+  client_self_reported: true,
+  started_at: "2026-09-28T11:00:00Z",
+  last_heartbeat_at: "2026-09-28T11:59:45Z",
+  last_activity_at: "2026-09-28T11:59:30Z",
+  sequence: 9
+};
+assert.deepEqual(view.runtimeCard(connectedRuntime, now), {
+  id: "RUN-1",
+  taskID: "TSK-1",
+  sessionID: "SES-1",
+  clientFamily: "claude-code",
+  identitySource: "self-reported ClientInfo name, server-canonicalized",
+  status: "CONNECTED",
+  tone: "mint",
+  connectedFor: "1h 0m",
+  lastHeartbeatAge: "15s ago",
+  lastActivityAge: "30s ago",
+  sequence: 9,
+  endedAt: null,
+  endReason: ""
+});
+
+// The public freshness contract is inclusive at 15s/30s. One millisecond
+// beyond either boundary must change the browser presentation without waiting
+// for another SSE frame.
+assert.equal(view.runtimeCard({ ...connectedRuntime, last_activity_at: "2026-09-28T11:59:29.999Z" }, now).status, "IDLE");
+assert.equal(view.runtimeCard({ ...connectedRuntime, last_heartbeat_at: "2026-09-28T11:59:44.999Z" }, now).status, "STALE");
+
+const endedRuntime = view.runtimeCard({
+  ...connectedRuntime,
+  ended_at: "2026-09-28T11:20:00Z",
+  end_reason: "disconnect"
+}, now);
+assert.equal(endedRuntime.status, "ENDED");
+assert.equal(endedRuntime.tone, "violet");
+assert.equal(endedRuntime.connectedFor, "20m 0s");
+assert.equal(endedRuntime.endReason, "disconnect");
+
+const anonymousRuntime = view.runtimeCard({
+  started_at: "2026-09-28T11:59:00Z",
+  last_heartbeat_at: "2026-09-28T12:00:00Z",
+  last_activity_at: "2026-09-28T12:00:00Z"
+}, now);
+assert.equal(anonymousRuntime.clientFamily, "unknown-client");
+assert.equal(anonymousRuntime.identitySource, "self-reported ClientInfo name, server-canonicalized");
+
+// Raw caller-controlled title/version are never part of the presentation. The
+// server-owned family is the only displayed identity, and runtime ID remains
+// available to distinguish two unknown/custom clients.
+const customRuntime = view.runtimeCard({
+  ...connectedRuntime,
+  id: "RUN-CUSTOM",
+  client_name: "unknown-client",
+  client_title: "credential-shaped-title",
+  client_version: "secret-version"
+}, now);
+assert.equal(customRuntime.clientFamily, "unknown-client");
+assert.equal(customRuntime.id, "RUN-CUSTOM");
+assert.equal(JSON.stringify(customRuntime).includes("credential-shaped-title"), false);
+assert.equal(JSON.stringify(customRuntime).includes("secret-version"), false);
+
 process.stdout.write("client behavior assertions passed\n");

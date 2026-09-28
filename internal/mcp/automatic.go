@@ -2,10 +2,14 @@ package mcp
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/PsyChaos/mindrail/internal/agent"
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/changes"
 	"github.com/PsyChaos/mindrail/internal/coordination"
@@ -19,6 +23,22 @@ import (
 type automaticHeartbeat interface {
 	Stop()
 	Health() error
+}
+
+type presenceRecorder interface {
+	Start(context.Context, agent.PresenceStart) (agent.RuntimePresence, error)
+	Heartbeat(context.Context, string) (agent.RuntimePresence, error)
+	Activity(context.Context, string) (agent.RuntimePresence, error)
+	End(context.Context, string, string) (agent.RuntimePresence, error)
+}
+
+type presenceBinding struct {
+	id         string
+	cancel     context.CancelFunc
+	cancelOnce sync.Once
+	mu         sync.Mutex
+	ended      bool
+	reason     string
 }
 
 // workflowPort is deliberately the workflow service's public orchestration
@@ -41,12 +61,19 @@ func (a workflowAdapter) StartHeartbeat(ctx context.Context, runKey string, inte
 }
 
 type automaticContext struct {
-	run       workflow.Run
-	heartbeat automaticHeartbeat
-	watched   bool
+	run                workflow.Run
+	heartbeat          automaticHeartbeat
+	presence           *presenceBinding
+	presenceStarting   bool
+	presenceGeneration uint64
+	watched            bool
 }
 
-const automaticHeartbeatInterval = coordination.LeaseTTL / 3
+const (
+	automaticHeartbeatInterval     = coordination.LeaseTTL / 3
+	agentPresenceHeartbeatInterval = 5 * time.Second
+	presenceEndAttempts            = 3
+)
 
 func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, in BootstrapIn) (BootstrapOut, error) {
 	if req == nil || req.Session == nil {
@@ -100,10 +127,16 @@ func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, i
 	if currentPtr != nil && currentPtr.run.RunKey == run.RunKey && terminalRun(run) {
 		currentPtr.run = run
 		heartbeat := currentPtr.heartbeat
+		presence := currentPtr.presence
 		currentPtr.heartbeat = nil
+		currentPtr.presenceStarting = false
+		currentPtr.presenceGeneration++
 		s.autoMu.Unlock()
 		if heartbeat != nil {
 			heartbeat.Stop()
+		}
+		if s.stopPresence(presence, agent.RuntimeEndCompleted) {
+			s.clearPresenceIfCurrent(req.Session, presence)
 		}
 		out.Started = true
 		return out, nil
@@ -111,6 +144,7 @@ func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, i
 	if currentPtr != nil && currentPtr.run.RunKey == run.RunKey && currentPtr.heartbeat != nil && currentPtr.heartbeat.Health() == nil {
 		currentPtr.run = run
 		s.autoMu.Unlock()
+		s.ensurePresence(ctx, req, run)
 		out.Started = true
 		return out, nil
 	}
@@ -129,6 +163,9 @@ func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, i
 	if accepted && heartbeatErr != nil {
 		out.Failure = automaticFailure(heartbeatErr)
 		return out, nil
+	}
+	if accepted && !terminalRun(published.run) {
+		s.ensurePresence(ctx, req, published.run)
 	}
 	out.Started = true
 	return out, nil
@@ -177,8 +214,16 @@ func (s *Server) rememberAutomatic(session *sdk.ServerSession, next automaticCon
 		}
 		return preserved, false
 	}
+	var replacedPresence *presenceBinding
 	if current != nil {
 		next.watched = current.watched
+		if current.run.RunKey == next.run.RunKey {
+			next.presence = current.presence
+			next.presenceStarting = current.presenceStarting
+			next.presenceGeneration = current.presenceGeneration
+		} else {
+			replacedPresence = current.presence
+		}
 		if current.heartbeat != nil && current.heartbeat != next.heartbeat {
 			current.heartbeat.Stop()
 		}
@@ -192,6 +237,7 @@ func (s *Server) rememberAutomatic(session *sdk.ServerSession, next automaticCon
 	}
 	s.automatic[session] = &next
 	s.autoMu.Unlock()
+	s.stopPresence(replacedPresence, agent.RuntimeEndReplaced)
 	return next, true
 }
 
@@ -221,6 +267,9 @@ func (s *Server) automaticRun(ctx context.Context, req *sdk.CallToolRequest, exp
 		if published.run.RunKey != explicitRunKey {
 			return workflow.Run{}, nil, Invalid("run_key does not match this MCP connection")
 		}
+		if !terminalRun(published.run) {
+			s.ensurePresence(ctx, req, published.run)
+		}
 		return published.run, published.heartbeat, nil
 	}
 	run := current.run
@@ -247,14 +296,21 @@ func (s *Server) retainTerminalAutomatic(session *sdk.ServerSession, run workflo
 	s.autoMu.Lock()
 	current := s.automatic[session]
 	var heartbeat automaticHeartbeat
+	var presence *presenceBinding
 	if current != nil && current.run.RunKey == run.RunKey && current.run.Revision <= run.Revision {
 		current.run = run
 		heartbeat = current.heartbeat
 		current.heartbeat = nil
+		presence = current.presence
+		current.presenceStarting = false
+		current.presenceGeneration++
 	}
 	s.autoMu.Unlock()
 	if heartbeat != nil {
 		heartbeat.Stop()
+	}
+	if s.stopPresence(presence, agent.RuntimeEndCompleted) {
+		s.clearPresenceIfCurrent(session, presence)
 	}
 }
 
@@ -265,6 +321,9 @@ func (s *Server) forgetAutomatic(session *sdk.ServerSession) {
 	s.autoMu.Unlock()
 	if current != nil && current.heartbeat != nil {
 		current.heartbeat.Stop()
+	}
+	if current != nil {
+		s.stopPresence(current.presence, agent.RuntimeEndDisconnected)
 	}
 }
 
@@ -283,6 +342,7 @@ func (s *Server) forgetAutomaticIfCurrent(session *sdk.ServerSession, expected w
 	if current.heartbeat != nil {
 		current.heartbeat.Stop()
 	}
+	s.stopPresence(current.presence, agent.RuntimeEndReplaced)
 }
 
 func (s *Server) closeAutomatic() {
@@ -294,7 +354,188 @@ func (s *Server) closeAutomatic() {
 		if current.heartbeat != nil {
 			current.heartbeat.Stop()
 		}
+		s.stopPresence(current.presence, agent.RuntimeEndShutdown)
 	}
+}
+
+func (s *Server) ensurePresence(ctx context.Context, req *sdk.CallToolRequest, run workflow.Run) {
+	if s.presence == nil || req == nil || req.Session == nil || terminalRun(run) {
+		return
+	}
+	s.autoMu.RLock()
+	current := s.automatic[req.Session]
+	if current == nil || current.run.RunKey != run.RunKey || current.presence != nil || current.presenceStarting {
+		s.autoMu.RUnlock()
+		return
+	}
+	s.autoMu.RUnlock()
+	s.autoMu.Lock()
+	current = s.automatic[req.Session]
+	if current == nil || current.run.RunKey != run.RunKey || current.presence != nil || current.presenceStarting {
+		s.autoMu.Unlock()
+		return
+	}
+	current.presenceStarting = true
+	current.presenceGeneration++
+	generation := current.presenceGeneration
+	s.autoMu.Unlock()
+
+	client := agent.ClientInfo{Name: "unknown"}
+	if info := req.ClientInfo(); info != nil {
+		client.Name = boundedClientValue(info.Name, 128)
+		client.Title = boundedClientValue(info.Title, 256)
+		client.Version = boundedClientValue(info.Version, 64)
+		if client.Name == "" {
+			client.Name = "unknown"
+		}
+	}
+	runtime, err := s.presence.Start(ctx, agent.PresenceStart{
+		ProjectID: s.projectIDValue, WorkspaceID: s.workspaceIDValue,
+		TaskID: run.TaskID, SessionID: run.SessionID, Client: client,
+	})
+	if err != nil {
+		s.autoMu.Lock()
+		if current = s.automatic[req.Session]; current != nil && current.run.RunKey == run.RunKey && current.presenceGeneration == generation {
+			current.presenceStarting = false
+		}
+		s.autoMu.Unlock()
+		return
+	}
+	heartbeatCtx, cancel := context.WithCancel(context.Background())
+	binding := &presenceBinding{id: runtime.ID, cancel: cancel}
+	s.autoMu.Lock()
+	current = s.automatic[req.Session]
+	if current == nil || current.run.RunKey != run.RunKey || current.presenceGeneration != generation ||
+		terminalRun(current.run) || current.presence != nil || !current.presenceStarting {
+		if current != nil && current.run.RunKey == run.RunKey && current.presenceGeneration == generation {
+			current.presenceStarting = false
+		}
+		s.autoMu.Unlock()
+		s.stopPresence(binding, agent.RuntimeEndReplaced)
+		return
+	}
+	current.presenceStarting = false
+	current.presence = binding
+	s.autoMu.Unlock()
+	go s.runPresenceHeartbeat(heartbeatCtx, binding.id)
+}
+
+func (s *Server) runPresenceHeartbeat(ctx context.Context, runtimeID string) {
+	interval := s.presenceHeartbeatTestInterval
+	if interval <= 0 {
+		interval = agentPresenceHeartbeatInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			callCtx, cancel := context.WithTimeout(context.Background(), interval)
+			_, _ = s.presence.Heartbeat(callCtx, runtimeID)
+			cancel()
+		}
+	}
+}
+
+func (s *Server) stopPresence(binding *presenceBinding, reason string) bool {
+	if binding == nil || s.presence == nil {
+		return true
+	}
+	binding.cancelOnce.Do(func() {
+		if binding.cancel != nil {
+			binding.cancel()
+		}
+	})
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	if binding.ended {
+		return true
+	}
+	if binding.reason == "" {
+		binding.reason = reason
+	}
+	for range presenceEndAttempts {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_, err := s.presence.End(ctx, binding.id, binding.reason)
+		cancel()
+		if err == nil {
+			binding.ended = true
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) presenceActivityMiddleware(next sdk.MethodHandler) sdk.MethodHandler {
+	return func(ctx context.Context, method string, request sdk.Request) (sdk.Result, error) {
+		session, _ := request.GetSession().(*sdk.ServerSession)
+		touched := false
+		if method == "tools/call" {
+			touched = s.touchPresence(ctx, session)
+		}
+		result, err := next(ctx, method, request)
+		if method == "tools/call" && !touched {
+			s.touchPresence(ctx, session)
+		}
+		return result, err
+	}
+}
+
+func (s *Server) touchPresence(ctx context.Context, session *sdk.ServerSession) bool {
+	if session == nil || s.presence == nil {
+		return false
+	}
+	s.autoMu.RLock()
+	current := s.automatic[session]
+	var runtimeID string
+	var run workflow.Run
+	var binding *presenceBinding
+	if current != nil && current.presence != nil {
+		runtimeID = current.presence.id
+		binding = current.presence
+	}
+	if current != nil {
+		run = current.run
+	}
+	s.autoMu.RUnlock()
+	if terminalRun(run) && binding != nil {
+		if s.stopPresence(binding, agent.RuntimeEndCompleted) {
+			s.clearPresenceIfCurrent(session, binding)
+		}
+		return false
+	}
+	if runtimeID == "" && run.RunKey != "" && !terminalRun(run) {
+		s.ensurePresence(ctx, &sdk.CallToolRequest{Session: session}, run)
+		s.autoMu.RLock()
+		if current = s.automatic[session]; current != nil && current.run.RunKey == run.RunKey && current.presence != nil {
+			runtimeID = current.presence.id
+		}
+		s.autoMu.RUnlock()
+	}
+	if runtimeID != "" {
+		_, _ = s.presence.Activity(ctx, runtimeID)
+		return true
+	}
+	return false
+}
+
+func (s *Server) clearPresenceIfCurrent(session *sdk.ServerSession, binding *presenceBinding) {
+	s.autoMu.Lock()
+	if current := s.automatic[session]; current != nil && current.presence == binding {
+		current.presence = nil
+	}
+	s.autoMu.Unlock()
+}
+
+func boundedClientValue(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	for len(value) > limit {
+		_, size := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-size]
+	}
+	return value
 }
 
 func (s *Server) bootstrapRunOut(run workflow.Run) BootstrapOut {

@@ -55,6 +55,19 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		"scope_attributions":          {"logical_key", "change_id", "decided_by", "reason", "decided_at"},
 		"evidence":                    {"evidence_id", "profile", "type", "command_argv", "status", "exit_code", "output", "snapshot_hash", "provenance", "created_at", "operation_id", "request_hash"},
 		"guard_baselines":             {"project_id", "workspace_id", "head_oid", "format_version", "mappings_json", "captured_at"},
+		"jev_route_events": {
+			"route_id", "project_id", "workspace_id", "task_id", "session_id", "provider", "model", "version",
+			"status", "reason", "credential_source", "started_at", "ended_at", "duration_ms",
+			"tool_candidate_count", "tool_selected_ordinal", "tool_confidence_milli",
+			"agent_candidate_count", "agent_selected_ordinal", "agent_confidence_milli",
+			"model_candidate_count", "model_selected_ordinal", "model_confidence_milli",
+			"effort_candidate_count", "effort_selected_ordinal", "effort_confidence_milli",
+		},
+		"agent_runtimes": {
+			"runtime_id", "project_id", "workspace_id", "task_id", "session_id",
+			"client_name", "client_title", "client_version", "started_at",
+			"last_heartbeat_at", "last_activity_at", "sequence", "ended_at", "end_reason",
+		},
 	}
 
 	got := map[string][]string{}

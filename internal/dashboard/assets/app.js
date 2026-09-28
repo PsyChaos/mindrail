@@ -30,6 +30,18 @@
     $("#last-frame").textContent=current.generated_at ? `${runtime.snapshotAge} AGO` : "—";
     $("#last-frame").title=instant(current.generated_at);
     document.querySelectorAll("[data-elapsed-from]").forEach(el=>{el.textContent=view.elapsed(el.dataset.elapsedFrom,Date.now());});
+    const runtimes=Array.isArray(current.agent_runtimes)?current.agent_runtimes:[];
+    const byID=new Map(runtimes.map(item=>[item.id,item]));
+    document.querySelectorAll("[data-runtime-id]").forEach(card=>{
+      const runtime=byID.get(card.dataset.runtimeId); if(!runtime)return;
+      const presentation=view.runtimeCard(runtime,Date.now());
+      card.dataset.tone=presentation.tone;
+      card.classList.toggle("engaged",presentation.status==="CONNECTED");
+      const status=card.querySelector('[data-role="presence-status"]'); if(status)status.textContent=presentation.status;
+      const connected=card.querySelector('[data-role="connected-for"]'); if(connected)connected.textContent=presentation.connectedFor;
+      const heartbeat=card.querySelector('[data-role="heartbeat-age"]'); if(heartbeat)heartbeat.textContent=presentation.lastHeartbeatAge;
+      const activity=card.querySelector('[data-role="activity-age"]'); if(activity)activity.textContent=presentation.lastActivityAge;
+    });
   }
 
   document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
@@ -84,9 +96,14 @@
     if (!components.children.length) empty(components);
     const telemetry = $("#telemetry"); telemetry.replaceChildren();
     const jev=s.jev || {};
+    const routes=Array.isArray(s.jev_route_events)?s.jev_route_events:[];
     const jevState=jev.configured ? `${jev.provider || "typesafe"} / ${jev.source}` : jev.source === "unavailable" ? "unavailable" : "not configured";
+    const routeCount=Number.isFinite(jev.route_count)?jev.route_count:routes.length;
+    const acceptedCount=Number.isFinite(jev.accepted_route_count)?jev.accepted_route_count:routes.filter(route=>route.status==="ok").length;
+    const jevUse=jev.used ? `${acceptedCount} accepted / ${routeCount} recorded · latest ${instant(jev.latest_route_at)}` : routeCount>0 ? `no accepted advice · ${routeCount} recorded` : "not used in recorded decisions";
     [
-      ["JEV", jevState],
+      ["JEV CONFIGURED", jevState],
+      ["JEV ACTUAL USE", jevUse],
       ["JEV FRESHNESS", "startup snapshot · restart after change"],
       ["CI", `${s.ci.status} / ${s.ci.source || "local"}`],
       ["MERGE", s.merge.status],
@@ -117,9 +134,11 @@
   }
 
   function renderAgents(s) {
-    $("#session-count").textContent=String(s.sessions.length); $("#lease-count").textContent=String(s.leases.length);
+    const runtimes=Array.isArray(s.agent_runtimes)?s.agent_runtimes:[];
+    $("#session-count").textContent=String(runtimes.length || s.sessions.length); $("#lease-count").textContent=String(s.leases.length);
     const grid=$("#agent-grid"); grid.replaceChildren();
-    s.sessions.forEach(agent=>{
+    runtimes.forEach(runtime=>grid.append(runtimeCard(runtime)));
+    if(!runtimes.length)s.sessions.forEach(agent=>{
       const presentation=view.sessionCard(agent,Date.now());
       const card=node("article","agent-card"+(presentation.status==="active_signal"?" engaged":""));
       card.dataset.tone=presentation.tone;
@@ -145,7 +164,7 @@
       ];
       activityRows.forEach(([key,value])=>{activity.append(node("dt","",key),node("dd","",value));});
       card.append(activity); grid.append(card);
-    }); if(!s.sessions.length) empty(grid);
+    }); if(!runtimes.length&&!s.sessions.length) empty(grid);
     const list=$("#lease-list"); list.replaceChildren();
     s.leases.forEach(lease=>{
       const row=node("div","data-row"); row.dataset.tone=tone(lease.status);
@@ -154,12 +173,36 @@
     }); if(!s.leases.length) empty(list);
   }
 
+  function runtimeCard(runtime) {
+    const presentation=view.runtimeCard(runtime,Date.now());
+    const card=node("article","agent-card"+(presentation.status==="CONNECTED"?" engaged":""));
+    card.dataset.tone=presentation.tone; card.dataset.runtimeId=runtime.id || "";
+    const header=node("div","agent-card-head");
+    const status=node("span","agent-status",presentation.status); status.dataset.role="presence-status";
+    header.append(node("div","agent-label",presentation.clientFamily),status);
+    card.append(header,node("div","projection-note","CANONICAL CLIENT FAMILY · SOURCE: SELF-REPORTED CLIENTINFO NAME"),node("div","agent-name",presentation.id));
+    const stats=node("div","agent-stats");
+    const connected=node("b","",presentation.connectedFor); connected.dataset.role="connected-for";
+    [[presentation.taskID||"—","TASK"],[presentation.sequence,"SIGNAL SEQUENCE"]].forEach(([value,label])=>{const box=node("div");box.append(node("b","",String(value)),node("span","",label));stats.append(box);});
+    const ageBox=node("div");ageBox.append(connected,node("span","","CONNECTED FOR"));stats.append(ageBox);card.append(stats);
+    const activity=node("dl","agent-activity");
+    const heartbeat=node("span","",presentation.lastHeartbeatAge);heartbeat.dataset.role="heartbeat-age";
+    const lastActivity=node("span","",presentation.lastActivityAge);lastActivity.dataset.role="activity-age";
+    const heartbeatValue=node("dd","");heartbeatValue.append(heartbeat);
+    const activityValue=node("dd","");activityValue.append(lastActivity);
+    activity.append(node("dt","","SESSION"),node("dd","",presentation.sessionID||"—"),node("dt","","LAST HEARTBEAT"),heartbeatValue,node("dt","","LAST MCP ACTIVITY"),activityValue);
+    if(presentation.endedAt)activity.append(node("dt","","ENDED"),node("dd","",`${instant(presentation.endedAt)} · ${presentation.endReason||"ended"}`));
+    card.append(activity,node("div","projection-note","Heartbeat proves only that the Mindrail MCP connection updated its presence record. Activity means a Mindrail tool was called; model, process, thought and token liveness are not observed."));
+    return card;
+  }
+
   function renderEvents(s) {
     const candidates=[];
     (s.tasks||[]).forEach(t=>candidates.push({key:`task:${t.id}:${t.revision}`,at:t.updated_at,kind:"TASK REVISION",tone:tone(t.state),title:`${t.id} · REV ${t.revision}`,detail:`${t.state} · ${t.title}`}));
     (s.checkpoints||[]).forEach(c=>candidates.push({key:`checkpoint:${c.id}`,at:c.created_at,kind:c.handoff?"HANDOFF":"CHECKPOINT",tone:c.handoff?"violet":"cyan",title:`${c.task_id} · ${c.session_id}`,detail:"checkpoint metadata · note withheld"}));
     (s.leases||[]).forEach(l=>{const at=l.status==="released"?l.released_at:l.status==="expired"?l.expires_at:(l.renewed_at||l.acquired_at);const renewed=l.status==="active"&&l.renewed_at&&l.renewed_at!==l.acquired_at;candidates.push({key:`lease:${l.id}:${l.status}:${at}`,at,kind:renewed?"LEASE RENEWED":`LEASE ${l.status.toUpperCase()}`,tone:tone(l.status),title:`${l.target_kind} · ${l.target_key}`,detail:`holder ${l.holder}${l.release_reason?" · "+l.release_reason:""}`});});
     (s.sessions||[]).forEach(a=>candidates.push({key:`session:${a.id}`,at:a.started_at,kind:"SESSION START",tone:a.engaged?"mint":"cyan",title:a.id,detail:a.label||"Unlabelled agent session"}));
+    (s.jev_route_events||[]).forEach(route=>candidates.push({key:`jev:${route.id}`,at:route.ended_at||route.started_at,kind:"JEV ROUTE",tone:route.status==="ok"?"mint":"amber",title:`${route.provider||"typesafe"} · ${route.status||"unknown"}`,detail:`${route.reason||"no reason"} · ${route.duration_ms||0}ms · bounded decision metadata`}));
     candidates.forEach(item=>{if(!observedEventKeys.has(item.key)){observedEventKeys.add(item.key);observedEvents.push(item);}});
     observedEvents.sort((a,b)=>new Date(b.at)-new Date(a.at));
     if(observedEvents.length>300) observedEvents=observedEvents.slice(0,300);

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PsyChaos/mindrail/internal/agent"
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/config"
 	"github.com/PsyChaos/mindrail/internal/status"
@@ -36,6 +37,7 @@ type Collector struct {
 
 type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 func NewCollector(opts CollectorOptions) (*Collector, error) {
@@ -84,6 +86,14 @@ func (c *Collector) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	routes, routeCount, acceptedRouteCount, latestRouteAt, routeCut, err := c.jevRouteEvents(ctx, tx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	runtimes, runtimeCut, err := c.agentRuntimes(ctx, tx, now)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	summary, engaged, taskCounts, leaseCounts, err := c.summary(ctx, tx, now)
 	if err != nil {
 		return Snapshot{}, err
@@ -127,10 +137,21 @@ func (c *Collector) Snapshot(ctx context.Context) (Snapshot, error) {
 	if evidenceCut {
 		truncated["evidence"] = true
 	}
+	if routeCut {
+		truncated["jev_route_events"] = true
+	}
+	if runtimeCut {
+		truncated["agent_runtimes"] = true
+	}
 	if len(profiles) < len(c.opts.Profiles) {
 		truncated["profiles"] = true
 	}
 
+	jev := c.opts.JEV
+	jev.Used = acceptedRouteCount > 0
+	jev.RouteCount = routeCount
+	jev.AcceptedRouteCount = acceptedRouteCount
+	jev.LatestRouteAt = latestRouteAt
 	return Snapshot{
 		Sequence: c.seq.Add(1), GeneratedAt: now,
 		Dashboard: DashboardState{StartedAt: c.opts.StartedAt, UptimeSeconds: nonNegativeSeconds(now.Sub(c.opts.StartedAt))},
@@ -138,15 +159,153 @@ func (c *Collector) Snapshot(ctx context.Context) (Snapshot, error) {
 			LinkedWorktree: c.opts.Workspace.IsLinkedWorktree},
 		Summary: summary, Tasks: tasks, Sessions: sessions, Leases: leases,
 		Checkpoints: checkpoints, Evidence: evidence, Profiles: profiles, Readiness: readinessView(c.opts.Readiness, c.opts.Redact),
-		CI:         ci,
-		Merge:      ProviderState{Status: "unavailable", Detail: "No GitHub or merge provider is configured for this local read-only view."},
-		JEV:        c.opts.JEV,
-		Completion: CompletionState{Status: "on_demand", Detail: "Completion and testguard findings are evaluated during completion and are not persisted by this schema.", Findings: 0},
+		CI:             ci,
+		Merge:          ProviderState{Status: "unavailable", Detail: "No GitHub or merge provider is configured for this local read-only view."},
+		JEV:            jev,
+		JEVRouteEvents: routes,
+		AgentRuntimes:  runtimes,
+		Completion:     CompletionState{Status: "on_demand", Detail: "Completion and testguard findings are evaluated during completion and are not persisted by this schema.", Findings: 0},
 		Capabilities: Capabilities{ReadOnly: true, LiveTransport: "sse", TaskRevisionHistory: "current_revision_only",
 			CheckpointNotes: "metadata_only", SensitiveData: "checkpoint text, evidence output, argv, provenance and credentials omitted",
 			ReadinessFreshness: "startup_snapshot"},
 		Truncated: truncated,
 	}, nil
+}
+
+func (c *Collector) jevRouteEvents(ctx context.Context, db queryer) ([]JEVRouteEvent, int, int, *time.Time, bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT substr(route_id,1,?), substr(workspace_id,1,?), substr(task_id,1,?), substr(session_id,1,?),
+		provider, model, version, status, reason, credential_source, started_at, ended_at, duration_ms,
+		tool_candidate_count, tool_selected_ordinal, tool_confidence_milli,
+		agent_candidate_count, agent_selected_ordinal, agent_confidence_milli,
+		model_candidate_count, model_selected_ordinal, model_confidence_milli,
+		effort_candidate_count, effort_selected_ordinal, effort_confidence_milli
+		FROM jev_route_events WHERE project_id = ? ORDER BY route_id DESC LIMIT ?`,
+		maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, c.opts.ProjectID, maxJEVRoutes+1)
+	if err != nil {
+		return nil, 0, 0, nil, false, err
+	}
+	defer rows.Close()
+	out := make([]JEVRouteEvent, 0)
+	for rows.Next() {
+		var item JEVRouteEvent
+		var started, ended string
+		var toolOrdinal, toolConfidence, agentOrdinal, agentConfidence sql.NullInt64
+		var modelOrdinal, modelConfidence, effortOrdinal, effortConfidence sql.NullInt64
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.TaskID, &item.SessionID,
+			&item.Provider, &item.Model, &item.Version, &item.Status, &item.Reason, &item.CredentialSource,
+			&started, &ended, &item.DurationMS,
+			&item.Tools.CandidateCount, &toolOrdinal, &toolConfidence,
+			&item.Agents.CandidateCount, &agentOrdinal, &agentConfidence,
+			&item.Models.CandidateCount, &modelOrdinal, &modelConfidence,
+			&item.Efforts.CandidateCount, &effortOrdinal, &effortConfidence); err != nil {
+			return nil, 0, 0, nil, false, err
+		}
+		if item.StartedAt, err = app.ParseTime(started); err != nil {
+			return nil, 0, 0, nil, false, err
+		}
+		if item.EndedAt, err = app.ParseTime(ended); err != nil {
+			return nil, 0, 0, nil, false, err
+		}
+		item.ID = boundedText(item.ID, maxIDRunes)
+		item.WorkspaceID = boundedText(item.WorkspaceID, maxIDRunes)
+		item.TaskID = boundedText(item.TaskID, maxIDRunes)
+		item.SessionID = boundedText(item.SessionID, maxIDRunes)
+		item.Tools.SelectedOrdinal, item.Tools.ConfidenceMilli = optionalInt(toolOrdinal), optionalInt(toolConfidence)
+		item.Agents.SelectedOrdinal, item.Agents.ConfidenceMilli = optionalInt(agentOrdinal), optionalInt(agentConfidence)
+		item.Models.SelectedOrdinal, item.Models.ConfidenceMilli = optionalInt(modelOrdinal), optionalInt(modelConfidence)
+		item.Efforts.SelectedOrdinal, item.Efforts.ConfidenceMilli = optionalInt(effortOrdinal), optionalInt(effortConfidence)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, 0, nil, false, err
+	}
+	var count, accepted int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(status = 'ok'),0)
+		FROM jev_route_events WHERE project_id = ?`, c.opts.ProjectID).Scan(&count, &accepted); err != nil {
+		return nil, 0, 0, nil, false, err
+	}
+	var latest *time.Time
+	if accepted > 0 {
+		var latestRaw string
+		if err := db.QueryRowContext(ctx, `SELECT ended_at FROM jev_route_events
+			WHERE project_id = ? AND status = 'ok' ORDER BY route_id DESC LIMIT 1`, c.opts.ProjectID).Scan(&latestRaw); err != nil {
+			return nil, 0, 0, nil, false, err
+		}
+		value, parseErr := app.ParseTime(latestRaw)
+		if parseErr != nil {
+			return nil, 0, 0, nil, false, parseErr
+		}
+		latest = &value
+	}
+	return trim(out, maxJEVRoutes), count, accepted, latest, len(out) > maxJEVRoutes, nil
+}
+
+func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time) ([]AgentRuntime, bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT substr(runtime_id,1,?), substr(workspace_id,1,?), substr(task_id,1,?), substr(session_id,1,?),
+		client_name, COALESCE(client_title,''), COALESCE(client_version,''),
+		started_at, last_heartbeat_at, last_activity_at, sequence, ended_at, COALESCE(end_reason,'')
+		FROM agent_runtimes WHERE project_id = ? ORDER BY (ended_at IS NULL) DESC, runtime_id DESC LIMIT ?`,
+		maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, maxIDRunes+1,
+		c.opts.ProjectID, maxAgentRuntimes+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := make([]AgentRuntime, 0)
+	for rows.Next() {
+		var item AgentRuntime
+		var started, heartbeat, activity string
+		var ended sql.NullString
+		var rawName, rawTitle, rawVersion string
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.TaskID, &item.SessionID, &rawName, &rawTitle, &rawVersion,
+			&started, &heartbeat, &activity, &item.Sequence, &ended, &item.EndReason); err != nil {
+			return nil, false, err
+		}
+		if item.StartedAt, err = app.ParseTime(started); err != nil {
+			return nil, false, err
+		}
+		if item.LastHeartbeatAt, err = app.ParseTime(heartbeat); err != nil {
+			return nil, false, err
+		}
+		if item.LastActivityAt, err = app.ParseTime(activity); err != nil {
+			return nil, false, err
+		}
+		if ended.Valid {
+			value, parseErr := app.ParseTime(ended.String)
+			if parseErr != nil {
+				return nil, false, parseErr
+			}
+			item.EndedAt = &value
+		}
+		item.ID, item.WorkspaceID = boundedText(item.ID, maxIDRunes), boundedText(item.WorkspaceID, maxIDRunes)
+		item.TaskID, item.SessionID = boundedText(item.TaskID, maxIDRunes), boundedText(item.SessionID, maxIDRunes)
+		item.ClientFamily = agent.CanonicalClientInfo(agent.ClientInfo{Name: rawName, Title: rawTitle, Version: rawVersion}).Name
+		item.Status = runtimeStatus(item, now)
+		out = append(out, item)
+	}
+	return trim(out, maxAgentRuntimes), len(out) > maxAgentRuntimes, rows.Err()
+}
+
+func runtimeStatus(runtime AgentRuntime, now time.Time) string {
+	if runtime.EndedAt != nil {
+		return "ENDED"
+	}
+	heartbeatAge := now.Sub(runtime.LastHeartbeatAt)
+	if heartbeatAge > 15*time.Second {
+		return "STALE"
+	}
+	if now.Sub(runtime.LastActivityAt) <= 30*time.Second {
+		return "CONNECTED"
+	}
+	return "IDLE"
+}
+
+func optionalInt(value sql.NullInt64) *int {
+	if !value.Valid {
+		return nil
+	}
+	result := int(value.Int64)
+	return &result
 }
 
 type sessionActivity struct {

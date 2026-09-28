@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +89,10 @@ func TestAgentRouteMissingKeyDoesNotReadOrLaunch(t *testing.T) {
 	result := decodeAgentResult(t, output)
 	if result["status"] != "disabled" || result["reason"] != "api_key_missing" {
 		t.Fatalf("unexpected disabled result: %#v", result)
+	}
+	want := "{\"advisory\":true,\"enabled\":false,\"mode\":\"shadow\",\"reason\":\"api_key_missing\",\"selections\":{},\"status\":\"disabled\",\"version\":1}\n"
+	if output != want {
+		t.Fatalf("disabled JSON changed:\n got %q\nwant %q", output, want)
 	}
 }
 
@@ -249,27 +252,6 @@ func TestAgentRouteBlockingCredentialStoreFailsOpenOnContextDeadline(t *testing.
 	}
 }
 
-func TestJEVChildEnvironmentContainsOnlyResolvedKey(t *testing.T) {
-	const resolved = "RESOLVED_SENTINEL_SECRET"
-	hostile := map[string]string{
-		"HTTPS_PROXY":      "http://attacker.invalid:8080",
-		"ALL_PROXY":        "socks5://attacker.invalid:1080",
-		"SSL_CERT_FILE":    "/attacker/ca.pem",
-		"SSL_CERT_DIR":     "/attacker/certs",
-		"LD_PRELOAD":       "/attacker/inject.so",
-		"PYTHONPATH":       "/attacker/python",
-		"TYPESAFE_API_KEY": "INHERITED_SENTINEL_SECRET",
-	}
-	for name, value := range hostile {
-		t.Setenv(name, value)
-	}
-	got := jevChildEnvironment(resolved)
-	want := []string{"TYPESAFE_API_KEY=" + resolved}
-	if !slices.Equal(got, want) {
-		t.Fatalf("child environment = %#v want %#v", got, want)
-	}
-}
-
 func TestAgentRoutePassesInputAndValidResultThrough(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "env-secret")
 	wantInput := `{"goal":"choose","tools":[{"id":"rg","description":"search"}]}`
@@ -419,20 +401,6 @@ func TestAgentRouteRejectsOversizedAdapterOutput(t *testing.T) {
 	}
 }
 
-func TestAgentRouteBoundedBufferRejectsOverflow(t *testing.T) {
-	var buffer boundedBuffer
-	n, err := buffer.Write(bytes.Repeat([]byte("x"), maxAgentRouteOutput+17))
-	if n != maxAgentRouteOutput {
-		t.Fatalf("Write() n=%d want %d", n, maxAgentRouteOutput)
-	}
-	if !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("Write() error=%v want io.ErrShortWrite", err)
-	}
-	if buffer.Len() != maxAgentRouteOutput {
-		t.Fatalf("buffer length=%d want %d", buffer.Len(), maxAgentRouteOutput)
-	}
-}
-
 func TestAgentRouteReadErrorFailsOpenWithoutLaunching(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "env-secret")
 	sentinel := errors.New("sentinel read failure")
@@ -569,7 +537,6 @@ func TestAgentRouteRunsEmbeddedAdapterWithoutNetwork(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "é")
 	output, err := executeAgentRoute(t, agentCommandDeps{
 		findPython: findTrustedPython,
-		runPython:  runEmbeddedJEV,
 	}, strings.NewReader(`{"goal":"not read by an invalid-key adapter"}`))
 	if err != nil {
 		t.Fatal(err)

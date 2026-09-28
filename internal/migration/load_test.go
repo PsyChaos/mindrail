@@ -106,6 +106,7 @@ var tablesPerMilestone = map[int64][]string{
 	8:  {"evidence"},                                                                            // MR-010
 	9:  {"guard_baselines"},                                                                     // 2026-09-26 remediation: durable verification-test mappings
 	10: {"file_index_generations"},                                                              // Automatic restoration: generations survive file removal.
+	11: {"jev_route_events", "agent_runtimes"},                                                  // Safe JEV-use proof and short-lived MCP connection presence.
 }
 
 // TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.

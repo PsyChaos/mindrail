@@ -10,12 +10,12 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestStdioDiscoversThirteenTools is TASK-02 AC-02.4: one client session
-// discovers all thirteen tools over the JSON-framed byte-stream transports
+// TestStdioDiscoversFourteenTools is TASK-02 AC-02.4: one client session
+// discovers all fourteen tools over the JSON-framed byte-stream transports
 // (net.Pipe pairs through the SDK's own framing — the wire encoding stdio
 // serving uses, without a subprocess per decision D-209) and smoke-calls
 // every one with valid arguments.
-func TestStdioDiscoversThirteenTools(t *testing.T) {
+func TestStdioDiscoversFourteenTools(t *testing.T) {
 	root := newProfileRepo(t)
 	server := newTestServer(t, root)
 	coord, db := coordinationStore(t, root)
@@ -49,13 +49,19 @@ func TestStdioDiscoversThirteenTools(t *testing.T) {
 	sort.Strings(names)
 	want := []string{"mindrail_after_change", "mindrail_before_change", "mindrail_bootstrap",
 		"mindrail_checkpoint", "mindrail_claim", "mindrail_complete", "mindrail_context",
-		"mindrail_decide", "mindrail_invariant", "mindrail_reconcile", "mindrail_search",
-		"mindrail_status", "mindrail_validate"}
+		"mindrail_decide", "mindrail_invariant", "mindrail_reconcile", "mindrail_route",
+		"mindrail_search", "mindrail_status", "mindrail_validate"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("tools = %+v", names)
 	}
+	bootstrapResult, err := clientSession.CallTool(t.Context(), &sdk.CallToolParams{Name: "mindrail_bootstrap", Arguments: map[string]any{
+		"goal": "stdio route smoke", "run_key": "stdio-route-smoke",
+	}})
+	if err != nil || bootstrapResult.IsError {
+		t.Fatalf("automatic bootstrap: %+v %v", bootstrapResult, err)
+	}
 	smokes := map[string]map[string]any{
-		"mindrail_bootstrap":     {},
+		"mindrail_bootstrap":     {"goal": "stdio route smoke", "run_key": "stdio-route-smoke"},
 		"mindrail_status":        {},
 		"mindrail_search":        {"query": "auth"},
 		"mindrail_context":       {},
@@ -68,6 +74,7 @@ func TestStdioDiscoversThirteenTools(t *testing.T) {
 		"mindrail_decide":        {"title": "smoke", "decision": "smoke"},
 		"mindrail_invariant":     {"mode": "active", "statement": "Smoke holds.", "severity": "LOW", "scope_level": "PROJECT"},
 		"mindrail_complete":      {"task_id": taskID},
+		"mindrail_route":         {"goal": "no candidates exercises bounded fallback"},
 	}
 	for tool, args := range smokes {
 		result, err := clientSession.CallTool(t.Context(), &sdk.CallToolParams{Name: tool, Arguments: args})

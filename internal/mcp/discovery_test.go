@@ -208,7 +208,7 @@ func TestLifecycleAcrossIdentities(t *testing.T) {
 	if handover["note"] != "done" {
 		t.Fatalf("handover = %+v", handover)
 	}
-	if names := listToolNames(t, server, "agent-1"); len(names) != 13 {
-		t.Fatalf("tools = %d, want 13", len(names))
+	if names := listToolNames(t, server, "agent-1"); len(names) != 14 {
+		t.Fatalf("tools = %d, want 14", len(names))
 	}
 }

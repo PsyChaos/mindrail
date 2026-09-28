@@ -219,8 +219,8 @@ func TestAnUpgradedDatabaseGainsTheIndexSchemaWithoutLosingCoordination(t *testi
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 10 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000010, want 10", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 11 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000004 through 000011, want 11", data.Runtime.SchemaVersion)
 	}
 
 	listed := run(t, repo, "task", "list", "--json")
@@ -264,8 +264,8 @@ func TestAnUpgradedDatabaseGainsSymbolIdentityWithoutLosingSymbols(t *testing.T)
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 10 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000010, want 10", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 11 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000005 through 000011, want 11", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -350,8 +350,8 @@ func TestAnUpgradedDatabaseGainsChangesWithoutLosingIdentities(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 10 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000010, want 10", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 11 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000006 through 000011, want 11", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -421,8 +421,8 @@ func TestAnUpgradedDatabaseGainsAttributionWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 10 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000007 through 000010, want 10", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 11 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000007 through 000011, want 11", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -460,8 +460,8 @@ func TestAnUpgradedDatabaseGainsEvidenceWithoutLosingChanges(t *testing.T) {
 		} `json:"runtime"`
 	}
 	decodeData(t, got.stdout, &data)
-	if data.Runtime.SchemaVersion != 10 {
-		t.Errorf("schema_version = %d after init re-applied migrations 000008 through 000010, want 10", data.Runtime.SchemaVersion)
+	if data.Runtime.SchemaVersion != 11 {
+		t.Errorf("schema_version = %d after init re-applied migrations 000008 through 000011, want 11", data.Runtime.SchemaVersion)
 	}
 
 	db, err := storage.Open(t.Context(), storage.Options{Path: runtimeDBPath(t, repo)})
@@ -543,10 +543,22 @@ func downgradeToSchemaThree(t *testing.T, repo string) {
 
 // dropGuardBaselines restores a fixture to the schema before 000009. Every
 // older-schema fixture calls it before removing its own later migrations, so
-// the migration ledger and the actual object set stay coherent.
+// the migration ledger and the actual object set stay coherent. New additive
+// migrations must be removed here first; leaving 000011's ledger row behind
+// would make the schema-version gate trust a database whose older tables the
+// fixture intentionally removes.
 func dropGuardBaselines(t *testing.T, repo string) {
 	t.Helper()
 	execOnRuntimeDB(t, repo,
+		`DROP INDEX IF EXISTS idx_agent_runtimes_session`,
+		`DROP INDEX IF EXISTS idx_agent_runtimes_task`,
+		`DROP INDEX IF EXISTS idx_agent_runtimes_project`,
+		`DROP TABLE IF EXISTS agent_runtimes`,
+		`DROP INDEX IF EXISTS idx_jev_route_events_session`,
+		`DROP INDEX IF EXISTS idx_jev_route_events_task`,
+		`DROP INDEX IF EXISTS idx_jev_route_events_project`,
+		`DROP TABLE IF EXISTS jev_route_events`,
+		`DELETE FROM schema_migrations WHERE version = 11`,
 		`DROP TABLE IF EXISTS file_index_generations`,
 		`DELETE FROM schema_migrations WHERE version = 10`,
 		`DROP TABLE IF EXISTS guard_baselines`,

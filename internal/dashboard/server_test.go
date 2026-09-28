@@ -67,6 +67,35 @@ func TestServerRequiresTokenHostAndSameOriginAndSetsSecurityHeaders(t *testing.T
 	})
 }
 
+func TestServerSnapshotNeverExposesLegacyRawClientMetadata(t *testing.T) {
+	db := dashboardDB(t)
+	markers := []string{"legacy-name-keyring-marker", "legacy-title-typesafe-marker", "legacy-version-secret-marker"}
+	t.Setenv("TYPESAFE_API_KEY", markers[0])
+	mustExec(t, db, `INSERT INTO agent_runtimes VALUES ('RUN-LEGACY','PRJ-1','WS-1','TSK-1','SES-1',?,?,?,
+		'2026-09-28T11:00:00Z','2026-09-28T11:00:00Z','2026-09-28T11:00:00Z',1,NULL,NULL)`, markers[0], markers[1], markers[2])
+	collector, err := NewCollector(CollectorOptions{DB: db, ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{collector: collector, token: "test-token", host: "127.0.0.1:49152"}
+	req := httptest.NewRequest(http.MethodGet, "http://"+server.host+"/t/test-token/api/snapshot", nil)
+	req.Host = server.host
+	response := httptest.NewRecorder()
+	server.handler().ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	payload := response.Body.String()
+	if hits := markerCount(payload, markers); hits != 0 {
+		t.Fatalf("REST snapshot contains %d/3 legacy markers: %s", hits, payload)
+	}
+	for _, retired := range []string{`"client_title"`, `"client_version"`} {
+		if strings.Contains(payload, retired) {
+			t.Fatalf("REST snapshot includes retired key %s", retired)
+		}
+	}
+}
+
 func TestServerCancelsOpenEventStreamOnShutdown(t *testing.T) {
 	collector, err := NewCollector(CollectorOptions{DB: dashboardDB(t), ProjectID: "PRJ-1", Workspace: workspace.Workspace{ID: "WS-1", ProjectID: "PRJ-1"}, WorktreeRoot: "/repo", Readiness: status.Report{}})
 	if err != nil {

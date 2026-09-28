@@ -7,9 +7,11 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/PsyChaos/mindrail/internal/agent"
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/bootstrap"
 	"github.com/PsyChaos/mindrail/internal/changes"
+	"github.com/PsyChaos/mindrail/internal/credential"
 	"github.com/PsyChaos/mindrail/internal/filesystem"
 	"github.com/PsyChaos/mindrail/internal/index"
 	"github.com/PsyChaos/mindrail/internal/index/parser"
@@ -35,27 +37,35 @@ const (
 	ToolCheckpoint   = "mindrail_checkpoint"
 )
 
-// Server binds the thirteen 0.1 tools to one read-write application over a
+// Server binds the fourteen tools to one read-write application over a
 // repository root. The application starts once at construction in ModeWrite
 // (existing database, no creation or migration) — the same startup the CLI
 // runs — and every handler reads from it, so behavior cannot fork
 // (decision D-186, mode D-195). Close shuts the application down.
 type Server struct {
-	impl        *sdk.Server
-	app         *bootstrap.App
-	changes     *changes.Service
-	store       *changes.Store
-	valid       *validation.Service
-	evidence    *validation.Store
-	indexes     *index.Store
-	guard       *testguard.Service
-	registry    *parser.Registry
-	root        string
-	started     time.Time
-	workflow    workflowPort
-	autoMu      sync.RWMutex
-	autoStartMu sync.Mutex
-	automatic   map[*sdk.ServerSession]*automaticContext
+	impl                             *sdk.Server
+	app                              *bootstrap.App
+	changes                          *changes.Service
+	store                            *changes.Store
+	valid                            *validation.Service
+	evidence                         *validation.Store
+	indexes                          *index.Store
+	guard                            *testguard.Service
+	registry                         *parser.Registry
+	root                             string
+	started                          time.Time
+	workflow                         workflowPort
+	autoMu                           sync.RWMutex
+	autoStartMu                      sync.Mutex
+	automatic                        map[*sdk.ServerSession]*automaticContext
+	router                           routeRunner
+	routes                           routeRecorder
+	presence                         presenceRecorder
+	clock                            app.Clock
+	projectIDValue, workspaceIDValue string
+	routeMu                          sync.Mutex
+	routeSessions                    map[string]*routeSessionState
+	presenceHeartbeatTestInterval    time.Duration
 }
 
 // ValidationTimeout bounds one profile run through the tool. Generous by
@@ -116,6 +126,18 @@ func New(ctx context.Context, root string) (*Server, error) {
 		registry.Close()
 		return nil, err
 	}
+	routeStore, err := agent.NewRouteStore(application.DB())
+	if err != nil {
+		guard.Close()
+		registry.Close()
+		return nil, err
+	}
+	presenceStore, err := agent.NewPresenceStore(application.DB(), app.SystemClock{})
+	if err != nil {
+		guard.Close()
+		registry.Close()
+		return nil, err
+	}
 	space := application.Subject().Workspace
 	flow, err := workflow.New(workflow.Options{
 		DB:           application.DB(),
@@ -159,11 +181,16 @@ func New(ctx context.Context, root string) (*Server, error) {
 		started:   time.Now(),
 		workflow:  workflowAdapter{flow},
 		automatic: make(map[*sdk.ServerSession]*automaticContext),
+		router:    agent.NewRouter(credential.NewOSStore()), routes: routeStore, presence: presenceStore,
+		clock: app.SystemClock{}, projectIDValue: space.ProjectID, workspaceIDValue: space.ID,
+		routeSessions: make(map[string]*routeSessionState),
 	}
+	server.impl.AddReceivingMiddleware(server.presenceActivityMiddleware)
 	server.registerReads()
 	server.registerLifecycle()
 	server.registerDiscovery()
 	server.registerProving()
+	server.registerRoute()
 	return server, nil
 }
 

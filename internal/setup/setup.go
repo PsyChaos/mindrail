@@ -24,7 +24,7 @@ const backupSuffix = ".mindrail-original"
 const instructions = `## MINDRAIL PROTOCOL
 
 Mindrail is the repository's local engineering gate. The MCP server command is
-` + "`mindrail mcp`" + `, started in this repository. Use the existing 13 MCP tools.
+` + "`mindrail mcp`" + `, started in this repository. Use the existing 14 MCP tools.
 
 At the start of a task, call mindrail_bootstrap with goal, an agent-generated
 stable run_key, and paths when known. Keep the same run_key when retrying or
@@ -52,18 +52,26 @@ People normally run mindrail init once, and mindrail status, mindrail doctor or
 mindrail verify when needed. CI runs mindrail verify --ci. Advanced commands and
 explicit-ID MCP payloads remain available for diagnostics and legacy clients.
 
-Before an ambiguous tool, agent, model, or reasoning-effort choice, optional JEV
-routing is available through ` + "`mindrail agent route`" + `. The bridge resolves
-its opt-in credential from Mindrail's OS keyring entry or the non-blank
-` + "`TYPESAFE_API_KEY`" + ` automation override; without either, continue the normal flow.
-Write one bounded JSON object to stdin: a required ` + "`goal`" + ` string, optional
-` + "`context`" + ` JSON, and one or more ` + "`tools`" + `, ` + "`agents`" + `, ` + "`models`" + `, or ` + "`efforts`" + `
-arrays. Every candidate must contain exactly ` + "`id`" + ` and ` + "`description`" + `. Example:
-` + "`{\"goal\":\"select a search tool\",\"tools\":[{\"id\":\"rg\",\"description\":\"search repository text\"}]}`" + `.
-Supply only the smallest non-sensitive summary and candidate descriptions needed
-for the judgment—never raw secrets, logs, or source code.
-Consume advice only when the top-level status is ` + "`ok`" + ` and every selection is
-accepted; on every disabled, fallback, error, or rejected result, continue normally.
+Before an ambiguous tool, agent, model, or reasoning-effort choice—or another
+closed choice explicitly supported by its schema—call the visible ` + "`mindrail_route`" + `
+MCP tool exactly once, without waiting for the user to mention Mindrail or JEV.
+Pass a required ` + "`goal`" + ` string, optional bounded ` + "`context`" + ` JSON, and one or more
+` + "`tools`" + `, ` + "`agents`" + `, ` + "`models`" + `, or ` + "`efforts`" + ` arrays. Every candidate must contain
+exactly ` + "`id`" + ` and ` + "`description`" + ` and must already satisfy host permissions,
+safety policy, and availability constraints.
+
+Supply only the smallest non-sensitive summary needed for the judgment—never raw
+prompts, secrets, logs, source code, diffs, paths, or environment values. Consume
+advice only when the top-level status is ` + "`ok`" + ` and every selection is accepted.
+Missing credentials, disabled/fallback/error/rejected results, telemetry failure, or
+an unavailable route tool mean normal reasoning must continue; JEV never blocks
+engineering work or grants permission. ` + "`mindrail agent route`" + ` accepts the same
+bounded object on stdin only as a compatibility fallback for clients that cannot
+discover ` + "`mindrail_route`" + `; do not prefer the hidden CLI bridge.
+
+The route resolves its opt-in credential from Mindrail's OS keyring entry or the
+non-blank ` + "`TYPESAFE_API_KEY`" + ` automation override; without either, continue the
+normal flow.
 Keep the key out of repository config, ` + "`.env`" + ` files, agent settings, and
 chat. The user connects it through ` + "`mindrail jev connect`" + `, which opens a
 loopback browser form and stores the credential in the operating-system keyring.

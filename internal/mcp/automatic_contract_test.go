@@ -17,9 +17,9 @@ import (
 )
 
 // TestBootstrapSchemaAddsAutomaticModeWithoutAddingATool pins the additive
-// 0.1 contract: automatic work is selected by optional bootstrap arguments,
-// never by a fourteenth tool.
-func TestBootstrapSchemaAddsAutomaticModeWithoutAddingATool(t *testing.T) {
+// contract: automatic work remains selected by optional bootstrap arguments;
+// the fourteenth tool is advisory routing, not a second task lifecycle.
+func TestBootstrapSchemaAndVisibleRouteToolRemainSeparate(t *testing.T) {
 	server := newTestServer(t, newTestRepo(t))
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 	serverSession, err := server.SDK().Connect(t.Context(), serverTransport, nil)
@@ -38,8 +38,8 @@ func TestBootstrapSchemaAddsAutomaticModeWithoutAddingATool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 13 {
-		t.Fatalf("tool count = %d, want 13", len(listed.Tools))
+	if len(listed.Tools) != 14 {
+		t.Fatalf("tool count = %d, want 14", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
 		if tool.Name != mcp.ToolBootstrap {

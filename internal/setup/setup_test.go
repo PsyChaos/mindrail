@@ -224,22 +224,26 @@ func TestExistingManagedInstructionsUpgradeJEVAndRemainStable(t *testing.T) {
 	}
 	text := string(agentsBody)
 	for _, required := range []string{
-		"mindrail agent route", "TYPESAFE_API_KEY", "top-level status is `ok`",
+		"14 MCP tools", "mindrail_route", "exactly once", "without waiting for the user to mention Mindrail or JEV",
+		"mindrail agent route", "compatibility fallback", "TYPESAFE_API_KEY", "top-level status is `ok`",
 		"mindrail jev connect", "operating-system keyring", "optional CI/container override",
-		"never raw secrets, logs, or source code",
+		"prompts, secrets, logs, source code, diffs, paths, or environment values",
 		"ambiguous tool, agent, model, or reasoning-effort choice",
 		"required `goal` string", "optional", "`context` JSON", "one or more",
 		"`tools`, `agents`, `models`, or `efforts`", "exactly `id` and `description`",
-		`{"goal":"select a search tool","tools":[{"id":"rg","description":"search repository text"}]}`,
+		"normal reasoning must continue", "JEV never blocks",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("upgraded guidance missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"environment that launches the agent", "Use it only when"} {
+	for _, forbidden := range []string{"environment that launches the agent", "Use it only when", "Use the existing 13 MCP tools"} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("upgraded guidance retained client-specific activation text %q", forbidden)
 		}
+	}
+	if visible, fallback := strings.Index(text, "mindrail_route"), strings.Index(text, "mindrail agent route"); visible < 0 || fallback < 0 || visible >= fallback {
+		t.Fatalf("managed guidance does not prefer the visible MCP route tool: %q", text)
 	}
 	if !strings.HasPrefix(text, userPrefix) || !strings.HasSuffix(text, userSuffix) || strings.Contains(text, "Old initialized guidance") {
 		t.Fatalf("user content changed during upgrade: %q", text)

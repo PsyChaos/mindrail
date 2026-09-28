@@ -96,6 +96,49 @@ func TestADatabaseAtTheOlderSchemaTakesOnlyTheNewMigration(t *testing.T) {
 	}
 }
 
+func TestSchemaTenUpgradesAddAgentTelemetryWithoutTouchingExistingRows(t *testing.T) {
+	full, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full) != 11 || full[10].Version != 11 {
+		t.Fatalf("embedded migrations = %d ending at %d, want 11 ending at 11", len(full), full[len(full)-1].Version)
+	}
+	db := newDB(t)
+	if _, err := migration.New(db.DB, full[:10], fixedClock()).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO projects (project_id, common_dir, registered_at) VALUES ('PRJ-OLD', '/old/.git', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO workspaces (workspace_id, project_id, root_path, git_dir, is_linked_worktree, registered_at, last_seen_at)
+		 VALUES ('WSP-OLD', 'PRJ-OLD', '/old', '/old/.git', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO sessions (session_id, workspace_id, label, started_at) VALUES ('SES-OLD', 'WSP-OLD', NULL, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO tasks (task_id, project_id, title, state, blocked_reason, opened_by, claimed_by, created_at, updated_at, revision)
+		 VALUES ('TSK-OLD', 'PRJ-OLD', 'existing', 'OPEN', NULL, 'SES-OLD', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`,
+	} {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Applied) != 1 || result.Applied[0].Version != 11 {
+		t.Fatalf("applied = %+v, want only migration 11", result.Applied)
+	}
+	var title string
+	if err := db.QueryRowContext(t.Context(), `SELECT title FROM tasks WHERE task_id = 'TSK-OLD'`).Scan(&title); err != nil || title != "existing" {
+		t.Fatalf("existing task title = %q, err = %v", title, err)
+	}
+	for _, table := range []string{"jev_route_events", "agent_runtimes"} {
+		var found string
+		if err := db.QueryRowContext(t.Context(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&found); err != nil {
+			t.Fatalf("new table %s: %v", table, err)
+		}
+	}
+}
+
 // TestATaskWrittenBeforeTheRevisionColumnStartsAtOne is MR-004's AC-02.3 on
 // the rows a user already has: a task written by the MR-003 binary, at schema
 // 2, comes through migration 3 with revision 1 — the value every row written
