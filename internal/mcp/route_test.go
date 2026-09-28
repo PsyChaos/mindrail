@@ -204,6 +204,29 @@ func TestRouteClearsSuccessfulAdviceWhenTelemetryFails(t *testing.T) {
 	}
 }
 
+func TestRouteProviderTimeoutIsRecordedExactlyOnce(t *testing.T) {
+	session := new(sdk.ServerSession)
+	clock := &routeTestClock{now: time.Now()}
+	runner := &fakeRouteRunner{result: agent.RouteResult{
+		Version: 1, Enabled: true, Advisory: true, Mode: "shadow",
+		Status: agent.RouteStatusFallback, Reason: "provider_timeout",
+		CredentialSource: agent.RouteCredentialKeyring,
+		Selections:       map[string]agent.Selection{}, CandidateCounts: map[string]int{"tool": 1},
+	}}
+	recorder := &fakeRouteRecorder{}
+	server := newRouteUnitServer(runner, recorder, clock, session)
+
+	_, out, err := server.route(t.Context(), &sdk.CallToolRequest{Session: session}, RouteIn{
+		Goal: "choose", Tools: []RouteCandidate{{ID: "rg", Description: "search"}},
+	})
+	if err != nil || out.Status != "fallback" || out.Reason != "provider_timeout" || !out.TelemetryRecorded {
+		t.Fatalf("timeout route = %#v, %v", out, err)
+	}
+	if len(recorder.inputs) != 1 || recorder.inputs[0].Reason != "provider_timeout" {
+		t.Fatalf("timeout records = %#v", recorder.inputs)
+	}
+}
+
 func TestRouteMissingKeyRemainsDisabledAndFailOpen(t *testing.T) {
 	session := new(sdk.ServerSession)
 	clock := &routeTestClock{now: time.Now()}
@@ -252,39 +275,36 @@ func TestRouteDuplicateAndMinimumIntervalSkipProvider(t *testing.T) {
 	}
 }
 
-func TestRouteCallsOnOneConnectionAreSerialized(t *testing.T) {
+func TestConcurrentRouteCallFailsOpenInsteadOfWaitingForProvider(t *testing.T) {
 	session := new(sdk.ServerSession)
 	clock := &routeTestClock{now: time.Now()}
-	var active, maximum atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
 	runner := &fakeRouteRunner{result: acceptedRouteResult()}
 	runner.run = func() {
-		current := active.Add(1)
-		for {
-			seen := maximum.Load()
-			if current <= seen || maximum.CompareAndSwap(seen, current) {
-				break
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-		clock.Add(11 * time.Second)
-		active.Add(-1)
+		close(entered)
+		<-release
 	}
 	server := newRouteUnitServer(runner, &fakeRouteRecorder{}, clock, session)
 	req := &sdk.CallToolRequest{Session: session}
-
-	var wg sync.WaitGroup
-	for index := range 2 {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			_, _, _ = server.route(t.Context(), req, RouteIn{
-				Goal: string(rune('a' + index)), Tools: []RouteCandidate{{ID: "rg", Description: "search"}, {ID: "git", Description: "history"}},
-			})
-		}(index)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _ = server.route(t.Context(), req, RouteIn{Goal: "first", Tools: []RouteCandidate{{ID: "rg"}}})
+	}()
+	<-entered
+	started := time.Now()
+	_, out, err := server.route(t.Context(), req, RouteIn{Goal: "second", Tools: []RouteCandidate{{ID: "git"}}})
+	if err != nil || out.Reason != "rate_limited" {
+		t.Fatalf("concurrent fallback = %#v, %v", out, err)
 	}
-	wg.Wait()
-	if maximum.Load() != 1 || runner.calls.Load() != 2 {
-		t.Fatalf("maximum concurrent=%d provider calls=%d", maximum.Load(), runner.calls.Load())
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("concurrent route waited for provider: %s", elapsed)
+	}
+	close(release)
+	<-done
+	if runner.calls.Load() != 1 {
+		t.Fatalf("provider calls=%d, want 1", runner.calls.Load())
 	}
 }
 
@@ -311,37 +331,31 @@ func TestRouteStateFollowsDurableSessionAcrossTransportBoundaries(t *testing.T) 
 	}
 }
 
-func TestRouteCallsAcrossTransportsForSameDurableSessionAreSerialized(t *testing.T) {
+func TestRouteCallsAcrossTransportsForSameDurableSessionDoNotQueue(t *testing.T) {
 	one, two := new(sdk.ServerSession), new(sdk.ServerSession)
 	clock := &routeTestClock{now: time.Now()}
-	var active, maximum atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
 	runner := &fakeRouteRunner{result: acceptedRouteResult(), run: func() {
-		current := active.Add(1)
-		for {
-			seen := maximum.Load()
-			if current <= seen || maximum.CompareAndSwap(seen, current) {
-				break
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-		clock.Add(11 * time.Second)
-		active.Add(-1)
+		close(entered)
+		<-release
 	}}
 	server := newRouteUnitServer(runner, &fakeRouteRecorder{}, clock, one)
 	server.automatic[two] = &automaticContext{run: workflow.Run{TaskID: "TSK-1", SessionID: "SES-1", RunKey: "run-1"}}
-	var wg sync.WaitGroup
-	for index, session := range []*sdk.ServerSession{one, two} {
-		wg.Add(1)
-		go func(index int, session *sdk.ServerSession) {
-			defer wg.Done()
-			_, _, _ = server.route(t.Context(), &sdk.CallToolRequest{Session: session}, RouteIn{
-				Goal: string(rune('a' + index)), Tools: []RouteCandidate{{ID: "rg", Description: "search"}},
-			})
-		}(index, session)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _ = server.route(t.Context(), &sdk.CallToolRequest{Session: one}, RouteIn{Goal: "first", Tools: []RouteCandidate{{ID: "rg"}}})
+	}()
+	<-entered
+	_, out, err := server.route(t.Context(), &sdk.CallToolRequest{Session: two}, RouteIn{Goal: "second", Tools: []RouteCandidate{{ID: "git"}}})
+	if err != nil || out.Reason != "rate_limited" {
+		t.Fatalf("cross-transport fallback = %#v, %v", out, err)
 	}
-	wg.Wait()
-	if maximum.Load() != 1 || runner.calls.Load() != 2 {
-		t.Fatalf("maximum concurrent=%d provider calls=%d", maximum.Load(), runner.calls.Load())
+	close(release)
+	<-done
+	if runner.calls.Load() != 1 {
+		t.Fatalf("provider calls=%d, want 1", runner.calls.Load())
 	}
 }
 

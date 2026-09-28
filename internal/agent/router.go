@@ -20,6 +20,7 @@ const (
 	maxRouteInput        = 64*1024 + 1
 	maxRouteOutput       = 1024 * 1024
 	credentialReadPeriod = time.Second
+	providerRoutePeriod  = 5 * time.Second
 	// MaxRouteInputBytes is the maximum stdin prefix passed to the adapter.
 	MaxRouteInputBytes = maxRouteInput
 	// MaxRouteOutputBytes is the maximum adapter stdout accepted by the router.
@@ -35,16 +36,20 @@ type CredentialStore interface {
 // values select the production embedded adapter implementation.
 type RouterDependencies struct {
 	FindPython func() (string, error)
-	RunPython  func(context.Context, string, []byte, string) ([]byte, error)
-	Store      CredentialStore
+	// RunPython must stop promptly when its context is cancelled. The
+	// production implementation uses exec.CommandContext to uphold this.
+	RunPython       func(context.Context, string, []byte, string) ([]byte, error)
+	Store           CredentialStore
+	ProviderTimeout time.Duration
 }
 
 // Router resolves the optional JEV credential, invokes the embedded adapter,
 // and validates that advice against the caller-supplied candidate set.
 type Router struct {
-	findPython func() (string, error)
-	runPython  func(context.Context, string, []byte, string) ([]byte, error)
-	store      CredentialStore
+	findPython      func() (string, error)
+	runPython       func(context.Context, string, []byte, string) ([]byte, error)
+	store           CredentialStore
+	providerTimeout time.Duration
 }
 
 // Selection is a validated version-1 advisory selection.
@@ -84,7 +89,13 @@ func NewRouterWithDependencies(deps RouterDependencies) *Router {
 	if deps.RunPython == nil {
 		deps.RunPython = runEmbeddedJEV
 	}
-	return &Router{findPython: deps.FindPython, runPython: deps.RunPython, store: deps.Store}
+	if deps.ProviderTimeout <= 0 {
+		deps.ProviderTimeout = providerRoutePeriod
+	}
+	return &Router{
+		findPython: deps.FindPython, runPython: deps.RunPython, store: deps.Store,
+		providerTimeout: deps.ProviderTimeout,
+	}
 }
 
 // Route returns advisory data or a safe disabled/fallback record. Operational
@@ -110,7 +121,15 @@ func (r *Router) Route(ctx context.Context, reader io.Reader) RouteResult {
 		return staticResult(true, "fallback", "adapter_failure", source, nil)
 	}
 	allowed, counts, ordinals := allowedCandidates(input)
-	raw, runErr := r.runPython(ctx, python, input, key)
+	runCtx, cancel := context.WithTimeout(ctx, r.providerTimeout)
+	defer cancel()
+	raw, runErr := r.runPython(runCtx, python, input, key)
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return staticResult(true, "fallback", "provider_timeout", source, counts)
+	}
+	if runCtx.Err() != nil {
+		return staticResult(true, "fallback", "provider_unavailable", source, counts)
+	}
 	parsed, status, valid := validateResult(raw, key, allowed, counts, ordinals)
 	if valid && acceptableExit(status, runErr) {
 		parsed.JSON = append([]byte(nil), raw...)
