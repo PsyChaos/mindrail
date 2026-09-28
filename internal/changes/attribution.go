@@ -265,6 +265,14 @@ func (s *Service) AttributeTask(ctx context.Context, taskID string) (TaskAttribu
 		}
 		if found {
 			attributed.File = file
+		} else if row.Kind == SymbolRemoved {
+			if projected, ok := projectedFileForKey(files, row.Key); ok {
+				// A removed symbol has no live index row. Its qualified key and
+				// this Change's fixed file projection still identify the scoped
+				// source file without consulting mutable worktree state.
+				file, found = projected, true
+				attributed.File = projected
+			}
 		}
 		var candidates []string
 		if found {

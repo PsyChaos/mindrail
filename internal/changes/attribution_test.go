@@ -308,6 +308,140 @@ func TestAttributeTaskNeverInventsPaths(t *testing.T) {
 	}
 }
 
+func attributeMissingLiveProjectedSymbol(t *testing.T, mode, key, kind string) changes.SymbolAttribution {
+	t.Helper()
+	fx := newServiceFixture(t)
+	file := "/r/pkg/a.py"
+	uid := "SYM-MISSING-LIVE"
+	attributionSetup(t, fx, "TSK-A", file, file, "", "")
+	changeTask := "TSK-A"
+	operation := ""
+	if mode == "staged" {
+		changeTask = ""
+		operation = "verify-staged-v2"
+	}
+	change, err := fx.store.EnsureOpenChange(t.Context(), changeTask, operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode == "staged" {
+		if err := fx.store.UpsertFileRows(t.Context(), change.ID, []changes.FileChange{
+			{Path: file, Kind: changes.FileModified, Via: changes.ViaReconcile},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fx.db.ExecContext(t.Context(), `INSERT INTO symbol_identities
+		(symbol_uid, project_id, unit_id, language, logical_key, previous_keys, created_at)
+		VALUES (?, 'PRJ-1', ?, 'python', ?, '[]', '2026-09-23T10:00:00Z')`,
+		uid, fx.units["py"].ID, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.store.UpsertSymbolRows(t.Context(), change.ID, []changes.SymbolChange{
+		{Key: key, UID: uid, Kind: kind, Via: changes.ViaReconcile},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var answer changes.TaskAttribution
+	if mode == "task" {
+		answer, err = fx.service.AttributeTask(t.Context(), "TSK-A")
+	} else {
+		answer, err = fx.service.AttributeChanges(t.Context(), []string{change.ID})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answer.Symbols) != 1 {
+		t.Fatalf("symbols = %d, want 1", len(answer.Symbols))
+	}
+	return answer.Symbols[0]
+}
+
+func TestProjectedAttributionRejectsMalformedOuterLogicalKey(t *testing.T) {
+	for _, mode := range []string{"task", "staged"} {
+		for _, tc := range []struct {
+			name string
+			key  string
+		}{
+			{name: "missing local", key: `["pkg/a.py"]`},
+			{name: "empty local", key: `["pkg/a.py",""]`},
+			{name: "extra element", key: `["pkg/a.py","function:check_boundary","extra"]`},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				symbol := attributeMissingLiveProjectedSymbol(t, mode, tc.key, changes.SymbolRemoved)
+				if symbol.File != "" || symbol.Outcome != changes.UnregisteredOutcome || symbol.AttributedTo != "" || symbol.Finding == nil {
+					t.Fatalf("symbol = %+v, want malformed key to stay unregistered", symbol)
+				}
+			})
+		}
+	}
+}
+
+func TestAttributeChangesDoesNotProjectMissingLiveNonRemovedSymbol(t *testing.T) {
+	for _, kind := range []string{changes.SymbolAdded, changes.SymbolModified} {
+		t.Run(kind, func(t *testing.T) {
+			symbol := attributeMissingLiveProjectedSymbol(t, "staged",
+				`["pkg/a.py","function:check_boundary"]`, kind)
+			if symbol.File != "" || symbol.Outcome != changes.UnregisteredOutcome || symbol.AttributedTo != "" || symbol.Finding == nil {
+				t.Fatalf("symbol = %+v, want unresolved %s to stay unregistered", symbol, kind)
+			}
+		})
+	}
+}
+
+// A symbol removed from a still-present scoped file has no live symbols row.
+// Task completion recovers that source path from the qualified key and fixed
+// Change projection, just as staged verification does.
+func TestAttributeTaskResolvesRemovedSymbolFromProjection(t *testing.T) {
+	fx := newServiceFixture(t)
+	file := "/r/pkg/a.py"
+	key := `["pkg/a.py","function:check_boundary"]`
+	attributionSetup(t, fx, "TSK-A", file, file, "", "")
+	change, err := fx.store.EnsureOpenChange(t.Context(), "TSK-A", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.db.ExecContext(t.Context(), `INSERT INTO symbol_identities
+		(symbol_uid, project_id, unit_id, language, logical_key, previous_keys, created_at)
+		VALUES (?, 'PRJ-1', ?, 'python', ?, '[]', '2026-09-23T10:00:00Z')`,
+		"SYM-TASK-REMOVED", fx.units["py"].ID, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.store.UpsertSymbolRows(t.Context(), change.ID, []changes.SymbolChange{
+		{Key: key, UID: "SYM-TASK-REMOVED", Kind: changes.SymbolRemoved, Via: changes.ViaReconcile},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := fx.service.AttributeTask(t.Context(), "TSK-A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answer.Symbols) != 1 {
+		t.Fatalf("symbols = %d, want 1", len(answer.Symbols))
+	}
+	symbol := answer.Symbols[0]
+	if symbol.File != file || symbol.Outcome != changes.AttributedOutcome || symbol.AttributedTo != change.ID {
+		t.Fatalf("symbol = %+v, want removed symbol attributed through %s", symbol, file)
+	}
+}
+
+// Only removals are expected to lack a live symbols row. ADDED and MODIFIED
+// rows with an unresolved identity must stay fail-closed even when their
+// qualified key happens to match this Change's file projection.
+func TestAttributeTaskDoesNotProjectMissingLiveNonRemovedSymbol(t *testing.T) {
+	for _, kind := range []string{changes.SymbolAdded, changes.SymbolModified} {
+		t.Run(kind, func(t *testing.T) {
+			symbol := attributeMissingLiveProjectedSymbol(t, "task",
+				`["pkg/a.py","function:check_boundary"]`, kind)
+			if symbol.File != "" || symbol.Outcome != changes.UnregisteredOutcome || symbol.AttributedTo != "" || symbol.Finding == nil {
+				t.Fatalf("symbol = %+v, want unresolved %s to stay unregistered", symbol, kind)
+			}
+		})
+	}
+}
+
 // A removed staged symbol has no live symbols row after indexing. Global
 // commit attribution recovers its exact file from the qualified logical key
 // and the fixed staged projection, so normal test deletion remains owned.

@@ -275,13 +275,15 @@ func (s *Service) AttributeChanges(ctx context.Context, changeIDs []string) (Tas
 			}
 			if found {
 				attributed.File = file
-			} else if projected, ok := projectedFileForKey(files, row.Key); ok {
-				// Removed symbols no longer have a live symbols row. The staged
-				// projection still carries both the exact changed files and the
-				// qualified key written by our indexer, so ownership can be
-				// recovered without consulting mutable worktree state.
-				file, found = projected, true
-				attributed.File = projected
+			} else if row.Kind == SymbolRemoved {
+				if projected, ok := projectedFileForKey(files, row.Key); ok {
+					// Removed symbols no longer have a live symbols row. The staged
+					// projection still carries both the exact changed files and the
+					// qualified key written by our indexer, so ownership can be
+					// recovered without consulting mutable worktree state.
+					file, found = projected, true
+					attributed.File = projected
+				}
 			}
 			var owners, candidates []string
 			if found {
@@ -322,8 +324,9 @@ func (s *Service) AttributeChanges(ctx context.Context, changeIDs []string) (Tas
 // logical key against one change's exact file projection. It returns no path
 // for legacy keys or ambiguous suffixes rather than guessing.
 func projectedFileForKey(files []FileChange, key string) (string, bool) {
-	var qualified [2]string
-	if err := json.Unmarshal([]byte(key), &qualified); err != nil || qualified[0] == "" {
+	var qualified []string
+	if err := json.Unmarshal([]byte(key), &qualified); err != nil ||
+		len(qualified) != 2 || qualified[0] == "" || qualified[1] == "" {
 		return "", false
 	}
 	rel := filepath.ToSlash(filepath.Clean(qualified[0]))
