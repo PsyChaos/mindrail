@@ -4,8 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
+	"time"
+
+	"github.com/PsyChaos/mindrail/internal/app"
+	"github.com/PsyChaos/mindrail/internal/coordination"
 )
 
 // Attribution outcomes. One candidate attributes; zero is unregistered; two
@@ -17,9 +22,9 @@ const (
 	UnregisteredOutcome = "unregistered"
 )
 
-// SymbolAttribution is one changed symbol's ownership answer. Attributed
-// names its change and carries no finding; ambiguous and unregistered carry
-// exactly one finding each, and every finding blocks (decision D-138).
+// SymbolAttribution is one changed symbol's ownership answer. AttributedTo
+// names the owner's Change when present, otherwise its uniquely owning Task;
+// ambiguous and unregistered carry exactly one blocking finding (decision D-138).
 type SymbolAttribution struct {
 	Key          string
 	UID          string
@@ -100,50 +105,86 @@ func (s *Store) ReadAllBaselines(ctx context.Context) (map[string][]string, erro
 	return scopes, nil
 }
 
-// ReadTaskStates returns the lifecycle state beside each durable task scope.
-// Commit attribution prefers a current owner when one exists, but a completed
-// task remains the owner of work committed after completion.
-func (s *Store) ReadTaskStates(ctx context.Context) (map[string]string, error) {
+// TaskOwnership carries the lifecycle facts used to resolve a durable task
+// scope. UpdatedAt orders completed owners without changing the schema.
+type TaskOwnership struct {
+	State     string
+	UpdatedAt time.Time
+}
+
+// ReadTaskOwnership returns the lifecycle facts beside each durable task
+// scope. Commit attribution prefers current owners; among completed owners the
+// uniquely most recently updated task remains the owner of work committed
+// after completion.
+func (s *Store) ReadTaskOwnership(ctx context.Context) (map[string]TaskOwnership, error) {
 	if err := s.requireSchema(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT task_id, state FROM tasks ORDER BY task_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id, state, updated_at FROM tasks ORDER BY task_id`)
 	if err != nil {
 		return nil, corruptState(err)
 	}
 	defer rows.Close()
-	states := map[string]string{}
+	ownership := map[string]TaskOwnership{}
 	for rows.Next() {
-		var taskID, state string
-		if err := rows.Scan(&taskID, &state); err != nil {
+		var taskID, state, stamp string
+		if err := rows.Scan(&taskID, &state, &stamp); err != nil {
 			return nil, corruptState(err)
 		}
-		states[taskID] = state
+		if !coordination.State(state).Valid() {
+			return nil, corruptState(fmt.Errorf("task %s has invalid state %q", taskID, state))
+		}
+		updatedAt, err := app.ParseTime(stamp)
+		if err != nil {
+			return nil, corruptState(err)
+		}
+		ownership[taskID] = TaskOwnership{State: state, UpdatedAt: updatedAt}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, corruptState(err)
 	}
-	return states, nil
+	return ownership, nil
 }
 
 // PreferredTaskOwners resolves exact file ownership. Non-terminal owners take
 // precedence over historical owners so a completed overlapping task does not
-// compete with current work. When no current owner exists, completed ownership
-// remains valid for the normal complete-then-commit workflow.
-func PreferredTaskOwners(scopes map[string][]string, states map[string]string, file string) []string {
+// compete with current work. When no current owner exists, the uniquely most
+// recently updated completed owner remains valid for the normal
+// complete-then-commit workflow. A latest timestamp tie returns every tied
+// owner so downstream attribution fails closed as ambiguous.
+func PreferredTaskOwners(scopes map[string][]string, ownership map[string]TaskOwnership, file string) []string {
 	var current, historical []string
+	var latest time.Time
+	missing := false
 	for taskID, scope := range scopes {
 		for _, candidate := range scope {
 			if candidate != file {
 				continue
 			}
-			if states[taskID] == "COMPLETED" {
-				historical = append(historical, taskID)
-			} else if states[taskID] != "ABANDONED" {
+			facts, ok := ownership[taskID]
+			if !ok {
+				// A baseline without a readable task owner is corrupt durable
+				// state. Do not let the missing row collapse several owners to
+				// one and accidentally authorize the file.
+				missing = true
+				break
+			}
+			if facts.State == "COMPLETED" {
+				switch {
+				case facts.UpdatedAt.After(latest):
+					latest = facts.UpdatedAt
+					historical = []string{taskID}
+				case facts.UpdatedAt.Equal(latest):
+					historical = append(historical, taskID)
+				}
+			} else if facts.State != "ABANDONED" {
 				current = append(current, taskID)
 			}
 			break
 		}
+	}
+	if missing {
+		return nil
 	}
 	if len(current) > 0 {
 		sort.Strings(current)

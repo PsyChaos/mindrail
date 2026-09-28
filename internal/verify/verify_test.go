@@ -430,6 +430,119 @@ func TestVerifyStagedUnsupportedFileAmbiguityDenies(t *testing.T) {
 	}
 }
 
+// Ownership cardinality is decided from durable scopes, not from the subset
+// of owners that already have Change rows. Otherwise source attribution could
+// allow a file that unsupported-file attribution correctly rejects.
+func TestVerifyStagedOwnerWithoutChangeStillAmbiguous(t *testing.T) {
+	for _, name := range []string{"source", "unsupported"} {
+		t.Run(name, func(t *testing.T) {
+			fx := newStagedFixture(t)
+			rel, before, after := "pkg/a.py", "def a():\n    return 1\n", "def a():\n    return 2\n"
+			if name == "unsupported" {
+				rel, before, after = "README.md", "before\n", "after\n"
+			}
+			path := filepath.Join(fx.root, filepath.FromSlash(rel))
+			if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+			gitStage(t, fx.root, "commit", "--quiet", "-m", "base")
+			for _, task := range []string{"TSK-A", "TSK-B"} {
+				if _, err := fx.store.CaptureBaseline(t.Context(), task, []string{path}, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := fx.store.EnsureOpenChange(t.Context(), "TSK-A", ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+
+			verdict, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if verdict.Allow || !containsCode(denialCodes(t, verdict), string(app.CodeReconcileAmbiguous)) {
+				t.Fatalf("missing-change owner verdict = %+v, want ambiguous denial", verdict)
+			}
+		})
+	}
+}
+
+func TestVerifyStagedSoleOwnerWithoutChangeIsAllowed(t *testing.T) {
+	for _, name := range []string{"source", "unsupported"} {
+		t.Run(name, func(t *testing.T) {
+			fx := newStagedFixture(t)
+			rel, before, after := "pkg/a.py", "def a():\n    return 1\n", "def a():\n    return 2\n"
+			if name == "unsupported" {
+				rel, before, after = "README.md", "before\n", "after\n"
+			}
+			path := filepath.Join(fx.root, filepath.FromSlash(rel))
+			if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+			gitStage(t, fx.root, "commit", "--quiet", "-m", "base")
+			if _, err := fx.store.CaptureBaseline(t.Context(), "TSK-A", []string{path}, ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+
+			verdict, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !verdict.Allow || len(verdict.Denials) != 0 {
+				t.Fatalf("owner without change verdict = %+v, want allow", verdict)
+			}
+		})
+	}
+}
+
+// Persisted task states are untrusted input because older databases do not
+// constrain the column. Both source and unsupported paths must fail closed.
+func TestVerifyStagedInvalidOwnerStateFailsClosed(t *testing.T) {
+	for _, name := range []string{"source", "unsupported"} {
+		t.Run(name, func(t *testing.T) {
+			fx := newStagedFixture(t)
+			rel, before, after := "pkg/a.py", "def a():\n    return 1\n", "def a():\n    return 2\n"
+			if name == "unsupported" {
+				rel, before, after = "README.md", "before\n", "after\n"
+			}
+			path := filepath.Join(fx.root, filepath.FromSlash(rel))
+			if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+			gitStage(t, fx.root, "commit", "--quiet", "-m", "base")
+			if _, err := fx.store.CaptureBaseline(t.Context(), "TSK-A", []string{path}, ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fx.store.EnsureOpenChange(t.Context(), "TSK-A", ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fx.db.ExecContext(t.Context(), `UPDATE tasks SET state='CORRUPT' WHERE task_id='TSK-A'`); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+
+			if _, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner); err == nil {
+				t.Fatal("invalid persisted task state was accepted")
+			} else if payload, ok := app.PayloadOf(err); !ok || payload.Code != app.CodeIndexStateCorrupt {
+				t.Fatalf("error = %v, want %s", err, app.CodeIndexStateCorrupt)
+			}
+		})
+	}
+}
+
 // TestVerifyStagedGuardBlocks is TASK-01 AC-01.2: a staged weakened test
 // with a bound CRITICAL mapping denies blocking through the shared guard.
 // Two passes: the first populates index and change rows, the second judges
@@ -714,7 +827,11 @@ func TestVerifyStagedCompletedHistoricalScopeDoesNotCompete(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := fx.db.ExecContext(t.Context(), `UPDATE tasks SET state='COMPLETED' WHERE task_id='TSK-B'`); err != nil {
+	if _, err := fx.db.ExecContext(t.Context(), `UPDATE tasks SET updated_at=CASE task_id
+		WHEN 'TSK-A' THEN '2026-09-23T10:01:00Z'
+		WHEN 'TSK-B' THEN '2026-09-23T10:03:00Z'
+		END, state=CASE task_id WHEN 'TSK-B' THEN 'COMPLETED' ELSE state END
+		WHERE task_id IN ('TSK-A', 'TSK-B')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("def a():\n    return 2\n"), 0o644); err != nil {
@@ -728,6 +845,96 @@ func TestVerifyStagedCompletedHistoricalScopeDoesNotCompete(t *testing.T) {
 	}
 	if !verdict.Allow || len(verdict.Denials) != 0 {
 		t.Fatalf("terminal baseline competed: %+v", verdict)
+	}
+}
+
+// Sequential delegated tasks may all retain the same durable file scope after
+// completion. The task completed most recently owns the staged file; older
+// historical scopes must not make the release gate ambiguous.
+func TestVerifyStagedLatestCompletedOwnerMayCommit(t *testing.T) {
+	for _, name := range []string{"source", "unsupported"} {
+		t.Run(name, func(t *testing.T) {
+			fx := newStagedFixture(t)
+			rel, before, after := "pkg/a.py", "def a():\n    return 1\n", "def a():\n    return 2\n"
+			if name == "unsupported" {
+				rel, before, after = "pkg/note.md", "before\n", "after\n"
+			}
+			path := filepath.Join(fx.root, filepath.FromSlash(rel))
+			if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+			gitStage(t, fx.root, "commit", "--quiet", "-m", "base")
+			for _, task := range []string{"TSK-A", "TSK-B"} {
+				if _, err := fx.store.CaptureBaseline(t.Context(), task, []string{path}, ""); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := fx.store.EnsureOpenChange(t.Context(), task, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := fx.db.ExecContext(t.Context(), `UPDATE tasks SET state='COMPLETED', updated_at=CASE task_id
+				WHEN 'TSK-A' THEN '2026-09-23T10:01:00Z'
+				WHEN 'TSK-B' THEN '2026-09-23T10:02:00Z'
+				END WHERE task_id IN ('TSK-A', 'TSK-B')`); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+
+			verdict, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !verdict.Allow || len(verdict.Denials) != 0 {
+				t.Fatalf("latest completed owner verdict = %+v, want ALLOW", verdict)
+			}
+		})
+	}
+}
+
+func TestVerifyStagedLatestCompletedOwnerTieDenies(t *testing.T) {
+	for _, name := range []string{"source", "unsupported"} {
+		t.Run(name, func(t *testing.T) {
+			fx := newStagedFixture(t)
+			rel, before, after := "pkg/a.py", "def a():\n    return 1\n", "def a():\n    return 2\n"
+			if name == "unsupported" {
+				rel, before, after = "pkg/note.md", "before\n", "after\n"
+			}
+			path := filepath.Join(fx.root, filepath.FromSlash(rel))
+			if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+			gitStage(t, fx.root, "commit", "--quiet", "-m", "base")
+			for _, task := range []string{"TSK-A", "TSK-B"} {
+				if _, err := fx.store.CaptureBaseline(t.Context(), task, []string{path}, ""); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := fx.store.EnsureOpenChange(t.Context(), task, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := fx.db.ExecContext(t.Context(), `UPDATE tasks
+				SET state='COMPLETED', updated_at='2026-09-23T10:02:00Z'
+				WHERE task_id IN ('TSK-A', 'TSK-B')`); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitStage(t, fx.root, "add", rel)
+
+			verdict, err := fx.service.VerifyStaged(t.Context(), "PRJ-1", fx.root, fx.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if verdict.Allow || !containsCode(denialCodes(t, verdict), string(app.CodeReconcileAmbiguous)) {
+				t.Fatalf("tied completed owners verdict = %+v, want ambiguous denial", verdict)
+			}
+		})
 	}
 }
 

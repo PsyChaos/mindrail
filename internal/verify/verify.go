@@ -215,7 +215,7 @@ func (s *Service) stagedDrift(ctx context.Context, changeID string, requireOwner
 	if err != nil {
 		return nil, err
 	}
-	states, err := s.changes.Store().ReadTaskStates(ctx)
+	ownership, err := s.changes.Store().ReadTaskOwnership(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -248,12 +248,13 @@ func (s *Service) stagedDrift(ctx context.Context, changeID string, requireOwner
 		if represented[file.Path] {
 			continue
 		}
-		owners := changes.PreferredTaskOwners(scopes, states, file.Path)
+		owners := changes.PreferredTaskOwners(scopes, ownership, file.Path)
 		switch len(owners) {
 		case 0:
 			out = append(out, changes.UnregisteredFile(changeID, file.Path, file.Kind))
 		case 1:
-			// Exactly one declared owner: no cross-task comparison is needed.
+			// Exactly one durable scope owner is sufficient. Source
+			// attribution uses the task ID when that owner has no Change row.
 		default:
 			out = append(out, changes.AmbiguousFile(changeID, file.Path, owners))
 		}

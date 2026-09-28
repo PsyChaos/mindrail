@@ -3,10 +3,72 @@ package changes_test
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/app"
 	"github.com/PsyChaos/mindrail/internal/changes"
 )
+
+func TestPreferredTaskOwnersLifecyclePrecedence(t *testing.T) {
+	older := time.Date(2026, 9, 23, 10, 1, 0, 0, time.UTC)
+	newer := older.Add(time.Minute)
+	scopes := map[string][]string{
+		"TSK-A": {"/r/a.py"},
+		"TSK-B": {"/r/a.py"},
+	}
+	for _, tc := range []struct {
+		name      string
+		ownership map[string]changes.TaskOwnership
+		want      []string
+	}{
+		{
+			name: "unique latest completed",
+			ownership: map[string]changes.TaskOwnership{
+				"TSK-A": {State: "COMPLETED", UpdatedAt: older},
+				"TSK-B": {State: "COMPLETED", UpdatedAt: newer},
+			},
+			want: []string{"TSK-B"},
+		},
+		{
+			name: "latest completed tie",
+			ownership: map[string]changes.TaskOwnership{
+				"TSK-A": {State: "COMPLETED", UpdatedAt: newer},
+				"TSK-B": {State: "COMPLETED", UpdatedAt: newer},
+			},
+			want: []string{"TSK-A", "TSK-B"},
+		},
+		{
+			name: "current beats newer history",
+			ownership: map[string]changes.TaskOwnership{
+				"TSK-A": {State: "IN_PROGRESS", UpdatedAt: older},
+				"TSK-B": {State: "COMPLETED", UpdatedAt: newer},
+			},
+			want: []string{"TSK-A"},
+		},
+		{
+			name: "missing owner does not collapse overlap",
+			ownership: map[string]changes.TaskOwnership{
+				"TSK-A": {State: "IN_PROGRESS", UpdatedAt: older},
+			},
+			want: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := changes.PreferredTaskOwners(scopes, tc.ownership, "/r/a.py")
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("owners = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	if got := changes.PreferredTaskOwners(
+		map[string][]string{"TSK-A": {"/r/a.py"}},
+		map[string]changes.TaskOwnership{},
+		"/r/a.py",
+	); got != nil {
+		t.Fatalf("sole missing owner = %v, want no authorization", got)
+	}
+}
 
 // attributionSetup seeds tasks with baselines, open changes, file rows and
 // symbol rows, plus the index rows uid→path resolution reads. Baselines go

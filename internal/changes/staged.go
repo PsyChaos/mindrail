@@ -246,13 +246,17 @@ func (s *Service) AttributeChanges(ctx context.Context, changeIDs []string) (Tas
 	if err != nil {
 		return TaskAttribution{}, err
 	}
-	states, err := s.store.ReadTaskStates(ctx)
+	ownership, err := s.store.ReadTaskOwnership(ctx)
 	if err != nil {
 		return TaskAttribution{}, err
 	}
 	all, err := s.store.ListTaskChanges(ctx)
 	if err != nil {
 		return TaskAttribution{}, err
+	}
+	changesByTask := make(map[string]string, len(all))
+	for _, change := range all {
+		changesByTask[change.TaskID] = change.ID
 	}
 	for _, change := range changeIDs {
 		files, err := s.store.ReadChangeFiles(ctx, change)
@@ -279,21 +283,22 @@ func (s *Service) AttributeChanges(ctx context.Context, changeIDs []string) (Tas
 				file, found = projected, true
 				attributed.File = projected
 			}
-			var candidates []string
+			var owners, candidates []string
 			if found {
-				owners := PreferredTaskOwners(scopes, states, file)
-				owned := make(map[string]bool, len(owners))
+				owners = PreferredTaskOwners(scopes, ownership, file)
 				for _, taskID := range owners {
-					owned[taskID] = true
-				}
-				for _, other := range all {
-					if owned[other.TaskID] {
-						candidates = append(candidates, other.ID)
+					if changeID, ok := changesByTask[taskID]; ok {
+						candidates = append(candidates, changeID)
+					} else {
+						// Keep the scope owner visible even when its Change row is
+						// absent. Otherwise two owners could collapse to one and
+						// incorrectly authorize a source-file commit.
+						candidates = append(candidates, taskID)
 					}
 				}
 				sort.Strings(candidates)
 			}
-			switch len(candidates) {
+			switch len(owners) {
 			case 1:
 				attributed.Outcome = AttributedOutcome
 				attributed.AttributedTo = candidates[0]
