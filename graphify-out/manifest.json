@@ -3888,27 +3888,27 @@
     "semantic_hash": ""
   },
   "internal/agent/router.go": {
-    "mtime": 1790608171.6491022,
-    "seen": 1790610984.3891933,
-    "ast_hash": "da8eb9b134121b94bc1cce1a1da91885",
+    "mtime": 1790612094.8838995,
+    "seen": 1790612144.6250536,
+    "ast_hash": "10046b702aa5b87d753e4863128faba4",
     "semantic_hash": ""
   },
   "internal/agent/router_test.go": {
-    "mtime": 1790608171.6491022,
-    "seen": 1790610984.3891943,
-    "ast_hash": "9432e1cc97a9c2f9dca7b6ec47f8549c",
+    "mtime": 1790612083.6281295,
+    "seen": 1790612144.625056,
+    "ast_hash": "6ffde6b24be5842aff36185a0c787d61",
     "semantic_hash": ""
   },
   "internal/mcp/route.go": {
-    "mtime": 1790608171.667102,
-    "seen": 1790610984.3895106,
-    "ast_hash": "51ac27f48fc8cfa105e25ba7ba32f67a",
+    "mtime": 1790611913.8160028,
+    "seen": 1790612144.6317956,
+    "ast_hash": "d83ff6d528512740f4e621aedbd3a51e",
     "semantic_hash": ""
   },
   "internal/mcp/route_test.go": {
-    "mtime": 1790608171.667102,
-    "seen": 1790610984.3895113,
-    "ast_hash": "ffcc466be3a0d9159c68668857165baf",
+    "mtime": 1790612094.8858993,
+    "seen": 1790612144.6317973,
+    "ast_hash": "e8b76be3e2bc2bfe2a4e8c9f58d1c65b",
     "semantic_hash": ""
   },
   "docs/engineering/automatic-jev-and-agent-presence-2026-09-28.md": {
