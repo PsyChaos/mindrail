@@ -478,6 +478,9 @@ func (s *Store) transitionExpecting(ctx context.Context, taskID string, by Attri
 		write = resolved
 		write.OperationID = s.op.ID
 		sessionID := resolved.Session.ID
+		if err := authorizeContinuityTaskMutation(ctx, tx, taskID, sessionID); err != nil {
+			return err
+		}
 
 		current, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE task_id = ?`, taskID))
 		switch {

@@ -101,8 +101,8 @@ func TestSchemaTenUpgradesAddAgentTelemetryWithoutTouchingExistingRows(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(full) != 11 || full[10].Version != 11 {
-		t.Fatalf("embedded migrations = %d ending at %d, want 11 ending at 11", len(full), full[len(full)-1].Version)
+	if len(full) < 11 || full[10].Version != 11 {
+		t.Fatalf("embedded migrations = %d; migration 11 is not in its pinned position", len(full))
 	}
 	db := newDB(t)
 	if _, err := migration.New(db.DB, full[:10], fixedClock()).Up(t.Context()); err != nil {
@@ -120,7 +120,7 @@ func TestSchemaTenUpgradesAddAgentTelemetryWithoutTouchingExistingRows(t *testin
 			t.Fatal(err)
 		}
 	}
-	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	result, err := migration.New(db.DB, full[:11], fixedClock()).Up(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +136,76 @@ func TestSchemaTenUpgradesAddAgentTelemetryWithoutTouchingExistingRows(t *testin
 		if err := db.QueryRowContext(t.Context(), `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&found); err != nil {
 			t.Fatalf("new table %s: %v", table, err)
 		}
+	}
+}
+
+func TestSchemaTwelveUpgradesContinuityHardeningInPlace(t *testing.T) {
+	full, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full) != 13 || full[11].Version != 12 || full[12].Version != 13 {
+		t.Fatalf("embedded migrations=%d; want schema 12 followed by 13", len(full))
+	}
+	db := newDB(t)
+	if _, err := migration.New(db.DB, full[:12], fixedClock()).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := migration.New(db.DB, full, fixedClock()).Up(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Applied) != 1 || result.Applied[0].Version != 13 {
+		t.Fatalf("applied=%+v, want only migration 13", result.Applied)
+	}
+	for table, column := range map[string]string{
+		"agent_runtime_observations": "producer_sequence",
+		"continuity_intents":         "activated_at",
+	} {
+		rows, err := db.QueryContext(t.Context(), `SELECT name FROM pragma_table_info(?) WHERE name = ?`, table, column)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows.Next() {
+			rows.Close()
+			t.Fatalf("%s.%s missing after schema 13", table, column)
+		}
+		rows.Close()
+	}
+	for _, trigger := range []string{"continuity_phase_insert_guard", "continuity_phase_update_guard"} {
+		var found string
+		if err := db.QueryRowContext(t.Context(), `SELECT name FROM sqlite_master WHERE type='trigger' AND name=?`, trigger).Scan(&found); err != nil {
+			t.Fatalf("trigger %s missing: %v", trigger, err)
+		}
+	}
+}
+
+func TestSchemaThirteenRejectsMalformedAdvancedContinuityRows(t *testing.T) {
+	full, err := migration.Load(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := newDB(t)
+	if _, err := migration.New(db.DB, full[:12], fixedClock()).Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO projects VALUES ('PRJ-1','/repo/.git','2026-09-28T08:00:00Z')`,
+		`INSERT INTO workspaces VALUES ('WSP-1','PRJ-1','/repo','/repo/.git',0,'2026-09-28T08:00:00Z','2026-09-28T08:00:00Z')`,
+		`INSERT INTO sessions VALUES ('SES-1','WSP-1',NULL,'2026-09-28T08:00:00Z')`,
+		`INSERT INTO tasks VALUES ('TSK-1','PRJ-1','task','IN_PROGRESS',NULL,'SES-1','SES-1','2026-09-28T08:00:00Z','2026-09-28T08:00:00Z',1)`,
+		`INSERT INTO continuity_intents
+		 (intent_id,project_id,workspace_id,task_id,predecessor_session_id,predecessor_run_hash,kind,state,revision,
+		  last_observation_sequence,last_used_basis_points,consecutive_handoff_observations,created_at,updated_at,expires_at)
+		 VALUES ('CTI-1','PRJ-1','WSP-1','TSK-1','SES-1',zeroblob(32),'SAME_TASK','HANDED_OFF',1,2,6000,2,
+		 '2026-09-28T08:00:00Z','2026-09-28T08:00:00Z','2026-09-29T08:00:00Z')`,
+	} {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := migration.New(db.DB, full, fixedClock()).Up(t.Context()); err == nil {
+		t.Fatal("schema 13 accepted a malformed schema-12 HANDED_OFF row")
 	}
 }
 

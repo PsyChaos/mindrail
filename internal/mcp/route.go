@@ -100,7 +100,9 @@ func (s *Server) route(ctx context.Context, req *sdk.CallToolRequest, in RouteIn
 		return nil, throttledRoute("rate_limited", in), nil
 	}
 	defer release()
-	state.mu.Lock()
+	if !state.mu.TryLock() {
+		return nil, throttledRoute("rate_limited", in), nil
+	}
 	defer state.mu.Unlock()
 
 	now := s.clock.Now().UTC()

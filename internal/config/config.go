@@ -56,6 +56,7 @@ type Config struct {
 	Runtime    RuntimeConfig                `toml:"-"       json:"runtime"` // env/flag only, never from TOML
 	Validation map[string]ValidationProfile `toml:"validation" json:"validation"`
 	Secrets    SecretsConfig                `toml:"secrets"    json:"secrets"`
+	Continuity ContinuityConfig             `toml:"continuity" json:"continuity"`
 }
 
 // ProjectConfig carries repository-scoped identity.
@@ -85,6 +86,17 @@ type SecretsConfig struct {
 	Env []string `toml:"env" json:"env"`
 }
 
+// ContinuityConfig controls repository policy thresholds only. Permission to
+// create a successor conversation is deliberately host-local and has no field
+// here, so a cloned repository cannot authorize host side effects.
+type ContinuityConfig struct {
+	Enabled                 bool `toml:"enabled" json:"enabled"`
+	WarnUsedPercent         int  `toml:"warn_used_percent" json:"warn_used_percent"`
+	HandoffUsedPercent      int  `toml:"handoff_used_percent" json:"handoff_used_percent"`
+	HardUsedPercent         int  `toml:"hard_used_percent" json:"hard_used_percent"`
+	ConsecutiveObservations int  `toml:"consecutive_observations" json:"consecutive_observations"`
+}
+
 // Evidence types (spec §45). Profiles declare one; anything else is refused
 // at validation — no default classification is invented (decision D-164).
 var evidenceTypes = map[string]bool{
@@ -106,6 +118,8 @@ type RuntimeConfig struct {
 func Defaults() Config {
 	return Config{
 		Output: OutputConfig{Color: ColorAuto},
+		Continuity: ContinuityConfig{Enabled: true, WarnUsedPercent: 55, HandoffUsedPercent: 60,
+			HardUsedPercent: 75, ConsecutiveObservations: 2},
 	}
 }
 
@@ -130,6 +144,15 @@ func (c Config) Validate() error {
 	}
 	if err := validateSecretNames(c.Secrets.Env); err != nil {
 		return err
+	}
+	if c.Continuity.WarnUsedPercent < 1 || c.Continuity.WarnUsedPercent >= c.Continuity.HandoffUsedPercent ||
+		c.Continuity.HandoffUsedPercent >= c.Continuity.HardUsedPercent || c.Continuity.HardUsedPercent > 100 ||
+		c.Continuity.ConsecutiveObservations < 1 || c.Continuity.ConsecutiveObservations > 20 {
+		return app.NewError(app.CodeConfigInvalid, app.KindUsage,
+			"continuity thresholds are invalid",
+			"Context continuity requires 0 < warn < handoff < hard <= 100 and 1..20 consecutive observations.",
+			"Correct the [continuity] policy in .mindrail/config.toml",
+		).WithMetadata("key", "continuity")
 	}
 
 	return nil

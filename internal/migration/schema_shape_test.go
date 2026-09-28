@@ -68,6 +68,17 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 			"client_name", "client_title", "client_version", "started_at",
 			"last_heartbeat_at", "last_activity_at", "sequence", "ended_at", "end_reason",
 		},
+		"agent_runtime_observations": {
+			"runtime_id", "model_key", "effort", "context_used", "context_limit",
+			"source", "confidence", "observed_at", "revision",
+		},
+		"continuity_intents": {
+			"intent_id", "project_id", "workspace_id", "task_id", "predecessor_session_id",
+			"predecessor_run_hash", "kind", "target_task_id", "state", "revision",
+			"last_observation_sequence", "last_used_basis_points", "consecutive_handoff_observations",
+			"checkpoint_id", "host_operation_id", "takeover_token_hash", "successor_run_hash",
+			"successor_session_id", "failure_code", "created_at", "updated_at", "expires_at",
+		},
 	}
 
 	got := map[string][]string{}
@@ -90,13 +101,15 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		}
 	}
 
-	// The two ALTER TABLE ... ADD COLUMN forms the embedded set carries (000003
-	// on tasks, decision D-73; 000005 on symbols, decision D-103) are read as
+	// The three ALTER TABLE ... ADD COLUMN forms the embedded set carries (000003
+	// on tasks, 000005 on symbols, and 000013 on runtime observations) are read as
 	// additions and as nothing else: a parser that read either as a forgotten
 	// table would silently drop that table from the shape check, and one that
 	// invented a third column would fail every healthy repository.
-	if strings.Join(added["tasks"], ",") != "revision" || strings.Join(added["symbols"], ",") != "symbol_uid" || len(added) != 2 {
-		t.Errorf("Added = %v, want exactly {tasks: [revision], symbols: [symbol_uid]}", added)
+	if strings.Join(added["tasks"], ",") != "revision" || strings.Join(added["symbols"], ",") != "symbol_uid" ||
+		strings.Join(added["agent_runtime_observations"], ",") != "producer_sequence" ||
+		strings.Join(added["continuity_intents"], ",") != "activated_at" || len(added) != 4 {
+		t.Errorf("Added = %v, want tasks revision, symbols symbol_uid, runtime producer_sequence, and continuity activated_at", added)
 	}
 	for _, m := range embeddedSet(t) {
 		if len(m.Altered) != 0 {

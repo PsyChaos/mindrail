@@ -45,6 +45,7 @@ type RunOptions struct {
 	WorktreeRoot   string
 	LinkedWorktree bool
 	Profiles       map[string]config.ValidationProfile
+	Continuity     config.ContinuityConfig
 	Readiness      status.Report
 	JEV            JEVState
 	SecretNames    []string
@@ -66,7 +67,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 		DB: opts.DB, ProjectID: opts.ProjectID, ProjectName: opts.ProjectName,
 		Workspace:    workspace.Workspace{ID: opts.WorkspaceID, ProjectID: opts.ProjectID, IsLinkedWorktree: opts.LinkedWorktree},
 		WorktreeRoot: opts.WorktreeRoot, Profiles: opts.Profiles, Readiness: opts.Readiness, JEV: opts.JEV,
-		StartedAt: time.Now().UTC(), Redact: redactor.Redact,
+		Continuity: opts.Continuity,
+		StartedAt:  time.Now().UTC(), Redact: redactor.Redact,
 	})
 	if err != nil {
 		return err

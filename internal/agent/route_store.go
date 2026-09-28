@@ -11,7 +11,7 @@ import (
 	"github.com/PsyChaos/mindrail/internal/identity"
 )
 
-const AgentTelemetrySchemaVersion = 11
+const AgentTelemetrySchemaVersion = 12
 
 const (
 	RouteProviderTypeSafe = "typesafe"

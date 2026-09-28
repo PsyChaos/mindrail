@@ -23,6 +23,7 @@ type CollectorOptions struct {
 	ProjectName  string
 	WorktreeRoot string
 	Profiles     map[string]config.ValidationProfile
+	Continuity   config.ContinuityConfig
 	Readiness    status.Report
 	JEV          JEVState
 	StartedAt    time.Time
@@ -241,10 +242,20 @@ func (c *Collector) jevRouteEvents(ctx context.Context, db queryer) ([]JEVRouteE
 }
 
 func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time) ([]AgentRuntime, bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT substr(runtime_id,1,?), substr(workspace_id,1,?), substr(task_id,1,?), substr(session_id,1,?),
-		client_name, COALESCE(client_title,''), COALESCE(client_version,''),
-		started_at, last_heartbeat_at, last_activity_at, sequence, ended_at, COALESCE(end_reason,'')
-		FROM agent_runtimes WHERE project_id = ? ORDER BY (ended_at IS NULL) DESC, runtime_id DESC LIMIT ?`,
+	rows, err := db.QueryContext(ctx, `SELECT substr(r.runtime_id,1,?), substr(r.workspace_id,1,?), substr(r.task_id,1,?), substr(r.session_id,1,?),
+		r.client_name, COALESCE(r.client_title,''), COALESCE(r.client_version,''),
+		r.started_at, r.last_heartbeat_at, r.last_activity_at, r.sequence, r.ended_at, COALESCE(r.end_reason,''),
+		o.model_key, o.effort, o.context_used, o.context_limit, o.source, o.confidence, o.observed_at, o.revision,
+		i.intent_id, i.state, i.failure_code, i.checkpoint_id, i.host_operation_id,
+		i.successor_session_id, i.updated_at, i.last_used_basis_points
+		FROM agent_runtimes r
+		LEFT JOIN agent_runtime_observations o ON o.runtime_id = r.runtime_id
+		LEFT JOIN continuity_intents i ON i.intent_id = (
+			SELECT ci.intent_id FROM continuity_intents ci
+			WHERE ci.task_id = r.task_id AND ci.predecessor_session_id = r.session_id
+			ORDER BY ci.intent_id DESC LIMIT 1
+		)
+		WHERE r.project_id = ? ORDER BY (r.ended_at IS NULL) DESC, r.runtime_id DESC LIMIT ?`,
 		maxIDRunes+1, maxIDRunes+1, maxIDRunes+1, maxIDRunes+1,
 		c.opts.ProjectID, maxAgentRuntimes+1)
 	if err != nil {
@@ -257,8 +268,14 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		var started, heartbeat, activity string
 		var ended sql.NullString
 		var rawName, rawTitle, rawVersion string
+		var model, effort, source, confidence, observed sql.NullString
+		var contextUsed, contextLimit, observationRevision sql.NullInt64
+		var intentID, continuityState, failureCode, checkpointID, hostOperationID, successorSessionID, continuityUpdated sql.NullString
+		var continuityUsed sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.TaskID, &item.SessionID, &rawName, &rawTitle, &rawVersion,
-			&started, &heartbeat, &activity, &item.Sequence, &ended, &item.EndReason); err != nil {
+			&started, &heartbeat, &activity, &item.Sequence, &ended, &item.EndReason,
+			&model, &effort, &contextUsed, &contextLimit, &source, &confidence, &observed, &observationRevision,
+			&intentID, &continuityState, &failureCode, &checkpointID, &hostOperationID, &successorSessionID, &continuityUpdated, &continuityUsed); err != nil {
 			return nil, false, err
 		}
 		if item.StartedAt, err = app.ParseTime(started); err != nil {
@@ -281,9 +298,59 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		item.TaskID, item.SessionID = boundedText(item.TaskID, maxIDRunes), boundedText(item.SessionID, maxIDRunes)
 		item.ClientFamily = agent.CanonicalClientInfo(agent.ClientInfo{Name: rawName, Title: rawTitle, Version: rawVersion}).Name
 		item.Status = runtimeStatus(item, now)
+		item.Telemetry = runtimeTelemetry(model, effort, contextUsed, contextLimit, source, confidence, observed, observationRevision, item.LastActivityAt, now)
+		item.Continuity = RuntimeContinuity{IntentID: boundedText(intentID.String, maxIDRunes), State: continuityState.String,
+			FailureCode: boundedText(failureCode.String, 64), CheckpointID: boundedText(checkpointID.String, maxIDRunes),
+			HostOperationID: boundedText(hostOperationID.String, maxIDRunes), SuccessorSessionID: boundedText(successorSessionID.String, maxIDRunes),
+			ThresholdPercent: c.opts.Continuity.HandoffUsedPercent}
+		if c.opts.Continuity.HardUsedPercent > 0 && continuityUsed.Valid && continuityUsed.Int64 >= int64(c.opts.Continuity.HardUsedPercent*100) {
+			item.Continuity.HardProtection = true
+		}
+		if continuityUpdated.Valid {
+			if updatedAt, parseErr := app.ParseTime(continuityUpdated.String); parseErr == nil {
+				item.Continuity.UpdatedAt = &updatedAt
+				item.Continuity.PhaseElapsedSeconds = max(0, int64(now.Sub(updatedAt).Seconds()))
+				item.Continuity.Stalled = continuityPhaseMayStall(item.Continuity.State) && item.Continuity.PhaseElapsedSeconds >= 120
+			}
+		}
+		if item.Continuity.State == "" {
+			item.Continuity.State = "NONE"
+		}
 		out = append(out, item)
 	}
 	return trim(out, maxAgentRuntimes), len(out) > maxAgentRuntimes, rows.Err()
+}
+
+func continuityPhaseMayStall(state string) bool {
+	switch state {
+	case "SPAWN_REQUESTED", "SPAWN_READY", "HANDED_OFF", "CLAIMED":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeTelemetry(model, effort sql.NullString, used, limit sql.NullInt64, source, confidence, observed sql.NullString,
+	revision sql.NullInt64, lastActivity, now time.Time) RuntimeTelemetry {
+	out := RuntimeTelemetry{State: "NOT_REPORTED"}
+	if !observed.Valid {
+		return out
+	}
+	value, err := app.ParseTime(observed.String)
+	if err != nil {
+		return out
+	}
+	out.State, out.Model, out.Effort = "REPORTED", model.String, effort.String
+	out.Source, out.Confidence, out.ObservedAt, out.Revision = source.String, confidence.String, &value, revision.Int64
+	if used.Valid && limit.Valid && limit.Int64 > 0 {
+		u, l := used.Int64, limit.Int64
+		percent := float64(u) * 100 / float64(l)
+		out.ContextUsed, out.ContextLimit, out.UsedPercent = &u, &l, &percent
+	}
+	if now.Sub(value) > 30*time.Second || lastActivity.After(value) {
+		out.State = "STALE"
+	}
+	return out
 }
 
 func runtimeStatus(runtime AgentRuntime, now time.Time) string {

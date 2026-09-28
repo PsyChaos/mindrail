@@ -4,7 +4,10 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,6 +39,10 @@ type Options struct {
 	SecretEnv                    []string
 	LoadValidationConfig         func() (ValidationConfig, error)
 	Clock                        app.Clock
+	ResumeAuthorizer             interface {
+		AuthorizeResume(context.Context, string, string) error
+		BindResume(context.Context, string, string, string) error
+	}
 }
 
 // ValidationConfig is the policy input that may change while a long-lived
@@ -174,6 +181,42 @@ func (s *Service) normalizePaths(paths []string) ([]string, error) {
 	return out, nil
 }
 
+// CheckpointByRunHash recovers a workflow after process restart without
+// persisting another copy of its raw run key in continuity state.
+func (s *Service) CheckpointByRunHash(ctx context.Context, runHash []byte, note string, handoff bool) (coordination.Noted, error) {
+	if len(runHash) != sha256.Size {
+		return coordination.Noted{}, invalid("automatic run hash is invalid")
+	}
+	rows, err := s.options.DB.QueryContext(ctx, `SELECT result FROM operations WHERE command = 'workflow start'`)
+	if err != nil {
+		return coordination.Noted{}, err
+	}
+	defer rows.Close()
+	var key string
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return coordination.Noted{}, err
+		}
+		var candidate journal
+		if json.Unmarshal([]byte(body), &candidate) != nil || candidate.Input.RunKey == "" {
+			continue
+		}
+		digest := sha256.Sum256([]byte(candidate.Input.RunKey))
+		if subtle.ConstantTimeCompare(digest[:], runHash) == 1 {
+			key = candidate.Input.RunKey
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return coordination.Noted{}, err
+	}
+	if key == "" {
+		return coordination.Noted{}, invalid("automatic run hash is not recoverable")
+	}
+	return s.Checkpoint(ctx, key, note, handoff)
+}
+
 // Start records immutable start intent before creating any identity. Every
 // subsequent phase uses a deterministic operation key, so a retry continues a
 // partial start and never mints an extra session or task for the logical run.
@@ -190,6 +233,11 @@ func (s *Service) Start(ctx context.Context, in StartInput) (Run, error) {
 	}
 	in.Paths = paths
 	if in.ResumeTaskID != "" {
+		if s.options.ResumeAuthorizer != nil {
+			if err := s.options.ResumeAuthorizer.AuthorizeResume(ctx, in.ResumeTaskID, in.RunKey); err != nil {
+				return Run{}, invalid("resume_task_id is reserved for a continuity successor")
+			}
+		}
 		_, _, replay, err := s.lookupStart(ctx, in.RunKey)
 		if err != nil {
 			return Run{}, err
@@ -218,6 +266,11 @@ func (s *Service) Start(ctx context.Context, in StartInput) (Run, error) {
 		return r, err
 	}
 	r.SessionID = session.ID
+	if in.ResumeTaskID != "" && s.options.ResumeAuthorizer != nil {
+		if err := s.options.ResumeAuthorizer.BindResume(ctx, in.ResumeTaskID, in.RunKey, session.ID); err != nil {
+			return r, invalid("resume_task_id continuity reservation could not bind the successor session")
+		}
+	}
 	by := coordination.NamedSession(session.ID)
 	var task coordination.Task
 	if in.ResumeTaskID != "" {

@@ -86,6 +86,9 @@ func (s *Store) AcquireLease(ctx context.Context, projectID string, by Attributi
 		write.OperationID = s.op.ID
 
 		if target.Kind == TargetTask {
+			if err := authorizeContinuityTaskMutation(ctx, tx, target.Key, resolved.Session.ID); err != nil {
+				return err
+			}
 			acquired, err := s.claimWhereItStands(ctx, tx, projectID, resolved.Session.ID, target.Key, now)
 			if err != nil {
 				return err

@@ -97,3 +97,25 @@ func TestValidationProfilesRefuse(t *testing.T) {
 		})
 	}
 }
+
+func TestContinuityPolicyParsesAndValidatesOrdering(t *testing.T) {
+	got := loadRepoConfig(t, `[continuity]
+enabled = true
+warn_used_percent = 50
+handoff_used_percent = 62
+hard_used_percent = 80
+consecutive_observations = 3
+`)
+	if !got.Continuity.Enabled || got.Continuity.HandoffUsedPercent != 62 || got.Continuity.ConsecutiveObservations != 3 {
+		t.Fatalf("continuity = %#v", got.Continuity)
+	}
+	worktree := t.TempDir()
+	writeRepoConfig(t, worktree, `[continuity]
+warn_used_percent = 70
+handoff_used_percent = 60
+`)
+	_, err := config.NewLoader(config.LoaderOptions{WorktreeRoot: worktree, UserConfigDir: t.TempDir(), Environ: []string{}}).Load()
+	if err == nil || app.ExitCode(err) != app.ExitUsage {
+		t.Fatalf("invalid ordering error = %v", err)
+	}
+}

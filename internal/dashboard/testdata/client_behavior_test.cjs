@@ -100,8 +100,49 @@ assert.deepEqual(view.runtimeCard(connectedRuntime, now), {
   lastActivityAge: "30s ago",
   sequence: 9,
   endedAt: null,
-  endReason: ""
+  endReason: "",
+  telemetryState: "NOT_REPORTED",
+  model: "UNKNOWN",
+  effort: "UNKNOWN",
+  contextPressure: "UNKNOWN",
+  telemetrySource: "not reported",
+  telemetryConfidence: "unknown",
+  telemetryAge: "not reported",
+  continuityState: "NONE",
+	continuityHardProtection: false,
+  continuityFailure: "",
+  continuityIntent: "",
+  continuityThreshold: "UNKNOWN",
+  continuityElapsed: "—",
+  continuityStalled: false,
+  continuitySuccessor: "NONE",
+  continuityOperation: "NONE"
 });
+
+const stalledRuntime = view.runtimeCard({...connectedRuntime, continuity: {
+  state: "HANDED_OFF", intent_id: "CTI-1", threshold_percent: 60,
+  phase_elapsed_seconds: 125, stalled: true, successor_session_id: "SES-2",
+  host_operation_id: "HOST-1"
+}}, now);
+assert.equal(stalledRuntime.continuityState, "HANDED_OFF");
+assert.equal(stalledRuntime.continuityThreshold, "60%");
+assert.equal(stalledRuntime.continuityElapsed, "2m 5s");
+assert.equal(stalledRuntime.continuityStalled, true);
+assert.equal(stalledRuntime.continuitySuccessor, "SES-2");
+assert.equal(stalledRuntime.continuityOperation, "HOST-1");
+
+const measuredRuntime = view.runtimeCard({
+  ...connectedRuntime,
+  telemetry: { state: "REPORTED", model: "gpt-6-astra", effort: "high", context_used: 600000,
+    context_limit: 1000000, used_percent: 60, source: "host_adapter", confidence: "structured_host",
+    observed_at: "2026-09-28T11:59:55Z" },
+  continuity: { state: "SPAWN_READY", intent_id: "CTI-1" }
+}, now);
+assert.equal(measuredRuntime.contextPressure, "60.0% · 600,000 / 1,000,000 TOKENS");
+assert.equal(measuredRuntime.model, "gpt-6-astra");
+assert.equal(measuredRuntime.effort, "high");
+assert.equal(measuredRuntime.telemetryAge, "5s ago");
+assert.equal(measuredRuntime.continuityState, "SPAWN_READY");
 
 // The public freshness contract is inclusive at 15s/30s. One millisecond
 // beyond either boundary must change the browser presentation without waiting

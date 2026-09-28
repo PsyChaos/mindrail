@@ -15,6 +15,7 @@ func RunDashboard(ctx context.Context, start cli.DashboardStart) error {
 		DB: start.DB, ProjectID: start.ProjectID, ProjectName: start.ProjectName,
 		WorkspaceID: start.WorkspaceID, WorktreeRoot: start.WorktreeRoot,
 		LinkedWorktree: start.LinkedWorktree, Profiles: start.Profiles,
+		Continuity:  start.Continuity,
 		Readiness:   start.Readiness,
 		JEV:         dashboard.JEVState{Configured: start.JEV.Configured, Source: start.JEV.Source, Provider: "typesafe", Mode: dashboardJEVMode(start.JEV.Configured)},
 		SecretNames: start.SecretNames, Port: start.Port, Output: start.Output,

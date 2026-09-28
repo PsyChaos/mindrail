@@ -71,6 +71,25 @@ Raw title/version values never persist or display. This deliberately gives up
 arbitrary client naming so credential-shaped caller input cannot enter durable
 telemetry.
 
+Context continuity is opt-in and remains truthful about host capability. A client
+that supplies the bounded `io.mindrail/runtime-telemetry` MCP metadata can expose
+model, effort, token usage and limit; otherwise those values stay unknown and no
+percentage-based handoff is attempted. The repository policy defaults to warning
+at 55%, requesting handoff at 60% after two consecutive observations, and hard
+protection at 75%. Without a host adapter, Mindrail creates a durable checkpoint
+and reports `MANUAL_REQUIRED` rather than claiming that a new conversation exists.
+
+Automatic successor creation requires a host-local executable outside the
+repository. Set `MINDRAIL_CONTINUITY_HOST` to its absolute path and
+`MINDRAIL_CONTINUITY_AUTO_SPAWN=1` in the environment that starts `mindrail mcp`.
+The adapter receives versioned JSON on stdin and implements idempotent `prepare`
+and `activate` operations. This is deliberately not a repository setting: a
+checkout cannot grant itself permission to create conversations. The generic
+bridge works with any agent host that implements this contract; Mindrail does not
+claim native Codex or Claude auto-handoff where the host API cannot provide it.
+The successor resumes the same Mindrail task. Selecting or starting a different
+Mindrail task is not automatic in this release.
+
 CI uses the committed-range gate:
 
 ```bash

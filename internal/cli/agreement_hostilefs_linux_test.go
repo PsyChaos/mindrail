@@ -24,7 +24,7 @@ const hostileMountEnv = "MINDRAIL_TEST_CLI_HOSTILE_MOUNT"
 
 // hostileMountSize is small on purpose: the rows have to fill it, and filling a
 // large tmpfs is slow and hostile to whoever else is on the machine.
-const hostileMountSize = "size=8m"
+const hostileMountSize = "size=16m"
 
 // TestAgreementOnAHostileFilesystem is the rest of the broken-setup matrix: the
 // four conditions that cannot be arranged with a chmod.

@@ -163,6 +163,27 @@ devam eder. Raw title/version hiçbir zaman kalıcı yazılmaz veya gösterilmez
 Bu tercih, credential biçimli caller input'un durable telemetry'ye girmesini
 engellemek için arbitrary client adlarını bilinçli olarak korumaz.
 
+Context sürekliliği opt-in'dir ve host kabiliyetini olduğundan fazla göstermez.
+İstemci bounded `io.mindrail/runtime-telemetry` MCP metadata'sı ile model, effort,
+kullanılan token ve context limitini verirse dashboard bunları kaynak ve freshness
+bilgisiyle gösterir. Bu metadata yoksa değerler `unknown` kalır ve yüzdeye bağlı
+otomatik handoff tetiklenmez. Varsayılan repository politikası %55'te uyarır,
+art arda iki ölçüm %60'a ulaştığında handoff ister ve %75'te hard-protection'a
+geçer. Host adapter yoksa Mindrail durable checkpoint bırakır ve yeni konuşma
+oluşturulmuş gibi davranmak yerine `MANUAL_REQUIRED` gösterir.
+
+Otomatik successor oluşturma, repository dışında bulunan host-local bir executable
+gerektirir. `mindrail mcp` sürecini başlatan ortamda
+`MINDRAIL_CONTINUITY_HOST` değerini bu executable'ın absolute path'ine,
+`MINDRAIL_CONTINUITY_AUTO_SPAWN=1` değerini de açık onaya ayarlayın. Adapter stdin'den
+versioned JSON alır ve idempotent `prepare` ile `activate` işlemlerini uygular.
+Bu yetki özellikle `.mindrail/config.toml` içine konmaz; checkout kendi kendine
+konuşma oluşturma izni veremez. Contract agent-host bağımsızdır, fakat host API'si
+bu kabiliyeti sağlamıyorsa Mindrail Codex veya Claude için native otomatik handoff
+varmış gibi davranmaz.
+Successor aynı Mindrail task'ini resume eder; bu sürüm farklı bir Mindrail task'ini
+otomatik seçmez veya başlatmaz.
+
 Repository readiness ve JEV credential yapılandırması dashboard başlatılırken
 alınan snapshot'tır; gerçek route denemeleri ve kabul edilmiş JEV tavsiyesi ise
 ayrı, canlı metadata olarak gösterilir. Yapılandırılmış olmak kullanılmış olmak

@@ -195,6 +195,7 @@ type fileConfig struct {
 	Output     *fileOutput                `toml:"output"`
 	Validation map[string]*fileValidation `toml:"validation"`
 	Secrets    *fileSecrets               `toml:"secrets"`
+	Continuity *fileContinuity            `toml:"continuity"`
 }
 
 type fileProject struct {
@@ -216,6 +217,14 @@ type fileValidation struct {
 
 type fileSecrets struct {
 	Env *[]string `toml:"env"`
+}
+
+type fileContinuity struct {
+	Enabled                 *bool `toml:"enabled"`
+	WarnUsedPercent         *int  `toml:"warn_used_percent"`
+	HandoffUsedPercent      *int  `toml:"handoff_used_percent"`
+	HardUsedPercent         *int  `toml:"hard_used_percent"`
+	ConsecutiveObservations *int  `toml:"consecutive_observations"`
 }
 
 // applyFile folds one configuration file into cfg and reports whether the file
@@ -276,6 +285,32 @@ func applyFile(path string, cfg *Config, provenance Provenance, source Source) (
 	if file.Secrets != nil && file.Secrets.Env != nil {
 		cfg.Secrets.Env = *file.Secrets.Env
 		provenance["secrets.env"] = source
+	}
+	if layer := file.Continuity; layer != nil {
+		changed := false
+		if layer.Enabled != nil {
+			cfg.Continuity.Enabled = *layer.Enabled
+			changed = true
+		}
+		if layer.WarnUsedPercent != nil {
+			cfg.Continuity.WarnUsedPercent = *layer.WarnUsedPercent
+			changed = true
+		}
+		if layer.HandoffUsedPercent != nil {
+			cfg.Continuity.HandoffUsedPercent = *layer.HandoffUsedPercent
+			changed = true
+		}
+		if layer.HardUsedPercent != nil {
+			cfg.Continuity.HardUsedPercent = *layer.HardUsedPercent
+			changed = true
+		}
+		if layer.ConsecutiveObservations != nil {
+			cfg.Continuity.ConsecutiveObservations = *layer.ConsecutiveObservations
+			changed = true
+		}
+		if changed {
+			provenance["continuity"] = source
+		}
 	}
 
 	return true, nil

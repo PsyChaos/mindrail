@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PsyChaos/mindrail/internal/credential"
 )
@@ -113,6 +114,44 @@ func TestJEVRouterReadFailureIsSanitized(t *testing.T) {
 	result := router.Route(context.Background(), errorRouteReader{err: errors.New("sensitive read detail")})
 	if result.Status != "fallback" || result.Reason != "adapter_failure" || bytes.Contains(result.JSON, []byte("sensitive")) {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestJEVRouterProviderTimeoutFailsOpenWithinBound(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "router-secret")
+	router := NewRouterWithDependencies(RouterDependencies{
+		FindPython:      func() (string, error) { return "/trusted/python3", nil },
+		ProviderTimeout: 20 * time.Millisecond,
+		RunPython: func(ctx context.Context, _ string, _ []byte, _ string) ([]byte, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	})
+
+	started := time.Now()
+	result := router.Route(context.Background(), strings.NewReader(`{"goal":"choose","tools":[{"id":"rg","description":"search"}]}`))
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("route exceeded bounded provider period: %s", elapsed)
+	}
+	if result.Status != "fallback" || result.Reason != "provider_timeout" || len(result.Selections) != 0 {
+		t.Fatalf("unexpected timeout fallback: %#v", result)
+	}
+}
+
+func TestJEVRouterRejectsValidAdviceReturnedAfterDeadline(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "router-secret")
+	router := NewRouterWithDependencies(RouterDependencies{
+		FindPython:      func() (string, error) { return "/trusted/python3", nil },
+		ProviderTimeout: 10 * time.Millisecond,
+		RunPython: func(ctx context.Context, _ string, _ []byte, _ string) ([]byte, error) {
+			<-ctx.Done()
+			return []byte(`{"version":1,"enabled":true,"advisory":true,"mode":"shadow","status":"ok","reason":"advice_available","selections":{"tool":{"candidate":"rg","confidence":0.9,"accepted":true,"reason":"accepted"}}}`), nil
+		},
+	})
+
+	result := router.Route(context.Background(), strings.NewReader(`{"goal":"choose","tools":[{"id":"rg","description":"search"}]}`))
+	if result.Status != "fallback" || result.Reason != "provider_timeout" || len(result.Selections) != 0 {
+		t.Fatalf("expired advice escaped: %#v", result)
 	}
 }
 
