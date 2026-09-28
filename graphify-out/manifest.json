@@ -931,7 +931,7 @@
   },
   "migrations/000001_initial.sql": {
     "mtime": 1788595931.582677,
-    "seen": 1790596844.4529438,
+    "seen": 1790604896.9171531,
     "ast_hash": "4a2c9badbdc3871cb223878711a614db",
     "semantic_hash": ""
   },
@@ -1651,7 +1651,7 @@
   },
   "migrations/000002_coordination.sql": {
     "mtime": 1789379955.1471324,
-    "seen": 1790596844.4529462,
+    "seen": 1790604896.917155,
     "ast_hash": "fa66d745092e8384e004eecdcb1efc9b",
     "semantic_hash": ""
   },
@@ -1867,7 +1867,7 @@
   },
   "migrations/000003_lease_idempotency.sql": {
     "mtime": 1789412848.636025,
-    "seen": 1790596844.4529474,
+    "seen": 1790604896.9171565,
     "ast_hash": "b1f9c5d02d097b3d7a96d6476ac8865b",
     "semantic_hash": ""
   },
@@ -2017,7 +2017,7 @@
   },
   "migrations/000004_index.sql": {
     "mtime": 1789730820.9643753,
-    "seen": 1790596844.452949,
+    "seen": 1790604896.9171581,
     "ast_hash": "5ccc6b47a97aae590ed92a569f1a9f38",
     "semantic_hash": ""
   },
@@ -2203,7 +2203,7 @@
   },
   "migrations/000005_symbol_identity.sql": {
     "mtime": 1790071147.0840511,
-    "seen": 1790596844.45295,
+    "seen": 1790604896.917159,
     "ast_hash": "3440b3f15afffbefb31b02847483be31",
     "semantic_hash": ""
   },
@@ -2286,9 +2286,9 @@
     "semantic_hash": ""
   },
   "docs/engineering/mr-007-requirements.md": {
-    "mtime": 1790097093.1637218,
-    "seen": 1790541261.9983466,
-    "ast_hash": "6acb3eccd8df8a82f8a43905c5e1c13d",
+    "mtime": 1790604625.9523315,
+    "seen": 1790604896.917319,
+    "ast_hash": "13f5663de845f1915cdf117d2b6eb179",
     "semantic_hash": ""
   },
   "internal/changes/changes.go": {
@@ -2323,7 +2323,7 @@
   },
   "migrations/000006_changes.sql": {
     "mtime": 1790097209.7048697,
-    "seen": 1790596844.452951,
+    "seen": 1790604896.9171603,
     "ast_hash": "893f3a56e862341cf4c87feabcd64f36",
     "semantic_hash": ""
   },
@@ -2352,21 +2352,21 @@
     "semantic_hash": ""
   },
   "internal/changes/discovery_test.go": {
-    "mtime": 1790100407.4562933,
-    "seen": 1790541261.998027,
-    "ast_hash": "f9086e8fc505e70cabf26346e6134951",
+    "mtime": 1790604115.3855631,
+    "seen": 1790604175.5527632,
+    "ast_hash": "0e1bca3a2c3c2084825c722dd4c0c2ff",
     "semantic_hash": ""
   },
   "internal/git/status.go": {
-    "mtime": 1790099902.1645875,
-    "seen": 1790541261.9981399,
-    "ast_hash": "e1c4555c0abd18b73e79db9eac878bce",
+    "mtime": 1790604139.5633621,
+    "seen": 1790604175.5573409,
+    "ast_hash": "ce9044d589172883d08994e1628ec700",
     "semantic_hash": ""
   },
   "internal/git/status_test.go": {
-    "mtime": 1790100398.7109895,
-    "seen": 1790541261.9981403,
-    "ast_hash": "562ddcd5249951b391c8be8f2fd342b3",
+    "mtime": 1790604340.4686954,
+    "seen": 1790604372.507379,
+    "ast_hash": "129dce9b9d0f51973f39538047332445",
     "semantic_hash": ""
   },
   "internal/changes/service.go": {
@@ -2394,9 +2394,9 @@
     "semantic_hash": ""
   },
   "internal/changes/reconcile_test.go": {
-    "mtime": 1790102463.3218017,
-    "seen": 1790541261.9980352,
-    "ast_hash": "280bfa0a363326505e8f0bf131cd694b",
+    "mtime": 1790604123.5193396,
+    "seen": 1790604175.553052,
+    "ast_hash": "44be66cf8c1f1c9a0c26967a69037e66",
     "semantic_hash": ""
   },
   "docs/engineering/mr-008-design.md": {
@@ -2431,7 +2431,7 @@
   },
   "migrations/000007_scope_attribution.sql": {
     "mtime": 1790105470.7596946,
-    "seen": 1790596844.4529524,
+    "seen": 1790604896.917161,
     "ast_hash": "6852065118b87e2bbc3753a5fcc9d247",
     "semantic_hash": ""
   },
@@ -2623,7 +2623,7 @@
   },
   "migrations/000008_evidence.sql": {
     "mtime": 1790146723.0340698,
-    "seen": 1790596844.4529533,
+    "seen": 1790604896.917162,
     "ast_hash": "3f384fc5579b162388f58f139b8553bd",
     "semantic_hash": ""
   },
@@ -2754,9 +2754,9 @@
     "semantic_hash": ""
   },
   "internal/gate/kernel_test.go": {
-    "mtime": 1790156609.0050545,
-    "seen": 1790541261.9981287,
-    "ast_hash": "1782cac817002985b41f92857bd80f98",
+    "mtime": 1790604123.5174954,
+    "seen": 1790604175.5569012,
+    "ast_hash": "f75df508c09e4858ba6f52484c2c14b4",
     "semantic_hash": ""
   },
   "docs/engineering/mr-014-design.md": {
@@ -3457,13 +3457,13 @@
   },
   "migrations/000009_guard_baselines.sql": {
     "mtime": 1790415904.022028,
-    "seen": 1790596844.4529548,
+    "seen": 1790604896.9171636,
     "ast_hash": "009aff220d3759eca0307063f118b6c3",
     "semantic_hash": ""
   },
   "migrations/000010_file_index_generations.sql": {
     "mtime": 1790431874.2686872,
-    "seen": 1790596844.4529557,
+    "seen": 1790604896.917164,
     "ast_hash": "011432b36b4788475ed86feedcac8731",
     "semantic_hash": ""
   },
@@ -3997,7 +3997,7 @@
   },
   "migrations/000011_jev_routes_and_agent_presence.sql": {
     "mtime": 1790582752.6173453,
-    "seen": 1790596844.452957,
+    "seen": 1790604896.9171658,
     "ast_hash": "c81d6c45efe0fa079b13a794b814692c",
     "semantic_hash": ""
   }
