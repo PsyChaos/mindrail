@@ -130,6 +130,15 @@ func New(ctx context.Context, root string) (*Server, error) {
 		Guard:        guard,
 		Profiles:     application.Config().Config.Validation,
 		SecretEnv:    application.Config().Config.Secrets.Env,
+		LoadValidationConfig: func() (workflow.ValidationConfig, error) {
+			loaded, err := application.CurrentConfig()
+			if err != nil {
+				return workflow.ValidationConfig{}, err
+			}
+			return workflow.ValidationConfig{
+				Profiles: loaded.Config.Validation, SecretEnv: loaded.Config.Secrets.Env,
+			}, nil
+		},
 	})
 	if err != nil {
 		guard.Close()

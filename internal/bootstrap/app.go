@@ -479,6 +479,18 @@ func (a *App) Paths() filesystem.RuntimePaths { return a.subject.Paths }
 // Config returns the merged configuration and its provenance.
 func (a *App) Config() config.Loaded { return a.subject.Config }
 
+// CurrentConfig resolves the effective configuration from disk and the same
+// captured process inputs startup used. Long-lived commands call this before
+// an operation whose policy may have changed since the process started.
+func (a *App) CurrentConfig() (config.Loaded, error) {
+	return config.NewLoader(config.LoaderOptions{
+		WorktreeRoot:  a.subject.Repo.WorktreeRoot,
+		UserConfigDir: a.opts.UserConfigDir,
+		Environ:       a.environ,
+		Flags:         a.opts.Flags,
+	}).Load()
+}
+
 // Warnings returns the non-fatal conditions seen during startup. They never
 // change the exit code; that is what makes them warnings.
 func (a *App) Warnings() []app.Warning { return a.warnings }
@@ -571,12 +583,7 @@ func (a *App) loadConfig(context.Context) error {
 		a.initResult.ConfigPath = filepath.Join(worktreeRoot, config.RepoDir, config.ConfigFileName)
 	}
 
-	loaded, err := config.NewLoader(config.LoaderOptions{
-		WorktreeRoot:  worktreeRoot,
-		UserConfigDir: a.opts.UserConfigDir,
-		Environ:       a.environ,
-		Flags:         a.opts.Flags,
-	}).Load()
+	loaded, err := a.CurrentConfig()
 	if err != nil {
 		a.subject.ConfigErr = err
 		return err

@@ -17,11 +17,6 @@ func (s *Service) Finalize(ctx context.Context, in FinalizeInput) (Finalization,
 	defer unlock()
 	r, err := s.Resolve(ctx, in.RunKey)
 	out := Finalization{Run: r, Profiles: []string{}}
-	for name := range s.options.Profiles {
-		out.Profiles = append(out.Profiles, name)
-	}
-	sort.Strings(out.Profiles)
-	out.NoProfilesConfigured = len(out.Profiles) == 0
 	if err != nil {
 		return out, err
 	}
@@ -48,6 +43,15 @@ func (s *Service) Finalize(ctx context.Context, in FinalizeInput) (Finalization,
 	if r.State.Terminal() {
 		return out, invalid("automatic task is terminal")
 	}
+	validationConfig, err := s.validationConfig()
+	if err != nil {
+		return out, err
+	}
+	for name := range validationConfig.Profiles {
+		out.Profiles = append(out.Profiles, name)
+	}
+	sort.Strings(out.Profiles)
+	out.NoProfilesConfigured = len(out.Profiles) == 0
 	if err := s.Renew(ctx, in.RunKey); err != nil {
 		return out, err
 	}
@@ -61,7 +65,7 @@ func (s *Service) Finalize(ctx context.Context, in FinalizeInput) (Finalization,
 	// Validation executes on each unfinished attempt: failed or stale evidence
 	// must be replaced after a repair, not replayed merely because run_key agrees.
 	for _, name := range out.Profiles {
-		if _, err := s.options.Validation.RunProfile(ctx, name, s.options.Profiles[name], s.options.Root, s.options.SecretEnv, ""); err != nil {
+		if _, err := s.options.Validation.RunProfile(ctx, name, validationConfig.Profiles[name], s.options.Root, validationConfig.SecretEnv, ""); err != nil {
 			return out, err
 		}
 	}

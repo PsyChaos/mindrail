@@ -64,13 +64,17 @@ func (s *Server) validate(ctx context.Context, _ *sdk.CallToolRequest, in Valida
 	if in.Profile == "" {
 		return nil, ValidateOut{}, Invalid("validate needs a named profile")
 	}
-	profiles := s.app.Config().Config.Validation
+	loaded, err := s.app.CurrentConfig()
+	if err != nil {
+		return nil, ValidateOut{}, err
+	}
+	profiles := loaded.Config.Validation
 	profile, ok := profiles[in.Profile]
 	if !ok {
 		return nil, ValidateOut{}, Invalid("unknown validation profile: " + in.Profile)
 	}
 	rows, err := s.valid.RunProfile(ctx, in.Profile,
-		profile, s.root, s.app.Config().Config.Secrets.Env, "")
+		profile, s.root, loaded.Config.Secrets.Env, "")
 	if err != nil {
 		return nil, ValidateOut{}, err
 	}

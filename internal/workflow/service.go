@@ -34,7 +34,15 @@ type Options struct {
 	Guard                        *testguard.Service
 	Profiles                     map[string]config.ValidationProfile
 	SecretEnv                    []string
+	LoadValidationConfig         func() (ValidationConfig, error)
 	Clock                        app.Clock
+}
+
+// ValidationConfig is the policy input that may change while a long-lived
+// agent connection remains open.
+type ValidationConfig struct {
+	Profiles  map[string]config.ValidationProfile
+	SecretEnv []string
 }
 
 type Service struct {
@@ -83,8 +91,14 @@ func New(o Options) (*Service, error) {
 	if o.Clock == nil {
 		o.Clock = app.SystemClock{}
 	}
-	profiles := make(map[string]config.ValidationProfile, len(o.Profiles))
-	for name, p := range o.Profiles {
+	o.Profiles = cloneProfiles(o.Profiles)
+	o.SecretEnv = append([]string(nil), o.SecretEnv...)
+	return &Service{options: o, failures: map[string]error{}}, nil
+}
+
+func cloneProfiles(source map[string]config.ValidationProfile) map[string]config.ValidationProfile {
+	profiles := make(map[string]config.ValidationProfile, len(source))
+	for name, p := range source {
 		p.Paths = append([]string(nil), p.Paths...)
 		p.Commands = append([][]string(nil), p.Commands...)
 		for i := range p.Commands {
@@ -92,9 +106,21 @@ func New(o Options) (*Service, error) {
 		}
 		profiles[name] = p
 	}
-	o.Profiles = profiles
-	o.SecretEnv = append([]string(nil), o.SecretEnv...)
-	return &Service{options: o, failures: map[string]error{}}, nil
+	return profiles
+}
+
+func (s *Service) validationConfig() (ValidationConfig, error) {
+	current := ValidationConfig{Profiles: s.options.Profiles, SecretEnv: s.options.SecretEnv}
+	if s.options.LoadValidationConfig != nil {
+		loaded, err := s.options.LoadValidationConfig()
+		if err != nil {
+			return ValidationConfig{}, err
+		}
+		current = loaded
+	}
+	current.Profiles = cloneProfiles(current.Profiles)
+	current.SecretEnv = append([]string(nil), current.SecretEnv...)
+	return current, nil
 }
 
 func invalid(why string) error {

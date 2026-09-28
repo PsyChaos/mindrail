@@ -455,6 +455,43 @@ func TestAutomaticFinalizeDenialIsExplicitAndRecoverable(t *testing.T) {
 	}
 }
 
+// A long-lived MCP server must observe repository validation profiles added
+// after it starts. Agents routinely configure the project through the same
+// connection that later finalizes the setup task; requiring a process restart
+// in between silently turns that first completion into an unvalidated success.
+func TestAutomaticFinalizeReloadsProfilesAddedAfterServerStart(t *testing.T) {
+	root := cleanCompletionRepo(t)
+	server := newTestServer(t, root)
+	client := connectPersistent(t, server, "config-reload")
+	defer client.close()
+	client.call(t, mcp.ToolBootstrap, map[string]any{
+		"goal": "reload validation config", "run_key": "config-reload", "paths": []string{"pkg/a.py"},
+	})
+
+	configPath := filepath.Join(root, ".mindrail", "config.toml")
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = append(config, []byte("\n[validation.live]\ntype = \"AUTOMATED_TEST\"\npaths = [\"pkg\"]\ncommands = [[\"git\", \"--version\"]]\n")...)
+	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	validated := client.call(t, mcp.ToolValidate, map[string]any{"profile": "live"})
+	if evidence, ok := validated["evidence"].([]any); !ok || len(evidence) != 1 {
+		t.Fatalf("validate used startup config instead of live config: %#v", validated)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "a.py"), []byte("def helper():\n    return 9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	finished := client.call(t, mcp.ToolComplete, map[string]any{"finalize": true})
+	profiles, ok := finished["profiles"].([]any)
+	if !ok || len(profiles) != 1 || profiles[0] != "live" || finished["no_profiles_configured"] == true {
+		t.Fatalf("finalize used startup config instead of live config: %#v", finished)
+	}
+}
+
 func TestAutomaticConcurrentLifecycleUpdatesAreRaceFree(t *testing.T) {
 	root := cleanCompletionRepo(t)
 	server := newTestServer(t, root)
