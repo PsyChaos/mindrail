@@ -108,6 +108,7 @@ var tablesPerMilestone = map[int64][]string{
 	10: {"file_index_generations"},                                                              // Automatic restoration: generations survive file removal.
 	11: {"jev_route_events", "agent_runtimes"},                                                  // Safe JEV-use proof and short-lived MCP connection presence.
 	12: {"agent_runtime_observations", "continuity_intents"},                                    // Bounded runtime telemetry and crash-safe handoff state.
+	13: {},                                                                                      // Continuity hardening adds a telemetry column and phase guards.
 }
 
 // TestEachMigrationCreatesOnlyItsMilestonesTables pins those boundaries.

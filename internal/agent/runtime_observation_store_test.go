@@ -28,6 +28,7 @@ func TestRuntimeObservationStoreRecordsBoundedLatestTelemetry(t *testing.T) {
 	observation, err := store.Observe(t.Context(), runtime.ID, agent.RuntimeObservationInput{
 		ModelKey: "GPT-6-ASTRA", Effort: "high", ContextUsed: &used, ContextLimit: &limit,
 		Source: agent.ObservationSourceHost, Confidence: agent.ObservationStructuredHost,
+		ProducerSequence: 1, ObservedAt: clock.Now(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,7 @@ func TestRuntimeObservationStoreRecordsBoundedLatestTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation.ModelKey != "" || observation.Revision != 2 || *observation.ContextUsed != used {
+	if observation.Accepted || observation.ModelKey != "gpt-6-astra" || observation.Revision != 1 || *observation.ContextUsed != 600_000 || observation.ProducerSequence != 1 {
 		t.Fatalf("updated observation = %#v", observation)
 	}
 }
@@ -88,11 +89,31 @@ func TestRuntimeObservationStoreAcceptsCurrentCodexEfforts(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := agent.NewRuntimeObservationStore(fx.db.DB, clock)
-	for _, effort := range []string{"xhigh", "max", "ultra"} {
-		observation, err := store.Observe(t.Context(), runtime.ID, agent.RuntimeObservationInput{ModelKey: "gpt-5.6-sol", Effort: effort, Source: agent.ObservationSourceHost, Confidence: agent.ObservationStructuredHost})
+	for index, effort := range []string{"xhigh", "max", "ultra"} {
+		observation, err := store.Observe(t.Context(), runtime.ID, agent.RuntimeObservationInput{ModelKey: "gpt-5.6-sol", Effort: effort, Source: agent.ObservationSourceHost, Confidence: agent.ObservationStructuredHost, ProducerSequence: int64(index + 1), ObservedAt: clock.Now()})
 		if err != nil || observation.Effort != effort || observation.ModelKey != "gpt-5.6-sol" {
 			t.Fatalf("effort %s: %#v %v", effort, observation, err)
 		}
+	}
+}
+
+func TestRuntimeObservationStoreIgnoresOutOfOrderProducerSequence(t *testing.T) {
+	fx := newAgentStoreFixture(t)
+	clock := app.FixedClock{Instant: time.Date(2026, 9, 28, 8, 5, 0, 0, time.UTC)}
+	presence, _ := agent.NewPresenceStore(fx.db.DB, clock)
+	runtime, _ := presence.Start(t.Context(), agent.PresenceStart{ProjectID: "PRJ-1", WorkspaceID: "WSP-1", TaskID: "TSK-1", SessionID: "SES-1", Client: agent.ClientInfo{Name: "codex"}})
+	store, _ := agent.NewRuntimeObservationStore(fx.db.DB, clock)
+	used, limit := int64(700), int64(1000)
+	newer, err := store.Observe(t.Context(), runtime.ID, agent.RuntimeObservationInput{ContextUsed: &used, ContextLimit: &limit,
+		Source: agent.ObservationSourceHost, Confidence: agent.ObservationStructuredHost, ProducerSequence: 7, ObservedAt: clock.Now()})
+	if err != nil || !newer.Accepted {
+		t.Fatalf("newer=%#v err=%v", newer, err)
+	}
+	used = 100
+	stale, err := store.Observe(t.Context(), runtime.ID, agent.RuntimeObservationInput{ContextUsed: &used, ContextLimit: &limit,
+		Source: agent.ObservationSourceHost, Confidence: agent.ObservationStructuredHost, ProducerSequence: 6, ObservedAt: clock.Now().Add(-time.Second)})
+	if err != nil || stale.Accepted || stale.ProducerSequence != 7 || *stale.ContextUsed != 700 {
+		t.Fatalf("stale=%#v err=%v", stale, err)
 	}
 }
 

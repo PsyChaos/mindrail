@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -157,18 +158,19 @@ func New(ctx context.Context, root string) (*Server, error) {
 	}
 	space := application.Subject().Workspace
 	flow, err := workflow.New(workflow.Options{
-		DB:           application.DB(),
-		Root:         root,
-		ProjectID:    space.ProjectID,
-		WorkspaceID:  space.ID,
-		Coordination: application.Coordination(),
-		Changes:      changeService,
-		Indexes:      indexes,
-		Validation:   valid,
-		Evidence:     evidenceStore,
-		Guard:        guard,
-		Profiles:     application.Config().Config.Validation,
-		SecretEnv:    application.Config().Config.Secrets.Env,
+		DB:               application.DB(),
+		Root:             root,
+		ProjectID:        space.ProjectID,
+		WorkspaceID:      space.ID,
+		Coordination:     application.Coordination(),
+		Changes:          changeService,
+		Indexes:          indexes,
+		Validation:       valid,
+		Evidence:         evidenceStore,
+		Guard:            guard,
+		Profiles:         application.Config().Config.Validation,
+		SecretEnv:        application.Config().Config.Secrets.Env,
+		ResumeAuthorizer: continuityStore,
 		LoadValidationConfig: func() (workflow.ValidationConfig, error) {
 			loaded, err := application.CurrentConfig()
 			if err != nil {
@@ -212,11 +214,30 @@ func New(ctx context.Context, root string) (*Server, error) {
 		ConsecutiveReports:     continuityConfig.ConsecutiveObservations,
 	}
 	if continuityConfig.Enabled {
-		server.continuityService, err = continuity.NewService(continuityStore, policy, mcpManualHost{}, server)
+		host, hostErr := continuity.HostFromEnvironment(root)
+		if hostErr != nil {
+			guard.Close()
+			registry.Close()
+			return nil, hostErr
+		}
+		server.continuityService, err = continuity.NewService(continuityStore, policy, host, server)
 		if err != nil {
 			guard.Close()
 			registry.Close()
 			return nil, err
+		}
+		recoverable, recoverErr := continuityStore.ListRecoverable(ctx, space.ID)
+		if recoverErr != nil {
+			guard.Close()
+			registry.Close()
+			return nil, fmt.Errorf("recover continuity intents: %w", recoverErr)
+		}
+		for _, intent := range recoverable {
+			if _, recoverErr := server.continuityService.Recover(ctx, intent.ID); recoverErr != nil {
+				guard.Close()
+				registry.Close()
+				return nil, fmt.Errorf("recover continuity intent %s: %w", intent.ID, recoverErr)
+			}
 		}
 	}
 	server.impl.AddReceivingMiddleware(server.presenceActivityMiddleware)
@@ -289,14 +310,17 @@ type AutomaticFailure struct {
 // BootstrapIn selects the additive automatic mode when any field is present.
 // The historical empty object remains the read-only bootstrap operation.
 type BootstrapIn struct {
-	Goal         *string   `json:"goal,omitempty"`
-	RunKey       *string   `json:"run_key,omitempty"`
-	Paths        *[]string `json:"paths,omitempty"`
-	ResumeTaskID *string   `json:"resume_task_id,omitempty"`
+	Goal               *string   `json:"goal,omitempty"`
+	RunKey             *string   `json:"run_key,omitempty"`
+	Paths              *[]string `json:"paths,omitempty"`
+	ResumeTaskID       *string   `json:"resume_task_id,omitempty"`
+	ContinuityIntentID *string   `json:"continuity_intent_id,omitempty"`
+	TakeoverToken      *string   `json:"takeover_token,omitempty"`
 }
 
 func (in BootstrapIn) automatic() bool {
-	return in.Goal != nil || in.RunKey != nil || in.Paths != nil || in.ResumeTaskID != nil
+	return in.Goal != nil || in.RunKey != nil || in.Paths != nil || in.ResumeTaskID != nil ||
+		in.ContinuityIntentID != nil || in.TakeoverToken != nil
 }
 
 func (s *Server) bootstrap(ctx context.Context, req *sdk.CallToolRequest, in BootstrapIn) (*sdk.CallToolResult, BootstrapOut, error) {

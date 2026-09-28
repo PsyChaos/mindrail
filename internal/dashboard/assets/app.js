@@ -196,7 +196,9 @@
     activity.append(node("dt","","SESSION"),node("dd","",presentation.sessionID||"—"),node("dt","","LAST HEARTBEAT"),heartbeatValue,node("dt","","LAST MCP ACTIVITY"),activityValue);
     activity.append(node("dt","","MODEL"),node("dd","",presentation.model),node("dt","","EFFORT"),node("dd","",presentation.effort),
       node("dt","","CONTEXT"),node("dd","",presentation.contextPressure),node("dt","","TELEMETRY"),node("dd","",`${presentation.telemetryState} · ${presentation.telemetryAge}`),
-      node("dt","","CONTINUITY"),node("dd","",`${presentation.continuityState}${presentation.continuityFailure?" · "+presentation.continuityFailure:""}`));
+      node("dt","","CONTINUITY"),node("dd","",`${presentation.continuityState}${presentation.continuityHardProtection?" · HARD PROTECTION":""}${presentation.continuityStalled?" · STALLED":""}${presentation.continuityFailure?" · "+presentation.continuityFailure:""}`),
+      node("dt","","HANDOFF THRESHOLD"),node("dd","",presentation.continuityThreshold),node("dt","","PHASE ELAPSED"),node("dd","",presentation.continuityElapsed),
+      node("dt","","SUCCESSOR"),node("dd","",presentation.continuitySuccessor),node("dt","","HOST OPERATION"),node("dd","",presentation.continuityOperation));
     if(presentation.endedAt)activity.append(node("dt","","ENDED"),node("dd","",`${instant(presentation.endedAt)} · ${presentation.endReason||"ended"}`));
     card.append(activity,node("div","projection-note",`Runtime telemetry is ${presentation.telemetrySource} / ${presentation.telemetryConfidence}; stale or missing values remain explicit. Heartbeat shows only the Mindrail connection and does not prove current model or process liveness.`));
     return card;

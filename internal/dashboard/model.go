@@ -233,10 +233,17 @@ type RuntimeTelemetry struct {
 }
 
 type RuntimeContinuity struct {
-	IntentID     string `json:"intent_id,omitempty"`
-	State        string `json:"state"`
-	FailureCode  string `json:"failure_code,omitempty"`
-	CheckpointID string `json:"checkpoint_id,omitempty"`
+	IntentID            string     `json:"intent_id,omitempty"`
+	State               string     `json:"state"`
+	FailureCode         string     `json:"failure_code,omitempty"`
+	CheckpointID        string     `json:"checkpoint_id,omitempty"`
+	HostOperationID     string     `json:"host_operation_id,omitempty"`
+	SuccessorSessionID  string     `json:"successor_session_id,omitempty"`
+	ThresholdPercent    int        `json:"threshold_percent,omitempty"`
+	HardProtection      bool       `json:"hard_protection"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	PhaseElapsedSeconds int64      `json:"phase_elapsed_seconds,omitempty"`
+	Stalled             bool       `json:"stalled"`
 }
 
 type CompletionState struct {

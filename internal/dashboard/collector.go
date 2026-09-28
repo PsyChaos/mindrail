@@ -23,6 +23,7 @@ type CollectorOptions struct {
 	ProjectName  string
 	WorktreeRoot string
 	Profiles     map[string]config.ValidationProfile
+	Continuity   config.ContinuityConfig
 	Readiness    status.Report
 	JEV          JEVState
 	StartedAt    time.Time
@@ -245,7 +246,8 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		r.client_name, COALESCE(r.client_title,''), COALESCE(r.client_version,''),
 		r.started_at, r.last_heartbeat_at, r.last_activity_at, r.sequence, r.ended_at, COALESCE(r.end_reason,''),
 		o.model_key, o.effort, o.context_used, o.context_limit, o.source, o.confidence, o.observed_at, o.revision,
-		i.intent_id, i.state, i.failure_code, i.checkpoint_id
+		i.intent_id, i.state, i.failure_code, i.checkpoint_id, i.host_operation_id,
+		i.successor_session_id, i.updated_at, i.last_used_basis_points
 		FROM agent_runtimes r
 		LEFT JOIN agent_runtime_observations o ON o.runtime_id = r.runtime_id
 		LEFT JOIN continuity_intents i ON i.intent_id = (
@@ -268,11 +270,12 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		var rawName, rawTitle, rawVersion string
 		var model, effort, source, confidence, observed sql.NullString
 		var contextUsed, contextLimit, observationRevision sql.NullInt64
-		var intentID, continuityState, failureCode, checkpointID sql.NullString
+		var intentID, continuityState, failureCode, checkpointID, hostOperationID, successorSessionID, continuityUpdated sql.NullString
+		var continuityUsed sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.TaskID, &item.SessionID, &rawName, &rawTitle, &rawVersion,
 			&started, &heartbeat, &activity, &item.Sequence, &ended, &item.EndReason,
 			&model, &effort, &contextUsed, &contextLimit, &source, &confidence, &observed, &observationRevision,
-			&intentID, &continuityState, &failureCode, &checkpointID); err != nil {
+			&intentID, &continuityState, &failureCode, &checkpointID, &hostOperationID, &successorSessionID, &continuityUpdated, &continuityUsed); err != nil {
 			return nil, false, err
 		}
 		if item.StartedAt, err = app.ParseTime(started); err != nil {
@@ -297,13 +300,34 @@ func (c *Collector) agentRuntimes(ctx context.Context, db queryer, now time.Time
 		item.Status = runtimeStatus(item, now)
 		item.Telemetry = runtimeTelemetry(model, effort, contextUsed, contextLimit, source, confidence, observed, observationRevision, item.LastActivityAt, now)
 		item.Continuity = RuntimeContinuity{IntentID: boundedText(intentID.String, maxIDRunes), State: continuityState.String,
-			FailureCode: boundedText(failureCode.String, 64), CheckpointID: boundedText(checkpointID.String, maxIDRunes)}
+			FailureCode: boundedText(failureCode.String, 64), CheckpointID: boundedText(checkpointID.String, maxIDRunes),
+			HostOperationID: boundedText(hostOperationID.String, maxIDRunes), SuccessorSessionID: boundedText(successorSessionID.String, maxIDRunes),
+			ThresholdPercent: c.opts.Continuity.HandoffUsedPercent}
+		if c.opts.Continuity.HardUsedPercent > 0 && continuityUsed.Valid && continuityUsed.Int64 >= int64(c.opts.Continuity.HardUsedPercent*100) {
+			item.Continuity.HardProtection = true
+		}
+		if continuityUpdated.Valid {
+			if updatedAt, parseErr := app.ParseTime(continuityUpdated.String); parseErr == nil {
+				item.Continuity.UpdatedAt = &updatedAt
+				item.Continuity.PhaseElapsedSeconds = max(0, int64(now.Sub(updatedAt).Seconds()))
+				item.Continuity.Stalled = continuityPhaseMayStall(item.Continuity.State) && item.Continuity.PhaseElapsedSeconds >= 120
+			}
+		}
 		if item.Continuity.State == "" {
 			item.Continuity.State = "NONE"
 		}
 		out = append(out, item)
 	}
 	return trim(out, maxAgentRuntimes), len(out) > maxAgentRuntimes, rows.Err()
+}
+
+func continuityPhaseMayStall(state string) bool {
+	switch state {
+	case "SPAWN_REQUESTED", "SPAWN_READY", "HANDED_OFF", "CLAIMED":
+		return true
+	default:
+		return false
+	}
 }
 
 func runtimeTelemetry(model, effort sql.NullString, used, limit sql.NullInt64, source, confidence, observed sql.NullString,

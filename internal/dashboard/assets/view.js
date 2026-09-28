@@ -106,8 +106,14 @@
       telemetryConfidence: telemetry.confidence || "unknown",
       telemetryAge: observedAge === null ? "not reported" : `${duration(observedAge)} ago`,
       continuityState: continuity.state || "NONE",
+	  continuityHardProtection: continuity.hard_protection === true,
       continuityFailure: continuity.failure_code || "",
-      continuityIntent: continuity.intent_id || ""
+      continuityIntent: continuity.intent_id || "",
+      continuityThreshold: Number.isFinite(Number(continuity.threshold_percent)) && Number(continuity.threshold_percent) > 0 ? `${Number(continuity.threshold_percent)}%` : "UNKNOWN",
+      continuityElapsed: Number.isFinite(Number(continuity.phase_elapsed_seconds)) ? duration(Number(continuity.phase_elapsed_seconds)) : "—",
+      continuityStalled: continuity.stalled === true,
+      continuitySuccessor: continuity.successor_session_id || "NONE",
+      continuityOperation: continuity.host_operation_id || "NONE"
     });
   }
 

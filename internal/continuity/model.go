@@ -52,14 +52,14 @@ type Observation struct {
 }
 
 func (o Observation) HasContextPressure() bool {
-	return o.ContextUsed >= 0 && o.ContextLimit > 0 && o.ContextUsed <= o.ContextLimit
+	return o.ContextUsed > 0 && o.ContextLimit > 0 && o.ContextUsed <= o.ContextLimit
 }
 
 func (o Observation) UsedBasisPoints() int {
 	if !o.HasContextPressure() {
 		return -1
 	}
-	return int((o.ContextUsed*10_000 + o.ContextLimit/2) / o.ContextLimit)
+	return int(o.ContextUsed * 10_000 / o.ContextLimit)
 }
 
 type Intent struct {
@@ -79,6 +79,7 @@ type Intent struct {
 	SuccessorSessionID                 string
 	FailureCode                        string
 	CreatedAt, UpdatedAt, ExpiresAt    time.Time
+	ActivatedAt                        *time.Time
 }
 
 type Decision struct {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/PsyChaos/mindrail/internal/agent"
 	"github.com/PsyChaos/mindrail/internal/continuity"
+	"github.com/PsyChaos/mindrail/internal/workflow"
 )
 
 const runtimeTelemetryMetaKey = "io.mindrail/runtime-telemetry"
@@ -22,9 +23,11 @@ type observationRecorder interface {
 }
 
 type runtimeTelemetryMeta struct {
-	Model   string                `json:"model,omitempty"`
-	Effort  string                `json:"effort,omitempty"`
-	Context *runtimeContextCounts `json:"context,omitempty"`
+	Model      string                `json:"model,omitempty"`
+	Effort     string                `json:"effort,omitempty"`
+	Context    *runtimeContextCounts `json:"context,omitempty"`
+	Sequence   int64                 `json:"sequence,omitempty"`
+	ObservedAt string                `json:"observed_at,omitempty"`
 }
 
 type runtimeContextCounts struct {
@@ -58,8 +61,19 @@ func decodeRuntimeTelemetry(raw any) (agent.RuntimeObservationInput, bool) {
 	input := agent.RuntimeObservationInput{
 		ModelKey: meta.Model, Effort: meta.Effort,
 		Source: agent.ObservationSourceMCPMeta, Confidence: agent.ObservationSelfReported,
+		ProducerSequence: meta.Sequence,
+	}
+	if meta.ObservedAt != "" {
+		observedAt, err := time.Parse(time.RFC3339Nano, meta.ObservedAt)
+		if err != nil {
+			return agent.RuntimeObservationInput{}, false
+		}
+		input.ObservedAt = observedAt
 	}
 	if meta.Context != nil {
+		if meta.Sequence < 1 || input.ObservedAt.IsZero() {
+			return agent.RuntimeObservationInput{}, false
+		}
 		input.ContextUsed = &meta.Context.Used
 		input.ContextLimit = &meta.Context.Limit
 	}
@@ -85,7 +99,7 @@ func (s *Server) recordRuntimeTelemetry(ctx context.Context, session *sdk.Server
 		return
 	}
 	observed, err := s.observations.Observe(ctx, runtimeID, input)
-	if err != nil || observed.ContextUsed == nil || observed.ContextLimit == nil || s.continuityService == nil {
+	if err != nil || !observed.Accepted || observed.ProducerSequence <= 0 || observed.ContextUsed == nil || observed.ContextLimit == nil || s.continuityService == nil {
 		return
 	}
 	intentID, err := s.ensureContinuityIntent(ctx, session)
@@ -93,7 +107,7 @@ func (s *Server) recordRuntimeTelemetry(ctx context.Context, session *sdk.Server
 		return
 	}
 	_, _ = s.continuityService.Observe(ctx, intentID, continuity.Observation{
-		RuntimeID: runtimeID, Sequence: observed.Revision, Model: observed.ModelKey, Effort: observed.Effort,
+		RuntimeID: runtimeID, Sequence: max(observed.ProducerSequence, observed.Revision), Model: observed.ModelKey, Effort: observed.Effort,
 		ContextUsed: *observed.ContextUsed, ContextLimit: *observed.ContextLimit, ObservedAt: observed.ObservedAt,
 		Source: observed.Source, Confidence: continuity.ConfidenceReported,
 	})
@@ -151,13 +165,39 @@ func (s *Server) CheckpointContinuity(ctx context.Context, intent continuity.Int
 	}
 	s.autoMu.RUnlock()
 	if key == "" {
-		return "", errors.New("continuity predecessor run is not connected")
+		noted, err := s.workflow.CheckpointByRunHash(ctx, intent.PredecessorRunHash, "Automatic continuity checkpoint before context handoff.", false)
+		if err != nil {
+			return "", err
+		}
+		return noted.Checkpoint.ID, nil
 	}
 	noted, err := s.workflow.Checkpoint(ctx, key, "Automatic continuity checkpoint before context handoff.", false)
 	if err != nil {
 		return "", err
 	}
 	return noted.Checkpoint.ID, nil
+}
+
+func (s *Server) HandoffContinuity(ctx context.Context, intent continuity.Intent) error {
+	s.autoMu.RLock()
+	var session *sdk.ServerSession
+	var run workflow.Run
+	for candidate, current := range s.automatic {
+		if current.run.TaskID == intent.TaskID && current.run.SessionID == intent.PredecessorSessionID {
+			session, run = candidate, current.run
+			break
+		}
+	}
+	s.autoMu.RUnlock()
+	if session == nil {
+		_, err := s.workflow.CheckpointByRunHash(ctx, intent.PredecessorRunHash, "Automatic continuity handoff to prepared successor.", true)
+		return err
+	}
+	if _, err := s.workflow.Checkpoint(ctx, run.RunKey, "Automatic continuity handoff to prepared successor.", true); err != nil {
+		return err
+	}
+	s.forgetAutomaticIfCurrent(session, run)
+	return nil
 }
 
 type mcpManualHost struct{}

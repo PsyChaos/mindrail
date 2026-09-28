@@ -29,6 +29,7 @@ type DashboardStart struct {
 	WorktreeRoot   string
 	LinkedWorktree bool
 	Profiles       map[string]config.ValidationProfile
+	Continuity     config.ContinuityConfig
 	Readiness      status.Report
 	JEV            DashboardJEVState
 	SecretNames    []string
@@ -94,7 +95,8 @@ func runDashboard(cmd *cobra.Command, o Options) error {
 			DB: a.DB(), ProjectID: resolved.space.ProjectID, ProjectName: a.Config().Config.Project.Name,
 			WorkspaceID: resolved.space.ID, WorktreeRoot: a.Repo().WorktreeRoot,
 			LinkedWorktree: resolved.space.IsLinkedWorktree, Profiles: a.Config().Config.Validation,
-			Readiness: readiness, JEV: jev, SecretNames: a.Config().Config.Secrets.Env, Port: port, Output: inv.stdout,
+			Continuity: a.Config().Config.Continuity,
+			Readiness:  readiness, JEV: jev, SecretNames: a.Config().Config.Secrets.Env, Port: port, Output: inv.stdout,
 		})
 	})
 }

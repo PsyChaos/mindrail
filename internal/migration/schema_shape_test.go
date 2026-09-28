@@ -101,13 +101,15 @@ func TestLoadReadsTheColumnsOfTheEmbeddedSchema(t *testing.T) {
 		}
 	}
 
-	// The two ALTER TABLE ... ADD COLUMN forms the embedded set carries (000003
-	// on tasks, decision D-73; 000005 on symbols, decision D-103) are read as
+	// The three ALTER TABLE ... ADD COLUMN forms the embedded set carries (000003
+	// on tasks, 000005 on symbols, and 000013 on runtime observations) are read as
 	// additions and as nothing else: a parser that read either as a forgotten
 	// table would silently drop that table from the shape check, and one that
 	// invented a third column would fail every healthy repository.
-	if strings.Join(added["tasks"], ",") != "revision" || strings.Join(added["symbols"], ",") != "symbol_uid" || len(added) != 2 {
-		t.Errorf("Added = %v, want exactly {tasks: [revision], symbols: [symbol_uid]}", added)
+	if strings.Join(added["tasks"], ",") != "revision" || strings.Join(added["symbols"], ",") != "symbol_uid" ||
+		strings.Join(added["agent_runtime_observations"], ",") != "producer_sequence" ||
+		strings.Join(added["continuity_intents"], ",") != "activated_at" || len(added) != 4 {
+		t.Errorf("Added = %v, want tasks revision, symbols symbol_uid, runtime producer_sequence, and continuity activated_at", added)
 	}
 	for _, m := range embeddedSet(t) {
 		if len(m.Altered) != 0 {

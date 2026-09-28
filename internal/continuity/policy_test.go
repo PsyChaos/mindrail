@@ -57,6 +57,20 @@ func TestPolicyHardProtectionAtBoundary(t *testing.T) {
 	}
 }
 
+func TestPolicyUsesExactFloorBoundariesAndNeedsPositiveUsage(t *testing.T) {
+	p := DefaultPolicy()
+	base := time.Now().UTC()
+	intent := Intent{State: StateObserving, LastUsedBasisPoints: -1}
+	next, decision, err := p.Evaluate(intent, Observation{Sequence: 1, ContextUsed: 54_995, ContextLimit: 100_000, ObservedAt: base, Source: "test"})
+	if err != nil || decision.Warn || next.State != StateObserving || next.LastUsedBasisPoints != 5499 {
+		t.Fatalf("below boundary: next=%#v decision=%#v err=%v", next, decision, err)
+	}
+	next, decision, err = p.Evaluate(next, Observation{Sequence: 2, ContextUsed: 0, ContextLimit: 100_000, ObservedAt: base.Add(time.Second), Source: "test"})
+	if err != nil || decision.Warn || next.LastUsedBasisPoints != -1 {
+		t.Fatalf("zero usage: next=%#v decision=%#v err=%v", next, decision, err)
+	}
+}
+
 func observation(sequence, used int64, at time.Time) Observation {
 	return Observation{Sequence: sequence, ContextUsed: used, ContextLimit: 1_000_000, ObservedAt: at, Source: "test"}
 }

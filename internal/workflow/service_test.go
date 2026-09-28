@@ -33,6 +33,16 @@ type fixture struct {
 	root    string
 }
 
+type rejectingResumeAuthorizer struct{ calls atomic.Int32 }
+
+func (a *rejectingResumeAuthorizer) AuthorizeResume(context.Context, string, string) error {
+	a.calls.Add(1)
+	return fmt.Errorf("reserved")
+}
+func (a *rejectingResumeAuthorizer) BindResume(context.Context, string, string, string) error {
+	return fmt.Errorf("reserved")
+}
+
 func newFixture(t *testing.T) fixture {
 	t.Helper()
 	root := t.TempDir()
@@ -126,6 +136,26 @@ func TestStartRetryRestartAndFreshRuns(t *testing.T) {
 	}
 	if _, err := s.Start(t.Context(), workflow.StartInput{Goal: "Different goal", RunKey: "retry", Paths: []string{"a.txt"}}); err == nil {
 		t.Fatal("conflicting run key accepted")
+	}
+}
+
+func TestResumeAuthorizationRunsBeforeSuccessorIdentityIsCreated(t *testing.T) {
+	f := newFixture(t)
+	first := start(t, f, "predecessor", "a.txt")
+	if _, err := f.service.Checkpoint(t.Context(), first.RunKey, "handoff", true); err != nil {
+		t.Fatal(err)
+	}
+	authorizer := &rejectingResumeAuthorizer{}
+	f.options.ResumeAuthorizer = authorizer
+	service, err := workflow.New(f.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Start(t.Context(), workflow.StartInput{Goal: "resume", RunKey: "successor", ResumeTaskID: first.TaskID}); err == nil {
+		t.Fatal("reserved continuity task was resumed without authorization")
+	}
+	if authorizer.calls.Load() != 1 {
+		t.Fatalf("authorization calls=%d", authorizer.calls.Load())
 	}
 }
 

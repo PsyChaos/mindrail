@@ -109,9 +109,27 @@ assert.deepEqual(view.runtimeCard(connectedRuntime, now), {
   telemetryConfidence: "unknown",
   telemetryAge: "not reported",
   continuityState: "NONE",
+	continuityHardProtection: false,
   continuityFailure: "",
-  continuityIntent: ""
+  continuityIntent: "",
+  continuityThreshold: "UNKNOWN",
+  continuityElapsed: "—",
+  continuityStalled: false,
+  continuitySuccessor: "NONE",
+  continuityOperation: "NONE"
 });
+
+const stalledRuntime = view.runtimeCard({...connectedRuntime, continuity: {
+  state: "HANDED_OFF", intent_id: "CTI-1", threshold_percent: 60,
+  phase_elapsed_seconds: 125, stalled: true, successor_session_id: "SES-2",
+  host_operation_id: "HOST-1"
+}}, now);
+assert.equal(stalledRuntime.continuityState, "HANDED_OFF");
+assert.equal(stalledRuntime.continuityThreshold, "60%");
+assert.equal(stalledRuntime.continuityElapsed, "2m 5s");
+assert.equal(stalledRuntime.continuityStalled, true);
+assert.equal(stalledRuntime.continuitySuccessor, "SES-2");
+assert.equal(stalledRuntime.continuityOperation, "HOST-1");
 
 const measuredRuntime = view.runtimeCard({
   ...connectedRuntime,

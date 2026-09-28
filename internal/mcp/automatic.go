@@ -51,6 +51,7 @@ type workflowPort interface {
 	Reconcile(context.Context, string) (changes.ReconcileResult, error)
 	Finalize(context.Context, workflow.FinalizeInput) (workflow.Finalization, error)
 	Checkpoint(context.Context, string, string, bool) (coordination.Noted, error)
+	CheckpointByRunHash(context.Context, []byte, string, bool) (coordination.Noted, error)
 	StartHeartbeat(context.Context, string, time.Duration) (automaticHeartbeat, error)
 }
 
@@ -98,6 +99,16 @@ func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, i
 	if hasCurrent && current.run.RunKey != runKey && !terminalRun(current.run) {
 		return BootstrapOut{}, Invalid("this MCP connection already has an automatic run")
 	}
+	takeover := in.ContinuityIntentID != nil || in.TakeoverToken != nil
+	if takeover {
+		if in.ContinuityIntentID == nil || in.TakeoverToken == nil || resumeTaskID == "" || s.continuityService == nil {
+			return BootstrapOut{}, Invalid("continuity takeover needs continuity_intent_id, takeover_token, and resume_task_id")
+		}
+		claimed, err := s.continuityService.ClaimTakeover(ctx, *in.ContinuityIntentID, *in.TakeoverToken, runKey)
+		if err != nil || claimed.TaskID != resumeTaskID {
+			return BootstrapOut{}, Invalid("continuity takeover token is invalid or no longer available")
+		}
+	}
 	run, startErr := s.workflow.Start(ctx, workflow.StartInput{
 		Goal: goal, RunKey: runKey, Paths: paths, ResumeTaskID: resumeTaskID,
 	})
@@ -111,6 +122,12 @@ func (s *Server) automaticStart(ctx context.Context, req *sdk.CallToolRequest, i
 		}
 		out.Failure = automaticFailure(startErr)
 		return out, nil
+	}
+	if takeover {
+		if _, err := s.continuityService.CompleteTakeover(ctx, *in.ContinuityIntentID, runKey, run.SessionID); err != nil {
+			out.Failure = automaticFailure(err)
+			return out, nil
+		}
 	}
 
 	s.autoMu.Lock()
