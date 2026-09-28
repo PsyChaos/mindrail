@@ -15,8 +15,9 @@ manual handoff instead of pretending that automation occurred.
 
 Mindrail accepts monotonic host observations containing model, reasoning effort,
 context used, context limit, observation time, source, and confidence. Unknown values
-remain unknown. Raw prompts, reasoning, source code, logs, credentials, and raw run
-keys are never persisted.
+remain unknown. Raw prompts, reasoning, source code, logs, and credentials are never
+persisted. Continuity records retain only a one-way run-key hash; the pre-existing
+workflow journal remains the authority for resuming its own idempotent run.
 
 Acceptance criteria:
 
@@ -28,7 +29,7 @@ Acceptance criteria:
 ### REQ-002 — Configurable pressure policy
 
 The default policy warns at 55% used, prepares automatic handoff at 60% used, and
-enters the hard protection state at 75% used. Thresholds are repository-configurable,
+raises a persistent hard-protection alert at 75% used. Thresholds are repository-configurable,
 strictly ordered, and evaluated using integer basis points.
 
 Acceptance criteria:
@@ -71,12 +72,15 @@ Acceptance criteria:
 - the predecessor checkpoint is written before ownership is released;
 - delayed predecessor replies cannot erase the successor binding.
 
-### REQ-005 — Optional next-task continuation
+### Deferred seam — different Mindrail task continuation
 
-After successful completion, a capable host may continue to a separately registered
-next task. Mindrail must never infer the next task from recency or list order.
+This release rolls a fresh host conversation onto the same Mindrail task. Automatically
+selecting or starting a different Mindrail task is intentionally deferred. The schema
+reserves `NEXT_TASK`/`target_task_id` for a later explicit registration protocol, but
+no production path claims that capability and Mindrail must never infer a target from
+recency or list order.
 
-Acceptance criteria:
+Future acceptance criteria:
 
 - the next task is explicitly registered and belongs to the same project;
 - terminal, reserved, or incompatible targets fail closed to `MANUAL_REQUIRED`;
@@ -140,5 +144,6 @@ Acceptance criteria:
 - Capturing prompts, hidden reasoning, or conversation transcripts.
 - Treating MCP connection heartbeat as proof that a model is actively working.
 - Automatically selecting the newest open task.
+- Automatically continuing into a different Mindrail task in this release.
 - Allowing repository files to authorize host conversation creation.
 - Claiming seamless automatic continuation on an unsupported client.
